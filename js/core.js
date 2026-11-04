@@ -197,10 +197,13 @@ function loadSdk(appId) {
     // Tự vào bằng phiên Facebook sẵn có (SDK cấp token mới), trừ khi người dùng vừa bấm Đăng xuất.
     if (local.get('autoLogin') !== '0' && !App.pages.length) {
       $('loginStatus').textContent = 'Đang kiểm tra phiên Facebook…';
-      FB.getLoginStatus(r => {
+      const saved = local.get('fbTok');
+      const viaSdk = () => FB.getLoginStatus(r => {
         if (r.status === 'connected' && !App.pages.length) start(r.authResponse.accessToken);
         else $('loginStatus').textContent = 'Bấm nút để đăng nhập.';
       }, true);
+      // Ưu tiên token đã lưu (Facebook Login for Business thường không báo "connected" sau khi tải lại trang).
+      if (saved) start(saved).then(ok => { if (!ok) viaSdk(); }); else viaSdk();
     }
   };
   if (window.FB) return window.fbAsyncInit();
@@ -216,14 +219,15 @@ $('fbLogin').onclick = () => {
 };
 $('useToken').onclick = () => start($('token').value.trim());
 // Chỉ thoát khỏi trang, không gọi FB.logout (sẽ đăng xuất luôn facebook.com).
-$('btnLogout').onclick = () => { local.set('autoLogin', '0'); location.reload(); };
+$('btnLogout').onclick = () => { local.set('autoLogin', '0'); local.set('fbTok', ''); location.reload(); };
 
 async function start(userToken) {
   $('loginStatus').textContent = 'Đang tải danh sách Page…';
   try {
     App.pages = await apiPaged('/me/accounts', { fields: 'id,name,access_token,picture.width(64){url}', limit: 100 }, userToken, 3);
     if (!App.pages.length) throw new Error('Tài khoản không quản lý Page nào, hoặc chưa cấp quyền pages_show_list.');
-  } catch (e) { $('loginStatus').textContent = `Lỗi: ${e.message}`; return; }
+  } catch (e) { $('loginStatus').textContent = `Lỗi: ${e.message}`; local.set('fbTok', ''); return false; }
+  local.set('fbTok', userToken);
   $('token').value = '';
   App.userToken = userToken; // chỉ giữ trong bộ nhớ tab, dùng để kết nối Page với máy chủ bot
   App.templateVars = (await DB.get('settings', {})).templateVars || {};
@@ -236,6 +240,7 @@ async function start(userToken) {
   for (const fn of App.onLogin || []) fn();
   const [g, t] = (local.get('lastTab') || 'messages:inbox').split(':');
   showGroup(App.NAV[g] ? g : 'messages', t);
+  return true;
 }
 App.onLogin = [];
 
@@ -289,7 +294,7 @@ App.customerPics = async (page, psids) => {
   const out = new Map(), need = [];
   for (const id of new Set(psids.filter(Boolean))) {
     const c = cache[id];
-    if (c && Date.now() - c.at < PIC_TTL) out.set(id, c.url); else need.push(id);
+    if (c && Date.now() - c.at < (c.url ? PIC_TTL : 10 * 60e3)) out.set(id, c.url); else need.push(id); // ảnh lỗi chỉ nhớ 10 phút để thử lại
   }
   for (let i = 0; i < need.length; i += 50) {
     const chunk = need.slice(i, i + 50);

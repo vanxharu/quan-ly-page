@@ -56,15 +56,15 @@
             h('div', { className: 'hint', style: 'margin-top:6px' }, h('kbd', {}, 'Enter'), ' gửi · ', h('kbd', {}, 'Shift'), '+', h('kbd', {}, 'Enter'), ' xuống dòng · ',
               h('kbd', {}, '/'), ' chọn mẫu · chỉ trả lời được trong 24 giờ kể từ tin cuối của khách')))));
     },
-    refresh() { load(); }
+    refresh() { load(S.convs.length > 0); }
   });
   App.onPageChange.push(() => { S.conv = null; resetThread(); });
 
-  async function load() {
+  async function load(silent) {
     const pages = App.selected();
     if (!pages.length) { S.convs = []; $('ibList').replaceChildren(empty('Chưa tick Page nào.')); return; }
     const run = ++S.loading;
-    $('ibList').replaceChildren(empty(`Đang tải hội thoại của ${pages.length} Page…`));
+    if (!silent) $('ibList').replaceChildren(empty(`Đang tải hội thoại của ${pages.length} Page…`));
     const errors = [];
     const lists = await pool(pages, 5, p => fetchConvs(p).catch(e => { errors.push(`${p.name}: ${e.message}`); return []; }));
     if (run !== S.loading) return;
@@ -74,6 +74,9 @@
     const cur = $('ibLabel').value;
     $('ibLabel').replaceChildren(h('option', { value: '', textContent: 'Mọi nhãn' }), ...labels.map(l => h('option', { value: l, textContent: l, selected: l === cur })));
     S.errors = errors;
+    // Hội thoại đang mở có tin mới → đọc lại luôn.
+    const fresh = S.conv && S.convs.find(c => c.id === S.conv.id);
+    if (fresh && fresh.updated_time !== S.conv.updated_time) { fresh.unread_count = 0; openConv(fresh); }
     loadPics(S.convs);
     if (S.pending) { $('ibSearch').value = S.pending; const hit = S.convs.find(c => norm(c.other.name) === norm(S.pending)); S.pending = ''; if (hit) openConv(hit); }
     drawList();
@@ -81,7 +84,7 @@
   async function loadPics(convs) {
     const byPage = new Map();
     for (const c of convs) if (c.other.id && !S.pics.has(c.other.id)) (byPage.get(c.page) || byPage.set(c.page, []).get(c.page)).push(c.other.id);
-    await pool([...byPage], 3, async ([page, ids]) => { for (const [id, url] of await App.customerPics(page, ids)) S.pics.set(id, url); });
+    await pool([...byPage], 3, async ([page, ids]) => { for (const [id, url] of await App.customerPics(page, ids)) if (url) S.pics.set(id, url); });
     if (byPage.size) { drawList(); if (S.conv) drawHead(S.conv); }
   }
   // Ảnh khách kèm ảnh Page nhỏ ở góc (như Business Suite).
@@ -200,7 +203,7 @@
       c.fromCustomer = false;
       await openConv(c);
     } catch (e) {
-      $('ibThread').append(h('div', { className: 'status err', textContent: e.code === 10 || e.sub === 2018278 ? 'Đã quá 24 giờ kể từ tin cuối của khách, Meta không cho Page nhắn tiếp.' : e.message }));
+      $('ibThread').append(h('div', { className: 'status err', textContent: (e.sub === 2018278 ? 'Đã quá 24 giờ kể từ tin cuối của khách, Meta không cho Page nhắn tiếp.' : e.message) + (e.code ? ` (mã ${e.code}${e.sub ? '/' + e.sub : ''})` : '') }));
     }
     $('ibSend').disabled = false;
   }
@@ -225,6 +228,8 @@
     document.title = unread ? `(${unread}) Meta Assistant` : 'Meta Assistant';
     if (App.current() === 'inbox' && !document.hidden) load();
   }
+  // Cập nhật gần thời gian thực: 10 giây/lần khi đang xem Hộp thư (không phụ thuộc webhook).
+  setInterval(() => { if (App.pages.length && App.current() === 'inbox' && !document.hidden) load(true); }, 10e3);
   App.onLogin.push(async () => {
     poll();
     const loop = async () => { const st = await settings(); setTimeout(async () => { await poll(); loop(); }, Math.max(1, Number(st.pollMinutes) || 2) * 60e3); };
