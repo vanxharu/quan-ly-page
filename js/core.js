@@ -103,6 +103,23 @@ const local = { get: k => { try { return localStorage.getItem(k); } catch { retu
 // ── Graph API ──────────────────────────────────────────────
 // Các Page đang chọn ở trên cùng: mọi tab chạy theo danh sách này. App.page() = Page đầu tiên (cho thao tác cần 1 Page).
 let selected = new Set();
+// Nhớ lựa chọn ở cả localStorage và IndexedDB để khôi phục qua các phiên đăng nhập.
+function parseSelectedPages(value) {
+  try {
+    const ids = typeof value === 'string' ? JSON.parse(value) : value;
+    return Array.isArray(ids) ? [...new Set(ids.filter(id => typeof id === 'string' || typeof id === 'number').map(String))] : [];
+  } catch { return []; }
+}
+async function restoreSelectedPages() {
+  let ids = parseSelectedPages(local.get('selPages'));
+  if (!ids.length) ids = parseSelectedPages(await DB.get('selectedPagesV1', []).catch(() => []));
+  return ids.filter(id => App.pages.some(p => String(p.id) === id));
+}
+function rememberSelectedPages() {
+  const ids = [...selected];
+  local.set('selPages', JSON.stringify(ids));
+  DB.set('selectedPagesV1', ids).catch(() => {});
+}
 App.selected = () => App.pages.filter(p => selected.has(p.id));
 App.isSelected = id => selected.has(String(id));
 App.page = () => App.selected()[0] || App.pages[0];
@@ -240,9 +257,9 @@ async function start(userToken) {
   $('token').value = '';
   App.userToken = userToken; // chỉ giữ trong bộ nhớ tab, dùng để kết nối Page với máy chủ bot
   App.templateVars = (await DB.get('settings', {})).templateVars || {};
-  let saved = []; try { saved = JSON.parse(local.get('selPages')) || []; } catch {}
-  saved = saved.filter(id => App.pages.some(p => p.id === id));
+  const saved = await restoreSelectedPages();
   selected = new Set(saved.length ? saved : App.pages.map(p => p.id));
+  rememberSelectedPages();
   $('login').hidden = true;
   $('pagePicker').hidden = $('btnLogout').hidden = $('nav').hidden = false;
   $('dot').className = 'dot on'; $('dot').title = `Đã kết nối ${App.pages.length} Page`;
@@ -278,8 +295,9 @@ App.show = showTab;
 App.current = () => current;
 App.setSelected = ids => {
   const next = new Set(ids.map(String).filter(id => App.pageById(id)));
-  if (!next.size || [...next].join() === [...selected].join()) return drawPicker();
-  selected = next; local.set('selPages', JSON.stringify([...selected]));
+  if (!next.size) return drawPicker();
+  if ([...next].join() === [...selected].join()) { rememberSelectedPages(); return drawPicker(); }
+  selected = next; rememberSelectedPages();
   drawPicker();
   for (const fn of App.onPageChange || []) fn();
   App.tabs[current]?.refresh?.(document.querySelector(`[data-panel="${current}"]`));
