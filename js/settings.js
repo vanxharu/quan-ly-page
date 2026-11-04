@@ -49,7 +49,8 @@
               await DB.clear(); toast('Đã xoá. Mẫu tin mặc định sẽ được nạp lại.'); setTimeout(() => location.reload(), 800);
             } })),
           h('p', { className: 'hint', textContent: 'Lấy dữ liệu từ tiện ích: mở bảng tiện ích, bấm nút "Xuất dữ liệu sang trang web" (cạnh nút Cài đặt), rồi nhập file vừa tải về ở đây.' }),
-          h('div', { className: 'log', id: 'stLog' })),
+          h('div', { className: 'log', id: 'stLog' }),
+          h('p', { className: 'hint' }, h('a', { href: 'privacy.html', target: '_blank', textContent: 'Chính sách quyền riêng tư' }), ' · ', h('a', { href: 'terms.html', target: '_blank', textContent: 'Điều khoản' }), ' · ', h('a', { href: 'data-deletion.html', target: '_blank', textContent: 'Xoá dữ liệu' }))),
         h('form', { className: 'card', id: 'stRules' }));
     },
     async refresh() { drawRules(); App.server?.drawCard(); }
