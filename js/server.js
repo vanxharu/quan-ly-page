@@ -77,7 +77,7 @@
         try {
           const r = await S.call('connect', { userToken: App.userToken, pageIds: App.selected().map(p => p.id) });
           const bad = r.pages.filter(p => !p.ok);
-          toast(`Đã kết nối ${r.pages.length - bad.length}/${r.pages.length} Page.`);
+          toast(`Đã kết nối ${r.pages.length - bad.length}/${r.pages.length} Page.` + (bad.length ? ` Lỗi: ${bad[0].name}: ${bad[0].error}` : ''), bad.length ? 10000 : 3000);
         } catch (e) { toast(e.message, 6000); }
         drawCard();
       } });
@@ -85,7 +85,8 @@
         st.secret ? h('div', { className: 'status ok', textContent: '✓ Máy chủ đã có App Secret của ứng dụng Meta.' })
           : h('div', { className: 'status err', textContent: '✗ Máy chủ chưa có FB_APP_SECRET: dán App Secret vào Supabase › Edge Functions › Secrets (xem hướng dẫn).' }),
         h('div', { className: 'pages section-gap' }, ...(st.pages.length ? st.pages.map(p => h('label', { title: p.error || '', style: 'white-space:normal;flex-wrap:wrap' },
-          App.avatar(p.name, p.picture, 20), p.name, h('span', { className: 'tag ' + (p.subscribed ? 'tone-green' : 'tone-red'), style: 'margin-left:auto', textContent: p.subscribed ? 'bot đang nhận tin' : 'chưa nhận tin' })))
+          App.avatar(p.name, p.picture, 20), p.name, h('span', { className: 'tag ' + (p.subscribed ? 'tone-green' : 'tone-red'), style: 'margin-left:auto', textContent: p.subscribed ? 'bot đang nhận tin' : 'chưa nhận tin' }),
+          p.error ? h('div', { className: 'hint', style: 'width:100%;color:var(--red,#f87171)', textContent: p.error }) : null))
           : [h('span', { className: 'hint', textContent: 'Chưa có Page nào kết nối với máy chủ.' })])),
         h('div', { className: 'row section-gap' }, connectBtn, h('span', { className: 'hint', textContent: 'Lưu token Page dài hạn trên máy chủ và đăng ký nhận tin nhắn, bình luận.' })));
     } catch (e) { status.replaceChildren(h('div', { className: 'status err', textContent: e.message })); }
