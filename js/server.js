@@ -33,7 +33,12 @@
   // Hộp thư tải lại khi máy chủ ghi tin mới (đỡ phải chờ chu kỳ 2 phút).
   let channel = null, timer = 0;
   function subscribe() {
-    if (!S.user || channel) return;
+    if (!S.user) {
+      clearTimeout(timer);
+      if (channel) { sb.removeChannel(channel); channel = null; }
+      return;
+    }
+    if (channel) return;
     channel = sb.channel('inbox').on('postgres_changes', { event: '*', schema: 'public', table: 'conversations' }, payload => {
       clearTimeout(timer);
       timer = setTimeout(() => { if (App.current() === 'inbox' && App.isSelected(payload.new?.page_id)) App.tabs.inbox.refresh(); }, 800);

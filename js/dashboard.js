@@ -42,7 +42,7 @@
       const alerts = [
         ...rows.filter(r => r.unread).map(r => ['pending', `💬 ${r.page.name}: ${r.unread} hội thoại chưa đọc`, () => App.openConversation(r.page.id, '')]),
         ...rows.filter(r => r.errors).map(r => ['err', `⚠ ${r.page.name}: ${r.errors} bài lỗi/lỡ giờ trong Lịch đăng`, () => App.show('planner')]),
-        ...rows.filter(r => r.stale && !r.error).map(r => ['pending', `🕒 ${r.page.name}: ${r.lastPost ? 'đã ' + Math.floor((Date.now() - r.lastPost) / 864e5) + ' ngày chưa đăng' : 'chưa có bài'}`, () => { $('page').value = r.page.id; App.show('post'); }])];
+        ...rows.filter(r => r.stale && !r.error).map(r => ['pending', `🕒 ${r.page.name}: ${r.lastPost ? 'đã ' + Math.floor((Date.now() - r.lastPost) / 864e5) + ' ngày chưa đăng' : 'chưa có bài'}`, () => { App.setSelected([r.page.id]); App.show('post'); }])];
       $('dbAlerts').replaceChildren(...alerts.slice(0, 12).map(([cls, t, fn]) => h('div', { className: 'status ' + cls, style: 'margin-bottom:4px;cursor:pointer', textContent: t, onclick: fn })));
       $('dbCards').replaceChildren(...rows.sort((a, b) => b.unread - a.unread || b.followers - a.followers).map(r => h('div', { className: 'pcard', onclick: () => App.openConversation(r.page.id, '') },
         h('div', { className: 'n', title: r.page.name, style: 'display:flex;gap:8px;align-items:center' }, App.avatar(r.page.name, App.pageAvatarUrl(r.page), 26), h('span', { style: 'overflow:hidden;text-overflow:ellipsis', textContent: r.page.name })),

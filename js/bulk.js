@@ -49,8 +49,10 @@
     const errors = [];
     const lists = await pool(pages, 5, async page => {
       try {
-        const res = await api(`/${page.id}/conversations`, { platform: 'messenger', limit: 100, fields: 'id,updated_time,participants' }, 'GET', page.access_token);
-        return (res.data || []).map(c => { const other = c.participants?.data.find(u => u.id !== page.id) || {}; return { page, other, updated: new Date(c.updated_time).getTime(), key: App.crmKey(page.id, other.name) }; });
+        const res = await api(`/${page.id}/conversations`, { platform: 'messenger', limit: 100, fields: 'id,updated_time,participants,messages.limit(25){from,created_time}' }, 'GET', page.access_token);
+        return (res.data || []).map(c => { const other = c.participants?.data.find(u => u.id !== page.id) || {};
+          const lastCustomerAt = Math.max(0, ...(c.messages?.data || []).filter(m => m.from?.id === other.id).map(m => new Date(m.created_time).getTime()).filter(Number.isFinite));
+          return { page, other, updated: new Date(c.updated_time).getTime(), lastCustomerAt, key: App.crmKey(page.id, other.name) }; });
       } catch (e) { errors.push(`${page.name}: ${e.message}`); return []; }
     });
     S.convs = lists.flat().sort((a, b) => b.updated - a.updated);
@@ -61,7 +63,7 @@
   App.onPageChange.push(() => { S.convs = []; $('bkList')?.replaceChildren(empty('Bấm "Tải khách".')); });
   function visible() {
     const only24 = $('bk24').checked, lab = $('bkLabel').value;
-    return S.convs.filter(c => c.other.id && (!only24 || Date.now() - c.updated < 864e5) && (!lab || (S.crm?.[c.key]?.labels || []).includes(lab)));
+    return S.convs.filter(c => c.other.id && (!only24 || (c.lastCustomerAt && Date.now() - c.lastCustomerAt < 864e5)) && (!lab || (S.crm?.[c.key]?.labels || []).includes(lab)));
   }
   function draw() {
     const list = visible();

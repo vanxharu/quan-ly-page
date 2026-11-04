@@ -76,5 +76,13 @@
   function ready() { document.body.classList.add('workspace-connected'); side.hidden = intro.hidden = false; sync(); }
   App.onLogin.push(ready); App.onPageChange.push(sync);
   new MutationObserver(sync).observe($('subnav'), { subtree: true, childList: true, attributes: true, attributeFilter: ['aria-selected'] });
+  const fitViewport = () => {
+    document.documentElement.style.setProperty('--workspace-header-height', document.querySelector('.header').getBoundingClientRect().height + 'px');
+    document.documentElement.style.setProperty('--workspace-viewport-height', (window.visualViewport?.height || window.innerHeight) + 'px');
+  };
+  new ResizeObserver(fitViewport).observe(document.querySelector('.header'));
+  window.addEventListener('resize', fitViewport);
+  window.visualViewport?.addEventListener('resize', fitViewport);
+  fitViewport();
   if (App.pages.length) ready();
 })();

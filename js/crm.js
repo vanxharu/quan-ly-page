@@ -53,6 +53,7 @@
       onclick: () => { form = form === k ? '' : k; rerender(); } });
     const extra = orders.length + appts.length + (c.notes || []).length;
 
+    if (ctx.isCurrent && !ctx.isCurrent()) return;
     box.replaceChildren(
       h('div', { className: 'crm-row' },
         sel('stage', STAGES, 'Giai đoạn'), sel('orderStatus', ORDER_STATUSES, 'Đơn'),

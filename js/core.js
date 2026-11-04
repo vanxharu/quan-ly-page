@@ -166,7 +166,7 @@ App.resolveVars = (text, { name = '', pageName = '' } = {}, vars = App.templateV
 // Hội thoại do app khác (chatbot cũ: Fchat, AhaChat, ManyChat…) giữ quyền: giành lại quyền rồi gửi lại một lần.
 App.sendMessage = async (page, psid, text, imageData) => {
   try { return await sendRaw(page, psid, text, imageData); } catch (e) {
-    if (e.sub !== 2018300) throw e;
+    if (e.sub !== 2018300 || e.partialTextSent) throw e;
     try { await api(`/${page.id}/take_thread_control`, { recipient: { id: psid }, metadata: 'mabot' }, 'POST', page.access_token); }
     catch { throw Object.assign(new Error('Hội thoại này đang do một ứng dụng chatbot khác giữ (Fchat, AhaChat, ManyChat…). Vào Cài đặt Page › Nhắn tin nâng cao / Định tuyến cuộc trò chuyện, đặt ứng dụng này làm ứng dụng chính hoặc gỡ ứng dụng kia.'), { code: e.code, sub: e.sub }); }
     return sendRaw(page, psid, text, imageData);
@@ -181,7 +181,8 @@ async function sendRaw(page, psid, text, imageData) {
     form.append('messaging_type', 'RESPONSE');
     form.append('message', JSON.stringify({ attachment: { type: 'image', payload: { is_reusable: false } } }));
     form.append('filedata', blob, `anh.${(blob.type.split('/')[1] || 'png').replace('jpeg', 'jpg')}`);
-    await api(`/${page.id}/messages`, form, 'POST', page.access_token);
+    try { await api(`/${page.id}/messages`, form, 'POST', page.access_token); }
+    catch (e) { if (text) e.partialTextSent = true; throw e; }
   }
 }
 App.recordTemplateUse = async (tpl, customerKey) => {
@@ -219,7 +220,7 @@ function loadSdk(appId) {
   window.fbAsyncInit = () => {
     FB.init({ appId, version: App.VERSION });
     $('fbLogin').disabled = false;
-    $('loginStatus').textContent = 'Trang không lưu token. Lần sau mở trang sẽ tự vào nếu Facebook còn đăng nhập.';
+    $('loginStatus').textContent = 'Phiên đăng nhập được ghi nhớ trên trình duyệt này. Bấm Đăng xuất để xoá phiên.';
     // Tự vào bằng phiên Facebook sẵn có (SDK cấp token mới), trừ khi người dùng vừa bấm Đăng xuất.
     if (local.get('autoLogin') !== '0' && !App.pages.length) {
       $('loginStatus').textContent = 'Đang kiểm tra phiên Facebook…';
@@ -255,7 +256,7 @@ async function start(userToken) {
   } catch (e) { $('loginStatus').textContent = `Lỗi: ${e.message}`; local.set('fbTok', ''); return false; }
   local.set('fbTok', userToken);
   $('token').value = '';
-  App.userToken = userToken; // chỉ giữ trong bộ nhớ tab, dùng để kết nối Page với máy chủ bot
+  App.userToken = userToken; // dùng để kết nối Page với máy chủ bot
   App.templateVars = (await DB.get('settings', {})).templateVars || {};
   const saved = await restoreSelectedPages();
   selected = new Set(saved.length ? saved : App.pages.map(p => p.id));
@@ -271,7 +272,15 @@ async function start(userToken) {
 App.onLogin = [];
 
 // ── Điều hướng ─────────────────────────────────────────────
-App.tab = (id, mod) => { App.tabs[id] = mod; };
+App.tab = (id, mod) => {
+  App.tabs[id] = mod;
+  // Phiên khôi phục nhanh có thể mở tab trước khi tệp chức năng tải xong.
+  const panel = document.querySelector(`[data-panel="${id}"]`);
+  if (panel && !panel.dataset.mounted) {
+    mod.mount?.(panel); panel.dataset.mounted = '1';
+    if (current === id) mod.refresh?.(panel);
+  }
+};
 let current = '';
 $('groups').replaceChildren(...Object.entries(App.NAV).map(([g, [label]]) => h('button', { type: 'button', textContent: label, dataset: { g }, onclick: () => showGroup(g) })));
 function showGroup(g, tabId) {
@@ -287,7 +296,8 @@ function showTab(id) {
   [...$('subnav').children].forEach(b => b.setAttribute('aria-selected', b.dataset.tab === id));
   let panel = document.querySelector(`[data-panel="${id}"]`);
   const mod = App.tabs[id];
-  if (!panel) { panel = h('section', { className: 'panel', dataset: { panel: id } }); $('main').append(panel); mod?.mount?.(panel); }
+  if (!panel) { panel = h('section', { className: 'panel', dataset: { panel: id } }); $('main').append(panel); }
+  if (mod && !panel.dataset.mounted) { mod.mount?.(panel); panel.dataset.mounted = '1'; }
   document.querySelectorAll('[data-panel]').forEach(s => s.hidden = s !== panel);
   mod?.refresh?.(panel);
 }

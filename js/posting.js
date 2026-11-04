@@ -2,15 +2,30 @@
  * Đã hẹn trên FB: bài Facebook đang giữ để tự đăng (scheduled_posts) của Page đang chọn. */
 (() => {
   const QUEUE = 'fbScheduleQueueV1';
+  let draftImage = '', imageRead = Promise.resolve(''), draftWrites = Promise.resolve(), edited = false;
+  function savePostDraft() {
+    const text = $('poText').value, at = $('poAt').value, pendingImage = imageRead;
+    $('poDraftState').textContent = 'Đang lưu nháp…';
+    draftWrites = draftWrites.catch(() => {}).then(async () => DB.set('postDraftV1', { text, at, image: await pendingImage }));
+    draftWrites.then(() => { $('poDraftState').textContent = 'Đã lưu nháp tự động.'; }, () => { $('poDraftState').textContent = 'Chưa lưu được nháp. Hãy giữ trang mở hoặc sao chép nội dung.'; });
+  }
+  function drawDraftImage() {
+    $('poPreview').replaceChildren(...(draftImage ? [h('img', { className: 'thumb', src: draftImage, alt: 'Ảnh bài viết' }),
+      h('button', { type: 'button', className: 'btn btn-ghost btn-sm', textContent: 'Bỏ ảnh', onclick: () => {
+        edited = true; $('poImage').value = ''; draftImage = ''; imageRead = Promise.resolve(''); drawDraftImage(); savePostDraft();
+      } })] : []));
+  }
   App.tab('post', {
     mount(el) {
       el.append(
         h('div', { className: 'card' },
           h('div', { className: 'card-head' }, h('h3', { className: 'card-title', textContent: 'Soạn bài' })),
           h('textarea', { id: 'poText', placeholder: 'Nội dung bài viết…' }),
+          h('div', { id: 'poDraftState', className: 'hint', style: 'margin-top:8px', role: 'status', textContent: 'Nội dung, ảnh và giờ hẹn được lưu nháp trên trình duyệt này.' }),
           h('div', { className: 'row', style: 'margin-top:12px' },
             h('label', { className: 'field' }, 'Ảnh (tuỳ chọn)', h('input', { type: 'file', id: 'poImage', accept: 'image/*' })),
-            h('label', { className: 'field' }, 'Hẹn giờ (bỏ trống = đăng ngay / để Lịch đăng xếp giờ)', h('input', { type: 'datetime-local', id: 'poAt' })))),
+            h('label', { className: 'field' }, 'Hẹn giờ (bỏ trống = đăng ngay / để Lịch đăng xếp giờ)', h('input', { type: 'datetime-local', id: 'poAt' }))),
+          h('div', { className: 'row', id: 'poPreview', style: 'margin-top:12px' })),
         h('div', { className: 'card' },
           h('div', { className: 'card-head' }, h('h3', { className: 'card-title', id: 'poTitle' }), h('span', { className: 'hint', textContent: 'Đổi Page ở ô chọn Page trên cùng.' })),
           h('div', { className: 'tags', id: 'poPages' }),
@@ -19,6 +34,19 @@
             h('button', { className: 'btn btn-soft', onclick: () => toQueue() }, icon('i-cal'), 'Thêm vào Lịch đăng (nháp)'),
             h('span', { className: 'hint', textContent: 'Giờ hẹn phải sau hiện tại ít nhất 10 phút.' })),
           h('div', { className: 'log', id: 'poLog' })));
+      for (const id of ['poText', 'poAt']) $(id).oninput = () => { edited = true; savePostDraft(); };
+      $('poImage').onchange = () => {
+        edited = true; const file = $('poImage').files[0];
+        imageRead = file ? fileToDataUrl(file) : Promise.resolve('');
+        imageRead.then(url => { if ($('poImage').files[0] === file) { draftImage = url; drawDraftImage(); } }).catch(() => toast('Không đọc được ảnh. Chọn lại tệp giúp bạn nhé.'));
+        savePostDraft();
+      };
+      DB.get('postDraftV1', {}).then(draft => {
+        if (edited) return;
+        $('poText').value = draft.text || ''; $('poAt').value = draft.at || '';
+        draftImage = draft.image || ''; imageRead = Promise.resolve(draftImage); drawDraftImage();
+        if (draft.text || draft.image) $('poDraftState').textContent = 'Đã khôi phục bản nháp trước.';
+      }).catch(() => {});
     },
     refresh() {
       const list = App.selected();
@@ -28,7 +56,7 @@
   });
   const log = (cls, t) => $('poLog').append(h('div', { className: 'status ' + cls, textContent: t }));
   const read = async () => {
-    const text = $('poText').value.trim(), file = $('poImage').files[0], at = $('poAt').value;
+    const text = $('poText').value.trim(), file = $('poImage').files[0] || draftImage, at = $('poAt').value;
     return { text, file, when: at ? new Date(at).getTime() : 0, targets: App.selected() };
   };
   async function go() {
@@ -51,7 +79,7 @@
     $('poLog').replaceChildren();
     if (!text && !file) return log('err', 'Chưa có nội dung hoặc ảnh.');
     if (!targets.length) return log('err', 'Chưa chọn Page.');
-    const imageData = file ? await fileToDataUrl(file) : '';
+    const imageData = typeof file === 'string' ? file : file ? await fileToDataUrl(file) : '';
     const queue = await DB.get(QUEUE, []);
     for (const p of targets) queue.push({ id: uid('fs'), pageKey: p.id, pageName: p.name, text, imageData, at: when || 0, status: 'draft', createdAt: Date.now(), source: 'web' });
     await DB.set(QUEUE, queue);
