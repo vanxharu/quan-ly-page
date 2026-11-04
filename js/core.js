@@ -100,7 +100,11 @@ App.on = (key, fn) => (App.listeners[key] ||= []).push(fn);
 const local = { get: k => { try { return localStorage.getItem(k); } catch { return null; } }, set: (k, v) => { try { localStorage.setItem(k, v); } catch {} } };
 
 // ── Graph API ──────────────────────────────────────────────
-App.page = () => App.pages.find(p => p.id === $('page').value);
+// Các Page đang chọn ở trên cùng: mọi tab chạy theo danh sách này. App.page() = Page đầu tiên (cho thao tác cần 1 Page).
+let selected = new Set();
+App.selected = () => App.pages.filter(p => selected.has(p.id));
+App.isSelected = id => selected.has(String(id));
+App.page = () => App.selected()[0] || App.pages[0];
 App.pageById = id => App.pages.find(p => p.id === String(id));
 async function api(path, params = {}, method = 'GET', token = App.page()?.access_token) {
   const url = new URL(path.startsWith('http') ? path : App.GRAPH + path);
@@ -221,10 +225,11 @@ async function start(userToken) {
   } catch (e) { $('loginStatus').textContent = `Lỗi: ${e.message}`; return; }
   $('token').value = '';
   App.templateVars = (await DB.get('settings', {})).templateVars || {};
-  $('page').replaceChildren(...App.pages.map(p => h('option', { value: p.id, textContent: p.name })));
-  const saved = local.get('lastPage'); if (App.pages.some(p => p.id === saved)) $('page').value = saved;
+  let saved = []; try { saved = JSON.parse(local.get('selPages')) || []; } catch {}
+  saved = saved.filter(id => App.pages.some(p => p.id === id));
+  selected = new Set(saved.length ? saved : App.pages.map(p => p.id));
   $('login').hidden = true;
-  $('page').hidden = $('btnLogout').hidden = $('nav').hidden = false;
+  $('pagePicker').hidden = $('btnLogout').hidden = $('nav').hidden = false;
   $('dot').className = 'dot on'; $('dot').title = `Đã kết nối ${App.pages.length} Page`;
   for (const fn of App.onLogin || []) fn();
   const [g, t] = (local.get('lastTab') || 'messages:inbox').split(':');
@@ -255,12 +260,15 @@ function showTab(id) {
 }
 App.show = showTab;
 App.current = () => current;
-$('page').onchange = () => { local.set('lastPage', $('page').value); for (const fn of App.onPageChange || []) fn(); App.tabs[current]?.refresh?.(document.querySelector(`[data-panel="${current}"]`)); };
+App.setSelected = ids => {
+  const next = new Set(ids.map(String).filter(id => App.pageById(id)));
+  if (!next.size || [...next].join() === [...selected].join()) return drawPicker();
+  selected = next; local.set('selPages', JSON.stringify([...selected]));
+  drawPicker();
+  for (const fn of App.onPageChange || []) fn();
+  App.tabs[current]?.refresh?.(document.querySelector(`[data-panel="${current}"]`));
+};
 App.onPageChange = [];
-// Ô chọn Page dùng lại trong các tab (value '' = tất cả).
-App.pageSelect = (allLabel, value = '') => h('select', { style: 'width:auto;max-width:240px' },
-  allLabel ? h('option', { value: '', textContent: allLabel }) : null,
-  ...App.pages.map(p => h('option', { value: p.id, textContent: p.name, selected: p.id === value })));
 App.pageChecks = (selected = []) => h('div', { className: 'pages' }, ...App.pages.map(p => h('label', { title: p.name }, h('input', { type: 'checkbox', value: p.id, checked: selected.includes(p.id) }), App.avatar(p.name, App.pageAvatarUrl(p), 20), p.name)));
 
 // ── Ảnh đại diện ───────────────────────────────────────────
@@ -295,7 +303,40 @@ App.customerPics = async (page, psids) => {
   if (need.length) await DB.set('avatarCacheV1', cache);
   return out;
 };
-const drawHeaderAvatar = () => $('pageAvt').replaceChildren(App.avatar(App.page()?.name, App.pageAvatarUrl(App.page()), 26));
-App.onLogin.push(drawHeaderAvatar);
-App.onPageChange.push(drawHeaderAvatar);
+// Dòng Page nhỏ: ảnh + tên (dùng trong danh sách bài, bình luận…).
+App.pageTag = p => h('span', { className: 'page-chip', style: 'display:inline-flex;align-items:center;gap:4px', title: p?.name || '' }, App.avatar(p?.name, App.pageAvatarUrl(p), 14), p?.name || 'Page không rõ');
+
+// ── Bộ chọn nhiều Page trên cùng ───────────────────────────
+let pickerQuery = '';
+function drawPicker() {
+  const list = App.selected();
+  $('pageBtn').replaceChildren(
+    h('span', { className: 'stack' }, ...list.slice(0, 4).map(p => App.avatar(p.name, App.pageAvatarUrl(p), 24))),
+    h('span', { className: 'label', textContent: list.length === App.pages.length ? `Tất cả ${list.length} Page` : list.length === 1 ? list[0].name : `${list.length} Page` }),
+    h('span', { className: 'caret', textContent: '▾' }));
+  if ($('pageMenu').hidden) return;
+  const draft = new Set(selected);
+  const rows = h('div', { className: 'page-menu-list' });
+  const drawRows = () => rows.replaceChildren(...App.pages.filter(p => !pickerQuery || norm(p.name).includes(norm(pickerQuery))).map(p => h('label', { className: 'page-row' + (draft.has(p.id) ? ' on' : '') },
+    h('input', { type: 'checkbox', checked: draft.has(p.id), onchange: e => { e.target.checked ? draft.add(p.id) : draft.delete(p.id); e.target.closest('label').classList.toggle('on', e.target.checked); count.textContent = `${draft.size} đã chọn`; } }),
+    App.avatar(p.name, App.pageAvatarUrl(p), 28), h('span', { className: 'grow', textContent: p.name }),
+    h('button', { type: 'button', className: 'btn btn-ghost btn-sm only', textContent: 'Chỉ Page này', onclick: e => { e.preventDefault(); closePicker(); App.setSelected([p.id]); } }))));
+  const count = h('span', { className: 'hint', textContent: `${draft.size} đã chọn` });
+  $('pageMenu').replaceChildren(
+    h('input', { type: 'search', placeholder: '🔍 Tìm Page…', value: pickerQuery, oninput: e => { pickerQuery = e.target.value; drawRows(); } }),
+    h('div', { className: 'row', style: 'margin:8px 0;gap:6px' },
+      h('button', { type: 'button', className: 'btn btn-ghost btn-sm', textContent: 'Chọn hết', onclick: () => { App.pages.forEach(p => draft.add(p.id)); drawRows(); count.textContent = `${draft.size} đã chọn`; } }),
+      h('button', { type: 'button', className: 'btn btn-ghost btn-sm', textContent: 'Bỏ hết', onclick: () => { draft.clear(); drawRows(); count.textContent = '0 đã chọn'; } }), count),
+    rows,
+    h('div', { className: 'row', style: 'margin-top:10px;justify-content:flex-end' },
+      h('button', { type: 'button', className: 'btn btn-ghost', textContent: 'Huỷ', onclick: closePicker }),
+      h('button', { type: 'button', className: 'btn btn-primary', textContent: 'Áp dụng', onclick: () => { if (!draft.size) return toast('Chọn ít nhất 1 Page.'); closePicker(); App.setSelected([...draft]); } })));
+  drawRows();
+}
+function closePicker() { $('pageMenu').hidden = true; $('pageBtn').setAttribute('aria-expanded', 'false'); }
+$('pageBtn').onclick = () => { const open = $('pageMenu').hidden; $('pageMenu').hidden = !open; $('pageBtn').setAttribute('aria-expanded', String(open)); drawPicker(); if (open) $('pageMenu').querySelector('input')?.focus(); };
+// composedPath: phần tử bị bấm có thể đã được vẽ lại (rời DOM) khi sự kiện tới document.
+document.addEventListener('click', e => { if (!e.composedPath().includes($('pagePicker'))) closePicker(); });
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closePicker(); });
+App.onLogin.push(drawPicker);
 App.checkedPages = box => [...box.querySelectorAll('input:checked')].map(i => App.pageById(i.value)).filter(Boolean);

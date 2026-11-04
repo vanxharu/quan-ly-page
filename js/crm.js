@@ -132,7 +132,6 @@
       el.append(
         h('div', { className: 'toolbar' },
           h('input', { type: 'search', className: 'grow', id: 'crmSearch', placeholder: '🔍 Tìm khách, nhãn, ghi chú…', oninput: () => this.refresh() }),
-          Object.assign(App.pageSelect('Tất cả Page'), { id: 'crmPage', onchange: () => this.refresh() }),
           h('select', { id: 'crmLabel', style: 'width:auto', onchange: () => this.refresh() })),
         h('div', { className: 'card', id: 'crmAppts' }),
         h('div', { className: 'kanban', id: 'crmBoard' }),
@@ -140,11 +139,13 @@
     },
     async refresh() {
       const all = await crm.all();
-      const q = norm($('crmSearch').value), page = $('crmPage').value, lab = $('crmLabel').value;
+      const q = norm($('crmSearch').value), lab = $('crmLabel').value;
+      // Khách của các Page đang chọn (khách nhập từ tiện ích không rõ Page vẫn hiện).
+      const inSel = id => !id || !App.pageById(id) || App.isSelected(id);
       const labels = await crm.allLabels();
       $('crmLabel').replaceChildren(h('option', { value: '', textContent: 'Mọi nhãn' }), ...labels.map(l => h('option', { value: l, textContent: l, selected: l === lab })));
       const orders = await DB.get(ORDERS, []);
-      const rows = Object.entries(all).filter(([, c]) => (!page || c.pageId === page) && (!lab || (c.labels || []).includes(lab)) &&
+      const rows = Object.entries(all).filter(([, c]) => inSel(c.pageId) && (!lab || (c.labels || []).includes(lab)) &&
         (!q || norm([c.name, c.pageName, ...(c.labels || []), ...(c.notes || []).map(n => n.text)].join(' ')).includes(q)));
       const cols = [['', 'Chưa phân loại'], ...STAGES.map(s => [s, s])];
       $('crmBoard').replaceChildren(...cols.map(([stage, title]) => {
@@ -159,7 +160,7 @@
             (c.labels || []).length ? h('div', { className: 'tags' }, ...c.labels.map(l => tag(l))) : null)));
         return col;
       }));
-      const appts = (await DB.get(APPT, [])).filter(a => !a.done && (!page || a.pageId === page)).sort((a, b) => a.at - b.at);
+      const appts = (await DB.get(APPT, [])).filter(a => !a.done && inSel(a.pageId)).sort((a, b) => a.at - b.at);
       $('crmAppts').replaceChildren(h('div', { className: 'card-head' }, h('h3', { className: 'card-title', textContent: `Nhắc hẹn sắp tới (${appts.length})` })),
         ...(appts.length ? appts.slice(0, 20).map(a => h('div', { className: 'row', style: 'padding:4px 0' },
           h('span', { className: 'status ' + (a.at < Date.now() ? 'err' : 'pending'), textContent: fmtShort(a.at) }),

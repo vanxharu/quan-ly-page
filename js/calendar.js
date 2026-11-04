@@ -2,7 +2,7 @@
  * Lịch đăng. Kéo bài hàng chờ (màu vàng) sang ngày khác để đổi ngày, giữ giờ; phải sau hiện tại ≥ 35 phút. */
 (() => {
   let month = new Date(); month.setDate(1); month.setHours(0, 0, 0, 0);
-  let pageId = '', fbCache = new Map();
+  const fbCache = new Map();
   App.tab('calendar', {
     mount(el) {
       el.append(h('div', { className: 'card' },
@@ -10,7 +10,6 @@
           h('button', { className: 'btn btn-ghost', textContent: '‹', 'aria-label': 'Tháng trước', onclick: () => { month.setMonth(month.getMonth() - 1); this.refresh(); } }),
           h('strong', { id: 'caMonth', style: 'min-width:130px;text-align:center' }),
           h('button', { className: 'btn btn-ghost', textContent: '›', 'aria-label': 'Tháng sau', onclick: () => { month.setMonth(month.getMonth() + 1); this.refresh(); } }),
-          Object.assign(App.pageSelect('Tất cả Page'), { id: 'caPage', onchange: e => { pageId = e.target.value; this.refresh(); } }),
           h('button', { className: 'btn btn-soft', onclick: () => { fbCache.clear(); this.refresh(); } }, icon('i-sync'), 'Tải lại'),
           h('span', { className: 'hint' }, h('span', { className: 'ev posted', style: 'display:inline' }, 'đã đăng'), ' ', h('span', { className: 'ev fb', style: 'display:inline' }, 'hẹn trên FB'), ' ',
             h('span', { className: 'ev queue', style: 'display:inline' }, 'hàng chờ'))),
@@ -23,8 +22,8 @@
       const start = new Date(y, m, 1 - ((new Date(y, m, 1).getDay() + 6) % 7)); // bắt đầu từ thứ Hai
       const days = Array.from({ length: 42 }, (_, i) => new Date(start.getFullYear(), start.getMonth(), start.getDate() + i));
       const from = days[0].getTime(), to = days[41].getTime() + 864e5;
-      const pages = pageId ? [App.pageById(pageId)] : App.pages;
-      const key = `${pageId}|${from}`;
+      const pages = App.selected(), one = pages.length === 1;
+      const key = `${pages.map(p => p.id).join()}|${from}`;
       if (!fbCache.has(key)) {
         $('caLog').replaceChildren(h('div', { className: 'status pending', textContent: `Đang đọc bài của ${pages.length} Page…` }));
         const errors = [];
@@ -38,7 +37,7 @@
         fbCache.set(key, lists.flat());
         $('caLog').replaceChildren(...errors.map(e => h('div', { className: 'status err', textContent: e })));
       }
-      const queue = (await DB.get('fbScheduleQueueV1', [])).filter(i => i.at && !['scheduled', 'posted'].includes(i.status) && (!pageId || App.planner.pageOf(i)?.id === pageId))
+      const queue = (await DB.get('fbScheduleQueueV1', [])).filter(i => i.at && !['scheduled', 'posted'].includes(i.status) && App.isSelected(App.planner.pageOf(i)?.id))
         .map(i => ({ type: ['error', 'missed'].includes(i.status) ? 'error' : 'queue', at: i.at, text: i.text, page: App.planner.pageOf(i), id: i.id }));
       const events = [...fbCache.get(key), ...queue].filter(e => e.at >= from && e.at < to).sort((a, b) => a.at - b.at);
       const today = new Date().toDateString();
@@ -52,7 +51,7 @@
             ...evs.slice(0, 4).map(e => h(e.link ? 'a' : 'span', { className: 'ev ' + e.type, href: e.link || undefined, target: e.link ? '_blank' : undefined, rel: 'noopener',
               draggable: e.type === 'queue', ondragstart: ev => ev.dataTransfer.setData('text/plain', e.id),
               title: `${new Date(e.at).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })} · ${e.page?.name || ''}\n${e.text || ''}`,
-              textContent: `${new Date(e.at).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })} ${pageId ? '' : (e.page?.name || '').slice(0, 10) + ' · '}${(e.text || '(ảnh)').slice(0, 40)}` })),
+              textContent: `${new Date(e.at).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })} ${one ? '' : (e.page?.name || '').slice(0, 10) + ' · '}${(e.text || '(ảnh)').slice(0, 40)}` })),
             evs.length > 4 ? h('span', { className: 'hint', textContent: `+${evs.length - 4} bài` }) : null);
           return cell;
         }));

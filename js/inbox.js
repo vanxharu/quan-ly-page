@@ -1,10 +1,8 @@
 /* Hộp thư (giống inbox-tab.js của tiện ích, nhưng đọc qua Graph API): một hoặc tất cả Page, lọc, thời gian khách chờ,
  * tự gắn nhãn theo lời khách (InboxRules), mẫu tin bằng nút "Mẫu" hoặc gõ "/", ảnh đính kèm, khung CRM, báo tin mới. */
 (() => {
-  const S = { scope: local.get('ibScope') || 'one', filter: 'all', convs: [], conv: null, tpl: null, image: '', loading: 0, pics: new Map() };
-  const picked = () => { try { return JSON.parse(local.get('ibPicked')) || []; } catch { return []; } };
-  // Page cần đọc theo phạm vi: Page đang chọn / Chọn nhiều Page / Tất cả.
-  const scopePages = () => S.scope === 'all' ? App.pages : S.scope === 'pick' ? App.pages.filter(p => picked().includes(p.id)) : [App.page()];
+  const S = { filter: 'all', convs: [], conv: null, tpl: null, image: '', loading: 0, pics: new Map() };
+
   const settings = async () => InboxRules.withDefaults(await DB.get(InboxRules.SETTINGS_KEY));
 
   async function fetchConvs(page, limit = 50) {
@@ -18,9 +16,11 @@
     });
   }
   App.inbox = { fetchConvs };
+  // Mở hội thoại của một khách (từ Khách hàng, Tổng quan…): thêm Page đó vào danh sách đang chọn nếu chưa có.
   App.openConversation = (pageId, name) => {
-    if (App.pageById(pageId)) { $('page').value = pageId; local.set('lastPage', pageId); }
-    S.scope = 'one'; S.pending = name; App.show('inbox');
+    S.pending = name;
+    if (App.pageById(pageId) && !App.isSelected(pageId)) App.setSelected([...App.selected().map(p => p.id), String(pageId)]);
+    App.show('inbox');
   };
 
   App.tab('inbox', {
@@ -31,11 +31,8 @@
         h('div', { className: 'card' },
           h('div', { className: 'card-head' }, h('h3', { className: 'card-title', textContent: 'Hội thoại' }),
             h('div', { className: 'row', style: 'gap:6px' },
-              h('select', { id: 'ibScope', style: 'width:auto', onchange: e => { S.scope = e.target.value; local.set('ibScope', S.scope); drawPick(); load(); } },
-                h('option', { value: 'one', textContent: 'Page đang chọn' }), h('option', { value: 'pick', textContent: 'Chọn nhiều Page…' }), h('option', { value: 'all', textContent: 'Tất cả Page' })),
               h('button', { className: 'btn btn-soft', onclick: () => load() }, icon('i-sync'), 'Tải lại'))),
-          h('div', { className: 'pick-box', id: 'ibPick', hidden: true }),
-          h('input', { type: 'search', id: 'ibSearch', style: 'margin-top:10px', placeholder: '🔍 Tìm theo tên khách hoặc nội dung tin…', oninput: () => drawList() }),
+          h('input', { type: 'search', id: 'ibSearch', placeholder: '🔍 Tìm theo tên khách hoặc nội dung tin…', oninput: () => drawList() }),
           h('div', { className: 'row', style: 'margin:10px 0;gap:6px' },
             h('div', { className: 'chips', id: 'ibFilter' }, ...[['all', 'Tất cả'], ['unread', 'Chưa đọc'], ['unanswered', 'Chưa trả lời'], ['today', 'Hôm nay']].map(([f, t]) =>
               h('button', { className: 'chip', dataset: { f }, textContent: t, 'aria-pressed': String(f === S.filter), onclick: () => { S.filter = f; drawList(); } }))),
@@ -59,23 +56,12 @@
             h('div', { className: 'hint', style: 'margin-top:6px' }, h('kbd', {}, 'Enter'), ' gửi · ', h('kbd', {}, 'Shift'), '+', h('kbd', {}, 'Enter'), ' xuống dòng · ',
               h('kbd', {}, '/'), ' chọn mẫu · chỉ trả lời được trong 24 giờ kể từ tin cuối của khách')))));
     },
-    refresh() { $('ibScope').value = S.scope; drawPick(); load(); }
+    refresh() { load(); }
   });
   App.onPageChange.push(() => { S.conv = null; resetThread(); });
 
-  function drawPick() {
-    $('ibPick').hidden = S.scope !== 'pick';
-    if (S.scope !== 'pick') return;
-    if (!picked().length) local.set('ibPicked', JSON.stringify([App.page().id]));
-    const box = App.pageChecks(picked());
-    let timer = 0;
-    box.onchange = () => { local.set('ibPicked', JSON.stringify(App.checkedPages(box).map(p => p.id))); clearTimeout(timer); timer = setTimeout(load, 500); };
-    $('ibPick').replaceChildren(h('div', { className: 'row', style: 'margin-bottom:8px' }, h('span', { className: 'muted grow', textContent: 'Tick các Page muốn xem chung:' }),
-      h('button', { className: 'btn btn-ghost btn-sm', textContent: 'Chọn hết', onclick: () => { box.querySelectorAll('input').forEach(i => { i.checked = true; }); box.onchange(); } }),
-      h('button', { className: 'btn btn-ghost btn-sm', textContent: 'Bỏ hết', onclick: () => { box.querySelectorAll('input').forEach(i => { i.checked = false; }); box.onchange(); } })), box);
-  }
   async function load() {
-    const pages = scopePages();
+    const pages = App.selected();
     if (!pages.length) { S.convs = []; $('ibList').replaceChildren(empty('Chưa tick Page nào.')); return; }
     const run = ++S.loading;
     $('ibList').replaceChildren(empty(`Đang tải hội thoại của ${pages.length} Page…`));
@@ -117,7 +103,7 @@
       (S.filter !== 'today' || new Date(c.updated_time).toDateString() === today) &&
       (!lab || (S.crm?.[c.key]?.labels || []).includes(lab)) &&
       (!q || norm(`${c.other.name} ${c.snippet} ${(S.crm?.[c.key]?.labels || []).join(' ')}`).includes(q)));
-    const multi = S.scope !== 'one';
+    const multi = App.selected().length > 1;
     $('ibList').replaceChildren(...(S.errors || []).map(e => h('div', { className: 'status err', textContent: e })),
       ...(list.length ? list.map(c => {
         const wait = c.fromCustomer ? (Date.now() - c.lastAt) / 60e3 : null;

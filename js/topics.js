@@ -24,20 +24,24 @@
           h('button', { type: 'button', className: 'btn btn-soft btn-sm', textContent: 'Viết bài theo chủ đề', onclick: () => {
             App.show('post'); $('poText').value = `${t.title}\n\n${t.direction || ''}`.trim(); $('poText').focus();
           } })))));
-      // Hồ sơ Page đang chọn
-      const page = App.page(), all = await DB.get(PROFILES, {});
-      const key = Object.keys(all).find(k => k === page.id || k.includes(page.id)) || page.id;
-      const p = all[key] || {};
-      $('tpProfile').replaceChildren(h('div', { className: 'card-head' }, h('h3', { className: 'card-title', textContent: `Hồ sơ Page: ${page.name}` })),
-        h('form', { className: 'form-grid', onsubmit: async e => {
-          e.preventDefault(); const f = new FormData(e.target); const cur = await DB.get(PROFILES, {});
-          cur[key] = { ...(cur[key] || {}), niche: String(f.get('niche')), audience: String(f.get('audience')), voice: String(f.get('voice')), updatedAt: Date.now() };
-          await DB.set(PROFILES, cur); toast('Đã lưu hồ sơ Page.');
-        } },
-          h('label', { className: 'field' }, 'Ngành / sản phẩm', h('textarea', { name: 'niche', value: p.niche || '', style: 'min-height:60px' })),
-          h('label', { className: 'field' }, 'Khách hàng', h('textarea', { name: 'audience', value: p.audience || '', style: 'min-height:60px' })),
-          h('label', { className: 'field' }, 'Giọng văn', h('textarea', { name: 'voice', value: p.voice || '', style: 'min-height:60px' })),
-          h('div', { className: 'field wide' }, h('button', { className: 'btn btn-primary', textContent: 'Lưu hồ sơ', style: 'justify-self:start' }))));
+      // Hồ sơ từng Page đang chọn
+      const all = await DB.get(PROFILES, {});
+      $('tpProfile').replaceChildren(h('div', { className: 'card-head' }, h('h3', { className: 'card-title', textContent: `Hồ sơ Page (${App.selected().length} Page đang chọn)` })),
+        ...App.selected().map(page => {
+          const key = Object.keys(all).find(k => k === page.id || k.includes(page.id)) || page.id, p = all[key] || {};
+          return h('details', { className: 'section-gap', open: App.selected().length === 1 },
+            h('summary', { style: 'cursor:pointer;display:flex;gap:8px;align-items:center' }, App.avatar(page.name, App.pageAvatarUrl(page), 24), h('strong', { textContent: page.name }),
+              h('span', { className: 'hint', textContent: p.niche ? '' : '· chưa có hồ sơ' })),
+            h('form', { className: 'form-grid', style: 'margin-top:8px', onsubmit: async e => {
+              e.preventDefault(); const f = new FormData(e.target); const cur = await DB.get(PROFILES, {});
+              cur[key] = { ...(cur[key] || {}), niche: String(f.get('niche')), audience: String(f.get('audience')), voice: String(f.get('voice')), updatedAt: Date.now() };
+              await DB.set(PROFILES, cur); toast(`Đã lưu hồ sơ ${page.name}.`);
+            } },
+              h('label', { className: 'field' }, 'Ngành / sản phẩm', h('textarea', { name: 'niche', value: p.niche || '', style: 'min-height:60px' })),
+              h('label', { className: 'field' }, 'Khách hàng', h('textarea', { name: 'audience', value: p.audience || '', style: 'min-height:60px' })),
+              h('label', { className: 'field' }, 'Giọng văn', h('textarea', { name: 'voice', value: p.voice || '', style: 'min-height:60px' })),
+              h('div', { className: 'field wide' }, h('button', { className: 'btn btn-primary btn-sm', textContent: 'Lưu hồ sơ', style: 'justify-self:start' }))));
+        }));
     }
   });
 })();

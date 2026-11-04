@@ -26,7 +26,8 @@
           h('div', { className: 'scroll', id: 'saOrders' })));
     },
     async refresh() {
-      const orders = await DB.get(STORE, []);
+      // Đơn của các Page đang chọn; đơn nhập tay không gắn Page luôn được tính.
+      const orders = (await DB.get(STORE, [])).filter(o => !o.pageKey || !App.pageById(o.pageKey) || App.isSelected(o.pageKey));
       const [from, to] = Pure.rangeOf(period);
       $('saPeriod').replaceChildren(...PERIODS.map(([k, t]) => h('button', { className: 'chip', textContent: t, 'aria-pressed': String(k === period), onclick: () => { period = k; this.refresh(); } })));
       $('saEditor').replaceChildren(editing ? editor(editing, () => { editing = null; this.refresh(); }) : '');

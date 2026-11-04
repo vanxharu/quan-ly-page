@@ -7,7 +7,6 @@
     mount(el) {
       el.append(h('div', { className: 'card' },
         h('div', { className: 'toolbar' },
-          Object.assign(App.pageSelect('Tất cả Page', App.page()?.id), { id: 'snPage' }),
           h('label', { className: 'row', style: 'gap:6px' }, 'Từ', h('input', { type: 'date', id: 'snFrom', value: Pure.dayKeyOf(Date.now() - 30 * 864e5) })),
           h('label', { className: 'row', style: 'gap:6px' }, 'Đến', h('input', { type: 'date', id: 'snTo', value: Pure.dayKeyOf(Date.now()) })),
           h('label', { className: 'row', style: 'gap:6px' }, 'Tối đa/Page', h('input', { type: 'number', id: 'snMax', value: 50, min: 1, max: 500, style: 'width:80px' })),
@@ -21,7 +20,7 @@
   });
   const sorted = () => [...rows].sort((a, b) => (a[sortKey] > b[sortKey] ? 1 : a[sortKey] < b[sortKey] ? -1 : 0) * (asc ? 1 : -1));
   async function scan() {
-    const id = $('snPage').value, pages = id ? [App.pageById(id)] : App.pages;
+    const pages = App.selected();
     const since = Math.floor(new Date($('snFrom').value + 'T00:00').getTime() / 1000), until = Math.floor(new Date($('snTo').value + 'T23:59:59').getTime() / 1000);
     const max = Math.max(1, Number($('snMax').value) || 50);
     $('snGo').disabled = true; $('snLog').replaceChildren(h('div', { className: 'status pending', textContent: `Đang quét ${pages.length} Page…` }));

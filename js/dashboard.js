@@ -1,17 +1,19 @@
 /* Tổng quan (giống Bảng điều khiển của page-hub.js): mỗi Page một thẻ — người theo dõi, hội thoại chưa đọc, bài hẹn trên FB,
  * bài gần nhất (cảnh báo quá 3 ngày), bài trong hàng chờ/lỗi; tổng cộng và cảnh báo ở trên. Bấm thẻ để mở Hộp thư của Page. */
 (() => {
-  let cache = null, at = 0;
+  let cache = null, at = 0, cacheKey = '';
   App.tab('dashboard', {
     mount(el) {
-      el.append(h('div', { className: 'card-head' }, h('h3', { className: 'card-title', id: 'dbTitle', textContent: 'Tổng quan mọi Page' }),
+      el.append(h('div', { className: 'card-head' }, h('h3', { className: 'card-title', id: 'dbTitle', textContent: 'Tổng quan các Page đang chọn' }),
         h('button', { className: 'btn btn-soft', onclick: () => { cache = null; this.refresh(); } }, icon('i-sync'), 'Cập nhật')),
         h('div', { className: 'kpis', id: 'dbKpis' }), h('div', { id: 'dbAlerts' }), h('div', { className: 'pcards section-gap', id: 'dbCards' }));
     },
     async refresh() {
-      if (!cache || Date.now() - at > 5 * 60e3) {
-        $('dbCards').replaceChildren(empty(`Đang đọc số liệu của ${App.pages.length} Page…`));
-        cache = await pool(App.pages, 5, async p => {
+      const sel = App.selected(), selKey = sel.map(p => p.id).join();
+      if (!cache || cacheKey !== selKey || Date.now() - at > 5 * 60e3) {
+        cacheKey = selKey;
+        $('dbCards').replaceChildren(empty(`Đang đọc số liệu của ${sel.length} Page…`));
+        cache = await pool(sel, 5, async p => {
           const t = p.access_token, r = { page: p };
           const [info, convs, sched, last] = await Promise.all([
             api(`/${p.id}`, { fields: 'followers_count,fan_count' }, 'GET', t).catch(e => ({ error: e.message })),

@@ -1,6 +1,6 @@
 /* Bình luận trên bài của Page: trả lời (có chèn mẫu), thích, ẩn/hiện, xoá. Cần quyền pages_read_user_content + pages_manage_engagement. */
 (() => {
-  let postId = '';
+  let postId = '', postPage = null;
   App.tab('comments', {
     mount(el) {
       el.append(h('div', { className: 'split' },
@@ -14,13 +14,16 @@
     },
     refresh() {
       return guard($('cmPosts'), async () => {
-        const res = await api(`/${App.page().id}/posts`, { fields: 'id,message,created_time,full_picture,comments.limit(0).summary(true)', limit: 25 });
+        $('cmPosts').replaceChildren(empty('Đang tải bài…'));
+        const lists = await pool(App.selected(), 5, page => api(`/${page.id}/posts`, { fields: 'id,message,created_time,full_picture,comments.limit(0).summary(true)', limit: 15 }, 'GET', page.access_token)
+          .then(r => r.data.map(x => ({ ...x, page }))).catch(() => []));
+        const res = { data: lists.flat().sort((a, b) => new Date(b.created_time) - new Date(a.created_time)).slice(0, 60) };
         $('cmPosts').replaceChildren(...(res.data.length ? res.data.map(p => h('div', { className: 'item' + (p.id === postId ? ' active' : ''), onclick: e => {
-          [...$('cmPosts').children].forEach(x => x.classList.toggle('active', x === e.currentTarget)); loadComments(p.id);
+          [...$('cmPosts').children].forEach(x => x.classList.toggle('active', x === e.currentTarget)); postPage = p.page; loadComments(p.id);
         } },
           p.full_picture ? h('img', { className: 'thumb', src: p.full_picture, alt: '' }) : null,
           h('div', { className: 'body' },
-            h('div', { className: 'top' }, h('span', { className: 'time', textContent: fmtTime(p.created_time) }),
+            h('div', { className: 'top' }, App.selected().length > 1 ? App.pageTag(p.page) : null, h('span', { className: 'time', textContent: fmtTime(p.created_time) }),
               h('span', { style: 'margin-left:auto' }, h('span', { className: 'badge', textContent: p.comments?.summary?.total_count ?? 0 }), ' bình luận')),
             h('div', { className: 'snippet', style: 'margin-top:3px', textContent: p.message || '(không có chữ)' })))) : [empty('Chưa có bài.')]));
       });
@@ -30,16 +33,16 @@
 
   async function loadComments(id) {
     postId = id;
-    const page = App.page(), tpls = await App.templates.list();
+    const page = postPage || App.page(), tpls = await App.templates.list(), tk = page.access_token;
     await guard($('cmList'), async () => {
-      const res = await api(`/${id}/comments`, { fields: 'id,from,message,created_time,is_hidden,can_hide,user_likes,attachment{media{image{src}}},comments{from,message}', order: 'reverse_chronological', limit: 100, filter: 'toplevel' });
+      const res = await api(`/${id}/comments`, { fields: 'id,from,message,created_time,is_hidden,can_hide,user_likes,attachment{media{image{src}}},comments{from,message}', order: 'reverse_chronological', limit: 100, filter: 'toplevel' }, 'GET', tk);
       const onlyOpen = $('cmUnanswered').checked;
       const list = res.data.filter(c => !onlyOpen || !(c.comments?.data || []).some(r => r.from?.id === page.id));
       $('cmList').replaceChildren(...(list.length ? list.map(c => {
         const input = h('input', { type: 'text', placeholder: 'Trả lời bình luận…', className: 'grow' });
         const send = h('button', { className: 'btn btn-primary btn-sm', textContent: 'Gửi', onclick: async () => {
           if (!input.value.trim()) return; send.disabled = true;
-          await guard($('cmList'), async () => { await api(`/${c.id}/comments`, { message: input.value.trim() }, 'POST'); await loadComments(id); });
+          await guard($('cmList'), async () => { await api(`/${c.id}/comments`, { message: input.value.trim() }, 'POST', tk); await loadComments(id); });
         } });
         input.onkeydown = e => { if (e.key === 'Enter') send.click(); };
         const act = (text, fn, cls = 'btn-ghost') => h('button', { className: `btn btn-sm ${cls}`, textContent: text, onclick: async e => {
@@ -51,9 +54,9 @@
             h('strong', { textContent: c.from?.name || 'Người dùng' }), h('span', { className: 'hint', textContent: fmtTime(c.created_time) }),
             c.is_hidden ? h('span', { className: 'tag', textContent: 'Đã ẩn' }) : null,
             h('span', { style: 'margin-left:auto;display:flex;gap:4px' },
-              act(c.user_likes ? '👍 Bỏ thích' : '👍 Thích', () => api(`/${c.id}/likes`, {}, c.user_likes ? 'DELETE' : 'POST')),
-              c.can_hide !== false ? act(c.is_hidden ? 'Hiện' : 'Ẩn', () => api(`/${c.id}`, { is_hidden: !c.is_hidden }, 'POST')) : null,
-              act('Xoá', async () => { if (!confirm('Xoá bình luận này?')) throw new Error('Đã huỷ.'); await api(`/${c.id}`, {}, 'DELETE'); }, 'btn-danger'))),
+              act(c.user_likes ? '👍 Bỏ thích' : '👍 Thích', () => api(`/${c.id}/likes`, {}, c.user_likes ? 'DELETE' : 'POST', tk)),
+              c.can_hide !== false ? act(c.is_hidden ? 'Hiện' : 'Ẩn', () => api(`/${c.id}`, { is_hidden: !c.is_hidden }, 'POST', tk)) : null,
+              act('Xoá', async () => { if (!confirm('Xoá bình luận này?')) throw new Error('Đã huỷ.'); await api(`/${c.id}`, {}, 'DELETE', tk); }, 'btn-danger'))),
           h('div', { style: 'margin:6px 0 0 36px;white-space:pre-wrap;word-break:break-word', textContent: c.message || '' }),
           c.attachment?.media?.image?.src ? h('img', { src: c.attachment.media.image.src, alt: '', style: 'margin:6px 0 0 36px;max-width:160px;border-radius:8px' }) : null,
           ...(c.comments?.data || []).map(r => h('div', { className: 'reply-line', style: 'margin-left:36px', textContent: `↳ ${r.from?.name || ''}: ${r.message || ''}` })),

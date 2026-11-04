@@ -4,43 +4,51 @@
   const METRICS = { page_media_view: 'Lượt xem', page_total_media_view_unique: 'Người xem', page_post_engagements: 'Tương tác', page_follows: 'Người theo dõi' };
   App.tab('stats', {
     mount(el) {
-      el.append(h('div', { className: 'card-head' }, h('h3', { className: 'card-title', textContent: 'Số liệu 28 ngày qua' }), h('button', { className: 'btn btn-soft', onclick: () => this.refresh() }, icon('i-sync'), 'Tải lại')),
+      el.append(h('div', { className: 'card-head' }, h('h3', { className: 'card-title', id: 'stTitle', textContent: 'Số liệu 28 ngày qua' }), h('button', { className: 'btn btn-soft', onclick: () => this.refresh() }, icon('i-sync'), 'Tải lại')),
         h('div', { className: 'kpis', id: 'stKpis' }), h('div', { className: 'card' }, h('div', { className: 'bars', id: 'stBars' }), h('div', { className: 'scroll section-gap', id: 'stTable' })),
         h('div', { className: 'card' }, h('div', { className: 'card-head' }, h('h3', { className: 'card-title', textContent: 'Giờ đăng hiệu quả (bài 90 ngày qua)' })), h('div', { id: 'stHeat' })));
     },
     async refresh() {
+      $('stTitle').textContent = `Số liệu 28 ngày qua · ${App.selected().length === 1 ? App.selected()[0].name : `cộng ${App.selected().length} Page`}`;
       await guard($('stTable'), insights);
       await guard($('stHeat'), heat);
     }
   });
   async function insights() {
-    const pid = App.page().id, until = Math.floor(Date.now() / 1000), since = until - 28 * 86400;
-    const info = await api(`/${pid}`, { fields: 'followers_count,fan_count' });
-    // Gọi từng chỉ số riêng: một chỉ số bị Meta bỏ thì các chỉ số khác vẫn hiện.
-    const rows = {}, cols = [], errors = [];
-    await Promise.all(Object.keys(METRICS).map(async m => {
-      try {
-        const res = await api(`/${pid}/insights`, { metric: m, period: 'day', since, until });
-        for (const v of res.data[0]?.values || []) (rows[v.end_time.slice(0, 10)] ||= {})[m] = typeof v.value === 'number' ? v.value : Object.values(v.value || {}).reduce((a, b) => a + b, 0);
-        cols.push(m);
-      } catch (e) { errors.push(`${METRICS[m]}: ${e.message}`); }
-    }));
+    // Cộng gộp các Page đang chọn. Gọi từng chỉ số riêng: một chỉ số bị Meta bỏ thì các chỉ số khác vẫn hiện.
+    const pages = App.selected(), until = Math.floor(Date.now() / 1000), since = until - 28 * 86400;
+    const rows = {}, colSet = new Set(), errors = new Set();
+    let followers = 0;
+    $('stTable').replaceChildren(empty(`Đang đọc số liệu của ${pages.length} Page…`));
+    await pool(pages, 4, async page => {
+      const t = page.access_token;
+      const info = await api(`/${page.id}`, { fields: 'followers_count,fan_count' }, 'GET', t).catch(() => ({}));
+      followers += info.followers_count ?? info.fan_count ?? 0;
+      await Promise.all(Object.keys(METRICS).map(async m => {
+        try {
+          const res = await api(`/${page.id}/insights`, { metric: m, period: 'day', since, until }, 'GET', t);
+          for (const v of res.data[0]?.values || []) { const r = rows[v.end_time.slice(0, 10)] ||= {}; r[m] = (r[m] || 0) + (typeof v.value === 'number' ? v.value : Object.values(v.value || {}).reduce((a, b) => a + b, 0)); }
+          colSet.add(m);
+        } catch (e) { errors.add(`${METRICS[m]}: ${e.message}`); }
+      }));
+    });
+    const cols = [...colSet];
     const order = Object.keys(METRICS).filter(m => cols.includes(m));
     const days = Object.keys(rows).sort();
     const total = m => days.reduce((s, d) => s + (rows[d][m] || 0), 0);
-    $('stKpis').replaceChildren(h('div', { className: 'kpi' }, h('div', { className: 'label', textContent: 'Người theo dõi hiện tại' }), h('div', { className: 'value', textContent: num(info.followers_count ?? info.fan_count ?? 0) })),
+    $('stKpis').replaceChildren(h('div', { className: 'kpi' }, h('div', { className: 'label', textContent: `Người theo dõi (${pages.length} Page)` }), h('div', { className: 'value', textContent: num(followers) })),
       ...order.map(m => h('div', { className: 'kpi' }, h('div', { className: 'label', textContent: METRICS[m] + ' (28 ngày)' }), h('div', { className: 'value', textContent: num(total(m)) }))));
     const main = order[0], peak = Math.max(1, ...days.map(d => rows[d][main] || 0));
     $('stBars').replaceChildren(...(main ? days.map(d => h('div', { className: 'b', style: `height:${Math.max(2, (rows[d][main] || 0) / peak * 100)}%`, dataset: { tip: `${d.slice(8)}/${d.slice(5, 7)}: ${num(rows[d][main] || 0)} ${METRICS[main].toLowerCase()}` } })) : []));
     $('stTable').replaceChildren(h('table', {},
       h('thead', {}, h('tr', {}, h('th', { textContent: 'Ngày' }), ...order.map(m => h('th', { textContent: METRICS[m] })))),
       h('tbody', {}, ...[...days].reverse().map(d => h('tr', {}, h('td', { textContent: d.split('-').reverse().join('/') }), ...order.map(m => h('td', { textContent: rows[d][m] == null ? '' : num(rows[d][m]) })))))),
-      ...errors.map(e => h('p', { className: 'hint', textContent: e })));
+      ...[...errors].map(e => h('p', { className: 'hint', textContent: e })));
   }
   async function heat() {
-    const page = App.page();
-    const posts = await apiPaged(`/${page.id}/posts`, { since: Math.floor(Date.now() / 1000) - 90 * 86400, limit: 100,
-      fields: 'created_time,shares,reactions.summary(total_count).limit(0),comments.summary(total_count).limit(0)' }, page.access_token, 3);
+    const pages = App.selected();
+    const posts = (await pool(pages, 4, page => apiPaged(`/${page.id}/posts`, { since: Math.floor(Date.now() / 1000) - 90 * 86400, limit: 100,
+      fields: 'created_time,shares,reactions.summary(total_count).limit(0),comments.summary(total_count).limit(0)' }, page.access_token, 3).catch(() => []))).flat();
     if (!posts.length) return $('stHeat').replaceChildren(empty('Chưa có bài trong 90 ngày qua.'));
     const cell = Array.from({ length: 7 }, () => Array.from({ length: 24 }, () => ({ n: 0, sum: 0 })));
     const byHour = Array.from({ length: 24 }, () => ({ n: 0, sum: 0 }));
@@ -59,10 +67,11 @@
             style: c.n ? `background:color-mix(in srgb, var(--primary) ${Math.round(15 + 85 * (c.sum / c.n) / max)}%, transparent)` : '' }))]))),
       h('div', { className: 'row', style: 'margin-top:12px' },
         best.length ? h('span', {}, 'Giờ tốt nhất (≥ 2 bài): ', h('b', { textContent: best.map(b => `${b.hr}h (TB ${Math.round(b.avg)})`).join(' · ') })) : h('span', { className: 'hint', textContent: 'Chưa đủ dữ liệu (cần ≥ 2 bài cùng giờ).' }),
-        best.length ? h('button', { className: 'btn btn-soft btn-sm', textContent: 'Đặt làm khung giờ Lịch đăng cho Page này', onclick: async () => {
+        best.length ? h('button', { className: 'btn btn-soft btn-sm', textContent: `Đặt làm khung giờ Lịch đăng cho ${pages.length} Page đang chọn`, onclick: async () => {
           const s = await DB.get('fbScheduleSettingsV1', {});
-          s.pages ||= {}; s.pages[page.id] = { ...(s.pages[page.id] || { perDay: s.perDay || 1, weekdays: s.weekdays || [0, 1, 2, 3, 4, 5, 6] }), windows };
-          await DB.set('fbScheduleSettingsV1', s); toast(`Đã đặt khung giờ ${windows} cho ${page.name}.`);
+          s.pages ||= {};
+          for (const page of pages) s.pages[page.id] = { ...(s.pages[page.id] || { perDay: s.perDay || 1, weekdays: s.weekdays || [0, 1, 2, 3, 4, 5, 6] }), windows };
+          await DB.set('fbScheduleSettingsV1', s); toast(`Đã đặt khung giờ ${windows} cho ${pages.length} Page.`);
         } }) : null),
       h('p', { className: 'hint', textContent: `Tính từ ${posts.length} bài: tương tác = cảm xúc + bình luận + chia sẻ. Ô càng đậm, trung bình càng cao.` }));
   }

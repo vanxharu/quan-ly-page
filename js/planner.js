@@ -6,7 +6,9 @@
   const STATUS = { draft: ['Chờ duyệt', 'pending'], approved: ['Đã duyệt', 'ok'], scheduling: ['Đang lên lịch…', 'pending'], scheduled: ['Đã hẹn trên FB', 'ok'],
     local: ['Chờ đăng (tiện ích)', 'pending'], posted: ['Đã đăng', 'ok'], missed: ['Lỡ giờ', 'err'], error: ['Lỗi', 'err'] };
   const defaults = () => ({ windows: Pure.DEFAULT_WINDOWS, perDay: 1, weekdays: [0, 1, 2, 3, 4, 5, 6], days: [], pages: {} });
-  let scope = 'default', filterPage = '', filterStatus = '';
+  let scope = 'default', filterStatus = '';
+  // Bài thuộc Page đang chọn (bài chưa rõ Page luôn hiện để chọn lại Page).
+  const inSel = i => !App.planner.pageOf(i) || App.isSelected(App.planner.pageOf(i).id);
   App.planner = { STATUS, pageOf: item => App.pageById(item.pageKey) || App.pages.find(p => String(item.pageKey || '').includes(p.id)) || App.pages.find(p => norm(p.name) === norm(item.pageName)) };
   const pageOf = App.planner.pageOf;
   const getSettings = async () => ({ ...defaults(), ...(await DB.get(SETTINGS, {})) });
@@ -24,7 +26,6 @@
           h('div', { className: 'card', id: 'plDays' })),
         h('div', { className: 'card' },
           h('div', { className: 'toolbar' },
-            Object.assign(App.pageSelect('Tất cả Page'), { id: 'plPage', onchange: e => { filterPage = e.target.value; this.refresh(); } }),
             h('select', { id: 'plStatus', style: 'width:auto', onchange: e => { filterStatus = e.target.value; this.refresh(); } },
               h('option', { value: '', textContent: 'Mọi trạng thái' }), ...Object.entries(STATUS).map(([k, [t]]) => h('option', { value: k, textContent: t }))),
             h('span', { className: 'grow' }),
@@ -42,7 +43,7 @@
         queue = queue.map(i => i.status === 'scheduled' && i.at < Date.now() ? { ...i, status: 'posted' } : i); await DB.set(QUEUE, queue);
       }
       drawCfg(s); drawDays(s);
-      const list = queue.filter(i => (!filterPage || pageOf(i)?.id === filterPage) && (!filterStatus || i.status === filterStatus))
+      const list = queue.filter(i => inSel(i) && (!filterStatus || i.status === filterStatus))
         .sort((a, b) => (a.at || 0) - (b.at || 0));
       const groups = new Map();
       for (const i of list) { const k = i.at ? new Date(i.at).toLocaleDateString('vi-VN', { weekday: 'long', day: '2-digit', month: '2-digit' }) : 'Chưa xếp giờ'; (groups.get(k) || groups.set(k, []).get(k)).push(i); }
@@ -95,7 +96,7 @@
   }
   async function scheduleAll() {
     $('plLog').replaceChildren();
-    const list = (await DB.get(QUEUE, [])).filter(i => i.status === 'approved' && (!filterPage || pageOf(i)?.id === filterPage));
+    const list = (await DB.get(QUEUE, [])).filter(i => i.status === 'approved' && inSel(i));
     if (!list.length) return log('err', 'Không có bài đã duyệt.');
     $('plGo').disabled = true;
     let ok = 0;
@@ -106,14 +107,14 @@
   }
   async function approveAll() {
     const queue = await DB.get(QUEUE, []);
-    await DB.set(QUEUE, queue.map(i => i.status === 'draft' && (!filterPage || pageOf(i)?.id === filterPage) ? { ...i, status: 'approved' } : i));
+    await DB.set(QUEUE, queue.map(i => i.status === 'draft' && inSel(i) ? { ...i, status: 'approved' } : i));
     refresh();
   }
   async function autoTime() {
     $('plLog').replaceChildren();
     const s = await getSettings();
     const queue = await DB.get(QUEUE, []);
-    const waiting = queue.filter(i => ['draft', 'approved'].includes(i.status) && !i.at && pageOf(i) && (!filterPage || pageOf(i).id === filterPage));
+    const waiting = queue.filter(i => ['draft', 'approved'].includes(i.status) && !i.at && pageOf(i) && App.isSelected(pageOf(i).id));
     if (!waiting.length) return log('err', 'Không có bài nháp nào chưa xếp giờ.');
     const byKey = new Map();
     for (const i of waiting) { const k = pageOf(i).id; (byKey.get(k) || byKey.set(k, []).get(k)).push(i); }
@@ -139,7 +140,7 @@
     $('plCfg').replaceChildren(
       h('div', { className: 'card-head' }, h('h3', { className: 'card-title', textContent: 'Khung giờ & số bài' }),
         h('select', { style: 'width:auto;max-width:200px', onchange: e => { scope = e.target.value; refresh(); } },
-          h('option', { value: 'default', textContent: 'Mặc định mọi Page' }), ...App.pages.map(p => h('option', { value: p.id, textContent: (s.pages[p.id] ? '★ ' : '') + p.name, selected: p.id === scope })))),
+          h('option', { value: 'default', textContent: 'Mặc định mọi Page' }), ...App.selected().map(p => h('option', { value: p.id, textContent: (s.pages[p.id] ? '★ ' : '') + p.name, selected: p.id === scope })))),
       h('label', { className: 'field' }, 'Khung giờ tương tác', h('input', { type: 'text', value: src.windows ?? s.windows, placeholder: Pure.DEFAULT_WINDOWS,
         onchange: e => save({ windows: Pure.windowsLabel(Pure.parseWindows(e.target.value)) || Pure.DEFAULT_WINDOWS }) })),
       h('div', { className: 'row', style: 'margin-top:10px' },

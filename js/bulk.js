@@ -8,7 +8,6 @@
         h('div', { className: 'card' },
           h('div', { className: 'card-head' }, h('h3', { className: 'card-title', textContent: '1. Chọn khách' })),
           h('div', { className: 'toolbar' },
-            Object.assign(App.pageSelect('', App.page()?.id), { id: 'bkPage' }),
             h('button', { className: 'btn btn-soft', onclick: () => load() }, icon('i-sync'), 'Tải khách'),
             h('label', { className: 'row', style: 'gap:6px' }, h('input', { type: 'checkbox', id: 'bk24', checked: true, onchange: () => draw() }), 'Chỉ khách nhắn trong 24 giờ'),
             h('select', { id: 'bkLabel', style: 'width:auto', onchange: () => draw() }),
@@ -43,23 +42,31 @@
       $('bkLabel').replaceChildren(h('option', { value: '', textContent: 'Mọi nhãn' }), ...labels.map(l => h('option', { value: l, textContent: l })));
     }
   });
+  // Khách của mọi Page đang chọn ở trên cùng.
   async function load() {
-    const page = App.pageById($('bkPage').value);
-    $('bkList').replaceChildren(empty('Đang tải…'));
-    try {
-      const res = await api(`/${page.id}/conversations`, { platform: 'messenger', limit: 100, fields: 'id,updated_time,participants' }, 'GET', page.access_token);
-      S.convs = (res.data || []).map(c => { const other = c.participants?.data.find(u => u.id !== page.id) || {}; return { page, other, updated: new Date(c.updated_time).getTime(), key: App.crmKey(page.id, other.name) }; });
-      S.crm = await App.crm.all();
-      draw();
-    } catch (e) { $('bkList').replaceChildren(h('div', { className: 'status err', textContent: e.message })); }
+    const pages = App.selected();
+    $('bkList').replaceChildren(empty(`Đang tải khách của ${pages.length} Page…`));
+    const errors = [];
+    const lists = await pool(pages, 5, async page => {
+      try {
+        const res = await api(`/${page.id}/conversations`, { platform: 'messenger', limit: 100, fields: 'id,updated_time,participants' }, 'GET', page.access_token);
+        return (res.data || []).map(c => { const other = c.participants?.data.find(u => u.id !== page.id) || {}; return { page, other, updated: new Date(c.updated_time).getTime(), key: App.crmKey(page.id, other.name) }; });
+      } catch (e) { errors.push(`${page.name}: ${e.message}`); return []; }
+    });
+    S.convs = lists.flat().sort((a, b) => b.updated - a.updated);
+    S.crm = await App.crm.all();
+    draw();
+    errors.forEach(e => $('bkList').prepend(h('div', { className: 'status err', style: 'grid-column:1/-1', textContent: e })));
   }
+  App.onPageChange.push(() => { S.convs = []; $('bkList')?.replaceChildren(empty('Bấm "Tải khách".')); });
   function visible() {
     const only24 = $('bk24').checked, lab = $('bkLabel').value;
     return S.convs.filter(c => c.other.id && (!only24 || Date.now() - c.updated < 864e5) && (!lab || (S.crm?.[c.key]?.labels || []).includes(lab)));
   }
   function draw() {
     const list = visible();
-    $('bkList').replaceChildren(...(list.length ? list.map(c => h('label', { title: fmtTime(c.updated) }, h('input', { type: 'checkbox', value: c.other.id, checked: true }), `${c.other.name || 'Khách'} · ${fmtShort(c.updated)}`))
+    $('bkList').replaceChildren(...(list.length ? list.map(c => h('label', { title: `${c.page.name} · ${fmtTime(c.updated)}` }, h('input', { type: 'checkbox', value: `${c.page.id}|${c.other.id}`, checked: true }),
+      App.avatar(c.page.name, App.pageAvatarUrl(c.page), 18), `${c.other.name || 'Khách'} · ${fmtShort(c.updated)}`))
       : [empty(S.convs.length ? 'Không có khách khớp điều kiện.' : 'Bấm "Tải khách".')]));
   }
   const tick = on => $('bkList').querySelectorAll('input').forEach(i => { i.checked = on; });
@@ -68,7 +75,7 @@
   async function run() {
     if (S.running) return;
     const ids = new Set([...$('bkList').querySelectorAll('input:checked')].map(i => i.value));
-    const targets = visible().filter(c => ids.has(c.other.id));
+    const targets = visible().filter(c => ids.has(`${c.page.id}|${c.other.id}`));
     const mode = document.querySelector('[name=bkMode]:checked').value;
     const tplIds = [...$('bkTpls').querySelectorAll('input:checked')].map(i => i.value);
     const tpls = (await App.templates.list()).filter(t => tplIds.includes(t.id));
