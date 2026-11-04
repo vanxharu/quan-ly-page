@@ -346,7 +346,19 @@ $('btnDark').onclick = () => setDark(!document.body.classList.contains('dark-mod
 // ── Đăng nhập ──────────────────────────────────────────────
 function loadSdk(appId) {
   if (!/^\d+$/.test(appId)) return;
-  window.fbAsyncInit = () => { FB.init({ appId, version: VERSION }); $('fbLogin').disabled = false; $('loginStatus').textContent = 'Token chỉ giữ trong tab này, đóng tab là phải đăng nhập lại.'; };
+  window.fbAsyncInit = () => {
+    FB.init({ appId, version: VERSION });
+    $('fbLogin').disabled = false;
+    $('loginStatus').textContent = 'Trang không lưu token. Lần sau mở trang sẽ tự vào nếu Facebook còn đăng nhập.';
+    // Tự vào bằng phiên Facebook sẵn có (SDK cấp token mới), trừ khi người dùng vừa bấm Đăng xuất.
+    if (store.get('autoLogin') !== '0' && !pages.length) {
+      $('loginStatus').textContent = 'Đang kiểm tra phiên Facebook…';
+      FB.getLoginStatus(r => {
+        if (r.status === 'connected' && !pages.length) start(r.authResponse.accessToken);
+        else $('loginStatus').textContent = 'Bấm nút để đăng nhập.';
+      }, true);
+    }
+  };
   if (window.FB) return window.fbAsyncInit();
   document.head.append(h('script', { src: 'https://connect.facebook.net/vi_VN/sdk.js', async: true, crossOrigin: 'anonymous',
     onerror: () => { $('loginStatus').textContent = 'Không tải được Facebook SDK. Dùng "Tuỳ chọn khác" để dán token.'; } }));
@@ -354,9 +366,13 @@ function loadSdk(appId) {
 $('appId').value = store.get('appId') || DEFAULT_APP_ID;
 loadSdk($('appId').value);
 $('saveApp').onclick = () => { store.set('appId', $('appId').value.trim()); loadSdk($('appId').value.trim()); };
-$('fbLogin').onclick = () => FB.login(r => r.authResponse ? start(r.authResponse.accessToken) : ($('loginStatus').textContent = 'Đăng nhập bị huỷ.'), { config_id: CONFIG_ID });
+$('fbLogin').onclick = () => {
+  store.set('autoLogin', '1');
+  FB.login(r => r.authResponse ? start(r.authResponse.accessToken) : ($('loginStatus').textContent = 'Đăng nhập bị huỷ.'), { config_id: CONFIG_ID });
+};
 $('useToken').onclick = () => start($('token').value.trim());
-$('btnLogout').onclick = () => location.reload();
+// Chỉ thoát khỏi trang, không gọi FB.logout (sẽ đăng xuất luôn facebook.com).
+$('btnLogout').onclick = () => { store.set('autoLogin', '0'); location.reload(); };
 
 async function start(userToken) {
   $('loginStatus').textContent = 'Đang tải danh sách Page…';
