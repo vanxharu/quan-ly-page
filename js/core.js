@@ -316,8 +316,13 @@ App.avatar = (name, url, size = 36) => {
 // Ảnh khách Messenger (User Profile API, field profile_pic) theo PSID. Gom 50 PSID/lần gọi bằng Graph batch,
 // nhớ 3 ngày trong IndexedDB vì link ảnh của Facebook hết hạn sau vài ngày.
 const PIC_TTL = 3 * 864e5;
+const avatarWarnings = new Set();
+function reportAvatarError(error) {
+  const detail = JSON.stringify({ code: error.code, subcode: error.error_subcode ?? error.sub, message: String(error.message || 'Phản hồi ảnh không hợp lệ.').replace(/access_token=[^&\s]+/g, 'access_token=[ẩn]') });
+  if (!avatarWarnings.has(detail)) { avatarWarnings.add(detail); console.warn('[Avatar khách]', detail); }
+}
 App.customerPics = async (page, psids) => {
-  const cache = await DB.get('avatarCacheV1', {});
+  const cache = await DB.get('avatarCacheV2', {});
   const out = new Map(), need = [];
   for (const id of new Set(psids.filter(Boolean))) {
     const c = cache[id];
@@ -329,12 +334,16 @@ App.customerPics = async (page, psids) => {
       const res = await api('/', { batch: chunk.map(id => ({ method: 'GET', relative_url: `${id}?fields=profile_pic` })), include_headers: false }, 'POST', page.access_token);
       res.forEach((r, k) => {
         let url = '';
-        try { url = r?.code === 200 ? JSON.parse(r.body).profile_pic || '' : ''; } catch {}
+        try {
+          const profile = JSON.parse(r.body);
+          url = r?.code === 200 ? profile.profile_pic || '' : '';
+          if (!url && profile.error) reportAvatarError(profile.error);
+        } catch { reportAvatarError({}); }
         cache[chunk[k]] = { url, at: Date.now() }; out.set(chunk[k], url);
       });
-    } catch { /* thiếu quyền hoặc mạng lỗi: giữ chữ cái đầu */ }
+    } catch (e) { reportAvatarError(e); }
   }
-  if (need.length) await DB.set('avatarCacheV1', cache);
+  if (need.length) await DB.set('avatarCacheV2', cache);
   return out;
 };
 // Dòng Page nhỏ: ảnh + tên (dùng trong danh sách bài, bình luận…).
