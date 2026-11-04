@@ -78,10 +78,14 @@
   new MutationObserver(sync).observe($('subnav'), { subtree: true, childList: true, attributes: true, attributeFilter: ['aria-selected'] });
   const fitViewport = () => {
     document.documentElement.style.setProperty('--workspace-header-height', document.querySelector('.header').getBoundingClientRect().height + 'px');
-    document.documentElement.style.setProperty('--workspace-viewport-height', (window.visualViewport?.height || window.innerHeight) + 'px');
+    const visibleHeight = window.visualViewport?.height || window.innerHeight;
+    document.documentElement.style.setProperty('--workspace-viewport-height', visibleHeight + 'px');
+    document.body.classList.toggle('compact-chat', visibleHeight < 650);
+    document.body.classList.toggle('keyboard-chat', window.innerWidth <= 620 && visibleHeight < window.innerHeight - 120 && document.activeElement?.id === 'ibText');
   };
   new ResizeObserver(fitViewport).observe(document.querySelector('.header'));
   window.addEventListener('resize', fitViewport);
+  document.addEventListener('focusin', fitViewport);
   window.visualViewport?.addEventListener('resize', fitViewport);
   fitViewport();
   if (App.pages.length) ready();

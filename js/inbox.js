@@ -13,16 +13,19 @@
   }
 
   const settings = async () => InboxRules.withDefaults(await DB.get(InboxRules.SETTINGS_KEY));
+  const normalizeConversation = (page, c) => {
+    const other = c.participants?.data?.find(u => u.id !== page.id) || {};
+    const last = c.messages?.data?.[0];
+    return { ...c, page, other, fromCustomer: last ? last.from?.id !== page.id : true,
+      lastAt: new Date(last?.created_time || c.updated_time).getTime(), key: App.crmKey(page.id, other.name) };
+  };
 
   async function fetchConvs(page, limit = 50, next) {
     const res = await api(next || `/${page.id}/conversations`, next ? {} : { platform: 'messenger', limit,
       fields: 'id,updated_time,snippet,unread_count,participants,messages.limit(1){from,created_time}' }, 'GET', page.access_token);
-    const list = (res.data || []).map(c => {
-      const other = c.participants?.data.find(u => u.id !== page.id) || {};
-      const last = c.messages?.data?.[0];
-      return { ...c, page, other, fromCustomer: last ? last.from?.id !== page.id : true,
-        lastAt: new Date(last?.created_time || c.updated_time).getTime(), key: App.crmKey(page.id, other.name) };
-    });
+    // Chỉ lưu dữ liệu hội thoại, không lưu token Page hay URL phân trang vào bản lưu dự phòng.
+    if (!next && limit === 50) await DB.set(`inboxConversationCacheV1:${page.id}`, { at: Date.now(), data: res.data || [] }).catch(() => {});
+    const list = (res.data || []).map(c => normalizeConversation(page, c));
     list.next = res.paging?.next || '';
     return list;
   }
@@ -77,11 +80,23 @@
   async function load(silent) {
     const pages = App.selected();
     if (!pages.length) { S.convs = []; $('ibList').replaceChildren(empty('Chưa tick Page nào.')); return; }
+    const scope = pages.map(p => p.id).join();
+    if (S.listBusy && S.fetchScope === scope) return;
     const run = ++S.loading;
+    S.listBusy = true; S.fetchScope = scope; S.lastListAt = Date.now();
+    try {
     if (!silent) $('ibList').replaceChildren(empty(`Đang tải hội thoại của ${pages.length} Page…`));
     const errors = [];
-    const lists = await pool(pages, 5, p => fetchConvs(p).catch(e => { errors.push(`${p.name}: ${e.message}`); return []; }));
+    const lists = await pool(pages, 3, p => fetchConvs(p).catch(async e => {
+      errors.push(`${p.name}: ${e.message}${e.code ? ` (mã ${e.code}${e.sub ? '/' + e.sub : ''})` : ''}`);
+      const previous = S.convs.filter(c => c.page.id === p.id);
+      if (previous.length) return previous;
+      const cache = await DB.get(`inboxConversationCacheV1:${p.id}`, {}).catch(() => ({}));
+      return Date.now() - cache.at < 7 * 864e5 && Array.isArray(cache.data) ? cache.data.map(c => normalizeConversation(p, c)) : [];
+    }));
     if (run !== S.loading) return;
+    S.failures = errors.length === pages.length ? (S.failures || 0) + 1 : 0;
+    S.retryAt = S.failures ? Date.now() + Math.min(300e3, 30e3 * 2 ** (S.failures - 1)) : 0;
     lists.forEach((list, i) => { if (!S.more.has(pages[i].id) && typeof list.next === 'string') S.more.set(pages[i].id, { page: pages[i], next: list.next }); });
     S.convs = [...new Map([...S.extra.values(), ...lists.flat()].map(c => [c.id, c])).values()].sort((a, b) => new Date(b.updated_time) - new Date(a.updated_time));
     S.crm = await App.crm.all();
@@ -95,6 +110,7 @@
     loadPics(S.convs);
     if (S.pending) { $('ibSearch').value = S.pending; const hit = S.convs.find(c => norm(c.other.name) === norm(S.pending)); S.pending = ''; if (hit) openConv(hit); }
     drawList();
+    } finally { if (run === S.loading) S.listBusy = false; }
   }
   async function loadMore() {
     if (S.moreBusy) return;
@@ -159,7 +175,10 @@
       (!q || norm(`${c.other.name} ${c.snippet} ${(S.crm?.[c.key]?.labels || []).join(' ')}`).includes(q)));
     const multi = App.selected().length > 1;
     $('ibMore').hidden = ![...S.more.values()].some(x => x.next);
-    $('ibList').replaceChildren(...(S.errors || []).map(e => h('div', { className: 'status err', textContent: e })),
+    const errors = S.errors?.length ? [h('details', { className: 'status err' },
+      h('summary', { textContent: `${S.errors.length} Page chưa tải được tin mới.${S.convs.length ? ' Đang giữ danh sách đã tải.' : ''} Bấm xem chi tiết.` }),
+      ...S.errors.map(e => h('div', { style: 'margin-top:8px', textContent: e })))] : [];
+    $('ibList').replaceChildren(...errors,
       ...(list.length ? list.map(c => {
         const wait = c.fromCustomer ? (Date.now() - c.lastAt) / 60e3 : null;
         const labels = S.crm?.[c.key]?.labels || [];
@@ -202,7 +221,15 @@
     drawList();
     await guard($('ibThread'), async () => {
       const res = await api(`/${c.id}`, { fields: 'messages.limit(40){message,from,created_time,attachments{image_data,mime_type,name,file_url}}' }, 'GET', c.page.access_token)
-        .catch(e => { if (S.conv !== c) return null; throw e; });
+        .catch(e => {
+          if (S.conv !== c) return null;
+          if (silent) {
+            $('ibThreadError')?.remove();
+            $('ibThread').append(h('div', { id: 'ibThreadError', className: 'status err', textContent: 'Chưa cập nhật được tin mới. Đang giữ lịch sử đã tải. ' + e.message }));
+            return null;
+          }
+          throw e;
+        });
       if (!res) return;
       if (S.conv !== c) return;
       const msgs = (res.messages?.data || []).reverse();
@@ -304,6 +331,7 @@
   // ── Báo tin mới khi trang đang mở (Cài đặt › Hộp thư) ─────
   const seen = new Map(); let first = true;
   async function poll() {
+    if (Date.now() < (S.retryAt || 0)) return;
     const st = await settings();
     if (!st.webNotify) return;
     const pages = App.pages.filter(p => !st.mutedPages.includes(p.id));
@@ -321,8 +349,16 @@
     document.title = unread ? `(${unread}) Meta Assistant` : 'Meta Assistant';
     if (App.current() === 'inbox' && !document.hidden) load();
   }
-  // Cập nhật gần thời gian thực: 10 giây/lần khi đang xem Hộp thư (không phụ thuộc webhook).
-  setInterval(() => { if (App.pages.length && App.current() === 'inbox' && !document.hidden) load(true); }, 10e3);
+  // Ưu tiên hội thoại đang đọc; hạn chế quét lại hàng chục Page khi Facebook đang lỗi.
+  setInterval(async () => {
+    if (!App.pages.length || App.current() !== 'inbox' || document.hidden || Date.now() < (S.retryAt || 0)) return;
+    const listInterval = App.selected().length > 5 ? 60e3 : 30e3;
+    if (Date.now() - (S.lastListAt || 0) >= listInterval) return load(true);
+    if (S.conv && S.draftReady && !S.reading && !S.listBusy) {
+      S.reading = true;
+      try { await openConv(S.conv, { silent: true }); } finally { S.reading = false; }
+    }
+  }, 8e3);
   App.onLogin.push(async () => {
     poll();
     const loop = async () => { const st = await settings(); setTimeout(async () => { await poll(); loop(); }, Math.max(1, Number(st.pollMinutes) || 2) * 60e3); };

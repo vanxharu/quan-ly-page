@@ -25,13 +25,13 @@
     return true;
   };
 
+  let channel = null, timer = 0;
   if (sb) {
     sb.auth.getSession().then(({ data }) => { S.user = data.session?.user || null; S.ready = true; drawCard(); });
     sb.auth.onAuthStateChange((_e, session) => { S.user = session?.user || null; drawCard(); subscribe(); });
   }
 
   // Hộp thư tải lại khi máy chủ ghi tin mới (đỡ phải chờ chu kỳ 2 phút).
-  let channel = null, timer = 0;
   function subscribe() {
     if (!S.user) {
       clearTimeout(timer);
