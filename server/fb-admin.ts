@@ -3,7 +3,7 @@
 //  - connect: đổi token Facebook của bạn thành token Page dài hạn, lưu vào page_tokens, đăng ký webhook cho Page;
 //  - profile: cài nút Bắt đầu, lời chào, menu cố định, câu hỏi gợi ý cho Messenger của Page;
 //  - status: Page đã kết nối và trạng thái đăng ký webhook.
-// Cần secret FB_APP_SECRET (dán ở Edge Functions › Secrets). Giữ "Verify JWT" bật.
+// Cần secret FB_APP_SECRET (dán ở Edge Functions › Secrets). Tắt "Verify JWT": hàm tự kiểm tra phiên đăng nhập qua /auth/v1/user.
 
 const GRAPH = 'https://graph.facebook.com/v25.0';
 const APP_ID = '1062977306762250';
@@ -83,7 +83,7 @@ async function status() {
 async function serve(req) {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS });
   // Chỉ tài khoản đã đăng nhập (chủ / nhân viên) mới gọi được.
-  const user = await fetch(`${env('SUPABASE_URL')}/auth/v1/user`, { headers: { apikey: env('SUPABASE_ANON_KEY'), Authorization: req.headers.get('authorization') || '' } });
+  const user = await fetch(`${env('SUPABASE_URL')}/auth/v1/user`, { headers: { apikey: env('SUPABASE_ANON_KEY') || env('SUPABASE_SERVICE_ROLE_KEY'), Authorization: req.headers.get('authorization') || '' } });
   if (!user.ok) return json({ error: 'Chưa đăng nhập máy chủ.' }, 401);
   try {
     const body = await req.json().catch(() => ({}));
