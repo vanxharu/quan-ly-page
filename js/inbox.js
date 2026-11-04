@@ -85,7 +85,25 @@
     const byPage = new Map();
     for (const c of convs) if (c.other.id && !S.pics.has(c.other.id)) (byPage.get(c.page) || byPage.set(c.page, []).get(c.page)).push(c.other.id);
     await pool([...byPage], 3, async ([page, ids]) => { for (const [id, url] of await App.customerPics(page, ids)) if (url) S.pics.set(id, url); });
-    if (byPage.size) { drawList(); if (S.conv) drawHead(S.conv); }
+    if (byPage.size) {
+      drawList();
+      if (S.conv) { drawHead(S.conv); refreshThreadAvatars(S.conv); }
+    }
+  }
+  // Cập nhật riêng avatar khi ảnh về muộn; giữ nguyên tin nhắn, vị trí cuộn và ô soạn.
+  function messageAvatar(c) {
+    const url = S.pics.get(c.other.id) || '';
+    const avatar = App.avatar(c.other.name, url, 24);
+    Object.assign(avatar.dataset, { customerAvatar: '1', pageId: c.page.id, psid: c.other.id, avatarUrl: url });
+    return avatar;
+  }
+  function refreshThreadAvatars(c) {
+    const url = S.pics.get(c.other.id) || '';
+    for (const avatar of $('ibThread').querySelectorAll('[data-customer-avatar]')) {
+      if (avatar.dataset.pageId === c.page.id && avatar.dataset.psid === c.other.id && avatar.dataset.avatarUrl !== url) {
+        avatar.replaceWith(messageAvatar(c));
+      }
+    }
   }
   // Ảnh khách kèm ảnh Page nhỏ ở góc (như Business Suite).
   const custAvatar = (c, size = 36) => {
@@ -141,7 +159,7 @@
       $('ibThread').replaceChildren(...msgs.map((m, i) => h('div', { className: 'msgrow' + (me(m) ? ' me' : '') },
         // Ảnh chỉ hiện ở tin cuối của mỗi chuỗi tin liên tiếp cùng người gửi.
         msgs[i + 1] && me(msgs[i + 1]) === me(m) ? h('span', { style: 'width:24px;flex:none' })
-          : me(m) ? App.avatar(c.page.name, App.pageAvatarUrl(c.page), 24) : App.avatar(c.other.name, S.pics.get(c.other.id), 24),
+          : me(m) ? App.avatar(c.page.name, App.pageAvatarUrl(c.page), 24) : messageAvatar(c),
         h('div', { className: 'msg' + (me(m) ? ' me' : ''), title: fmtTime(m.created_time) },
         m.message || null,
         ...(m.attachments?.data || []).map(a => a.image_data?.url ? h('img', { src: a.image_data.url, alt: '', style: 'display:block;max-width:220px;border-radius:10px;margin-top:4px' })
