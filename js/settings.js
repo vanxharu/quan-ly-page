@@ -36,6 +36,7 @@
   App.tab('settings', {
     mount(el) {
       el.append(
+        h('div', { className: 'card', id: 'srvCard' }),
         h('div', { className: 'card' },
           h('h3', { className: 'card-title', textContent: 'Dữ liệu' }),
           h('p', { className: 'muted', textContent: 'Dữ liệu (mẫu tin, khách, đơn, lịch đăng…) lưu trên trình duyệt này. Dùng máy/trình duyệt khác thì xuất sao lưu rồi nhập ở đó.' }),
@@ -51,7 +52,7 @@
           h('div', { className: 'log', id: 'stLog' })),
         h('form', { className: 'card', id: 'stRules' }));
     },
-    async refresh() { drawRules(); }
+    async refresh() { drawRules(); App.server?.drawCard(); }
   });
   async function doImport(file) {
     if (!file) return;

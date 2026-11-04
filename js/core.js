@@ -13,6 +13,7 @@ App.CONFIG_ID = '1092800303751533';
 App.NAV = {
   messages: ['Tin nhắn', [['inbox', 'Hộp thư', 'i-msg'], ['templates', 'Mẫu tin', 'i-msg'], ['crm', 'Khách hàng', 'i-user'], ['bulk', 'Gửi hàng loạt', 'i-send']]],
   publishing: ['Đăng bài', [['post', 'Đăng Fanpage', 'i-pen'], ['planner', 'Lịch đăng', 'i-cal'], ['scheduled', 'Đã hẹn trên FB', 'i-cal'], ['topics', 'Chủ đề', 'i-grid']]],
+  auto: ['Tự động', [['botrules', 'Từ khoá', 'i-msg'], ['botcomments', 'Bình luận tự động', 'i-like'], ['botflows', 'Kịch bản', 'i-grid'], ['botmenu', 'Menu & lời chào', 'i-gear'], ['botlog', 'Nhật ký & đơn bot', 'i-cal']]],
   engage: ['Tương tác', [['comments', 'Bình luận', 'i-like'], ['scanner', 'Quét bài viết', 'i-search']]],
   manage: ['Quản lý', [['dashboard', 'Tổng quan', 'i-grid'], ['calendar', 'Lịch nội dung', 'i-cal'], ['stats', 'Số liệu', 'i-grid'], ['sales', 'Bán hàng', 'i-cart'], ['settings', 'Cài đặt', 'i-gear']]]
 };
@@ -224,6 +225,7 @@ async function start(userToken) {
     if (!App.pages.length) throw new Error('Tài khoản không quản lý Page nào, hoặc chưa cấp quyền pages_show_list.');
   } catch (e) { $('loginStatus').textContent = `Lỗi: ${e.message}`; return; }
   $('token').value = '';
+  App.userToken = userToken; // chỉ giữ trong bộ nhớ tab, dùng để kết nối Page với máy chủ bot
   App.templateVars = (await DB.get('settings', {})).templateVars || {};
   let saved = []; try { saved = JSON.parse(local.get('selPages')) || []; } catch {}
   saved = saved.filter(id => App.pages.some(p => p.id === id));
