@@ -1,0 +1,364 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Quản lý Page</title>
+<style>
+  :root { --bg:#f5f6f8; --card:#fff; --text:#1c1e21; --muted:#65676b; --line:#dde0e4; --accent:#1b74e4; --ok:#1e8e3e; --err:#d93025; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#18191a; --card:#242526; --text:#e4e6eb; --muted:#b0b3b8; --line:#3a3b3c; --accent:#4599ff; } }
+  * { box-sizing: border-box; }
+  body { margin:0; font:15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; background:var(--bg); color:var(--text); }
+  header, main { max-width:1000px; margin:0 auto; padding:16px; }
+  header { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+  h1 { font-size:20px; margin:0 auto 0 0; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:16px; margin-bottom:16px; }
+  input, textarea, select, button { font:inherit; color:inherit; }
+  input[type=text], input[type=password], input[type=datetime-local], textarea, select { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:8px 10px; width:100%; }
+  textarea { min-height:110px; resize:vertical; }
+  button { background:var(--accent); color:#fff; border:0; border-radius:8px; padding:8px 14px; cursor:pointer; }
+  button.ghost { background:transparent; color:var(--accent); border:1px solid var(--line); }
+  button:disabled { opacity:.5; cursor:default; }
+  .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin:8px 0; }
+  .row > * { flex:1 1 200px; }
+  .row > button, .row > label { flex:0 0 auto; }
+  nav { display:flex; gap:4px; flex-wrap:wrap; margin-bottom:12px; }
+  nav button { background:transparent; color:var(--text); border:1px solid var(--line); }
+  nav button[aria-selected=true] { background:var(--accent); color:#fff; border-color:var(--accent); }
+  .muted { color:var(--muted); font-size:13px; }
+  .list { border:1px solid var(--line); border-radius:8px; max-height:420px; overflow:auto; }
+  .item { padding:10px 12px; border-bottom:1px solid var(--line); cursor:pointer; }
+  .item:last-child { border-bottom:0; }
+  .item.active { background:color-mix(in srgb, var(--accent) 12%, transparent); }
+  .split { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1.4fr); gap:12px; }
+  @media (max-width:720px) { .split { grid-template-columns:1fr; } }
+  .msg { padding:6px 10px; border-radius:12px; margin:6px 0; max-width:85%; white-space:pre-wrap; word-break:break-word; background:var(--bg); }
+  .msg.me { margin-left:auto; background:var(--accent); color:#fff; }
+  .chips { display:flex; gap:6px; flex-wrap:wrap; }
+  .chips button { background:var(--bg); color:var(--text); border:1px solid var(--line); padding:4px 10px; font-size:13px; }
+  .pages { display:flex; flex-wrap:wrap; gap:6px 14px; }
+  .log div { font-size:13px; } .ok { color:var(--ok); } .err { color:var(--err); }
+  table { border-collapse:collapse; width:100%; font-size:14px; }
+  th, td { border-bottom:1px solid var(--line); padding:6px 8px; text-align:right; } th:first-child, td:first-child { text-align:left; }
+  .scroll { overflow-x:auto; }
+  [hidden] { display:none !important; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Quản lý Page</h1>
+  <select id="page" aria-label="Page đang xem" style="max-width:260px" hidden></select>
+</header>
+<main>
+  <section class="card" id="login">
+    <div class="row">
+      <input type="text" id="appId" placeholder="App ID của ứng dụng Meta" inputmode="numeric">
+      <button id="saveApp" class="ghost">Lưu App ID</button>
+      <button id="fbLogin" disabled>Đăng nhập Facebook</button>
+    </div>
+    <div class="row">
+      <input type="password" id="token" placeholder="Hoặc dán User Access Token (từ Graph API Explorer)">
+      <button id="useToken" class="ghost">Dùng token</button>
+    </div>
+    <p class="muted" id="loginStatus">Chưa đăng nhập. Token chỉ giữ trong tab này, đóng tab là mất.</p>
+  </section>
+
+  <div id="app" hidden>
+    <nav role="tablist">
+      <button data-tab="post" aria-selected="true">Đăng bài</button>
+      <button data-tab="inbox">Inbox</button>
+      <button data-tab="comments">Bình luận</button>
+      <button data-tab="stats">Số liệu</button>
+    </nav>
+
+    <section class="card" data-panel="post">
+      <textarea id="postText" placeholder="Nội dung bài viết"></textarea>
+      <div class="row">
+        <label>Ảnh (tuỳ chọn) <input type="file" id="postImage" accept="image/*"></label>
+        <label>Hẹn giờ (bỏ trống = đăng ngay) <input type="datetime-local" id="postAt"></label>
+      </div>
+      <p class="muted">Đăng lên các Page:</p>
+      <div class="pages" id="postPages"></div>
+      <div class="row"><button id="doPost">Đăng / Hẹn lịch</button></div>
+      <div class="log" id="postLog"></div>
+    </section>
+    <section class="card" data-panel="post">
+      <div class="row"><strong>Bài đã hẹn của Page đang xem</strong><button class="ghost" id="loadScheduled">Tải lại</button></div>
+      <div class="list" id="scheduled"></div>
+    </section>
+
+    <section class="card" data-panel="inbox" hidden>
+      <div class="split">
+        <div>
+          <div class="row"><strong>Cuộc trò chuyện</strong><button class="ghost" id="loadConvs">Tải lại</button></div>
+          <div class="list" id="convs"></div>
+        </div>
+        <div>
+          <div class="list" id="thread" style="padding:8px;min-height:200px"></div>
+          <p class="muted">Chỉ trả lời được trong 24 giờ kể từ tin nhắn cuối của khách.</p>
+          <div class="chips" id="templates"></div>
+          <textarea id="replyText" placeholder="Trả lời…" style="min-height:70px;margin-top:8px"></textarea>
+          <div class="row"><button id="sendReply" disabled>Gửi</button><button class="ghost" id="saveTemplate">Lưu làm mẫu</button></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="card" data-panel="comments" hidden>
+      <div class="split">
+        <div>
+          <div class="row"><strong>Bài gần đây</strong><button class="ghost" id="loadPosts">Tải lại</button></div>
+          <div class="list" id="posts"></div>
+        </div>
+        <div><div class="list" id="comments"></div></div>
+      </div>
+    </section>
+
+    <section class="card" data-panel="stats" hidden>
+      <div class="row"><strong>28 ngày qua</strong><button class="ghost" id="loadStats">Tải lại</button></div>
+      <p id="followers"></p>
+      <div class="scroll" id="statsTable"></div>
+    </section>
+  </div>
+</main>
+
+<script>
+'use strict';
+const VERSION = 'v25.0';
+const GRAPH = `https://graph.facebook.com/${VERSION}`;
+// Ứng dụng "INBOX" dùng Facebook Login for Business: quyền nằm trong cấu hình (config_id), không truyền scope.
+const DEFAULT_APP_ID = '1062977306762250';
+const CONFIG_ID = '1092800303751533';
+// Chỉ số còn dùng được sau đợt Meta bỏ page_impressions* (11/2025, 6/2026).
+const METRICS = { page_media_view: 'Lượt xem', page_total_media_view_unique: 'Người xem', page_post_engagements: 'Tương tác', page_follows: 'Người theo dõi' };
+
+const $ = id => document.getElementById(id);
+const store = { get: k => { try { return localStorage.getItem(k); } catch { return null; } }, set: (k, v) => { try { localStorage.setItem(k, v); } catch {} } };
+// Dựng DOM bằng textContent: nội dung tin nhắn/bình luận là của người lạ, không được chèn làm HTML.
+function h(tag, props = {}, ...kids) {
+  const el = Object.assign(document.createElement(tag), props);
+  for (const k of kids) if (k != null) el.append(k);
+  return el;
+}
+const fmtTime = t => new Date(typeof t === 'number' ? t * 1000 : t).toLocaleString('vi-VN');
+
+let pages = [];      // [{ id, name, access_token }]
+const page = () => pages.find(p => p.id === $('page').value);
+
+async function api(path, params = {}, method = 'GET', token = page()?.access_token) {
+  const url = new URL(GRAPH + path);
+  let body;
+  const enc = v => typeof v === 'object' ? JSON.stringify(v) : String(v);
+  if (params instanceof FormData) { body = params; body.append('access_token', token); }
+  else if (method === 'GET' || method === 'DELETE') { for (const [k, v] of Object.entries(params)) url.searchParams.set(k, enc(v)); url.searchParams.set('access_token', token); }
+  else { body = new URLSearchParams(); for (const [k, v] of Object.entries(params)) body.set(k, enc(v)); body.set('access_token', token); }
+  const res = await fetch(url, { method, body });
+  const json = await res.json().catch(() => ({ error: { message: `HTTP ${res.status}` } }));
+  if (json.error) throw new Error(json.error.error_user_msg || json.error.message);
+  return json;
+}
+async function guard(target, fn) {
+  try { await fn(); } catch (e) { target.replaceChildren(h('div', { className: 'item err', textContent: e.message })); }
+}
+
+// ── Đăng nhập ──────────────────────────────────────────────
+function loadSdk(appId) {
+  if (!/^\d+$/.test(appId)) return;
+  window.fbAsyncInit = () => { FB.init({ appId, version: VERSION }); $('fbLogin').disabled = false; };
+  if (window.FB) return window.fbAsyncInit();
+  document.head.append(h('script', { src: 'https://connect.facebook.net/vi_VN/sdk.js', async: true, crossOrigin: 'anonymous' }));
+}
+$('appId').value = store.get('appId') || DEFAULT_APP_ID;
+loadSdk($('appId').value);
+$('saveApp').onclick = () => { store.set('appId', $('appId').value.trim()); loadSdk($('appId').value.trim()); };
+$('fbLogin').onclick = () => FB.login(r => r.authResponse ? start(r.authResponse.accessToken) : ($('loginStatus').textContent = 'Đăng nhập bị huỷ.'), { config_id: CONFIG_ID });
+$('useToken').onclick = () => start($('token').value.trim());
+
+async function start(userToken) {
+  $('loginStatus').textContent = 'Đang tải danh sách Page…';
+  try {
+    const res = await api('/me/accounts', { fields: 'id,name,access_token', limit: 100 }, 'GET', userToken);
+    pages = res.data || [];
+    if (!pages.length) throw new Error('Tài khoản không quản lý Page nào, hoặc chưa cấp quyền pages_show_list.');
+  } catch (e) { $('loginStatus').textContent = `Lỗi: ${e.message}`; return; }
+  $('token').value = '';
+  $('loginStatus').textContent = `Đã kết nối ${pages.length} Page.`;
+  $('page').replaceChildren(...pages.map(p => h('option', { value: p.id, textContent: p.name })));
+  $('postPages').replaceChildren(...pages.map(p => h('label', {}, h('input', { type: 'checkbox', value: p.id }), ' ' + p.name)));
+  $('page').hidden = false; $('app').hidden = false;
+  refresh();
+}
+
+// ── Tab ────────────────────────────────────────────────────
+let tab = 'post';
+document.querySelectorAll('nav button').forEach(b => b.onclick = () => {
+  tab = b.dataset.tab;
+  document.querySelectorAll('nav button').forEach(x => x.setAttribute('aria-selected', x === b));
+  document.querySelectorAll('[data-panel]').forEach(s => s.hidden = s.dataset.panel !== tab);
+  refresh();
+});
+$('page').onchange = () => refresh();
+function refresh() {
+  ({ post: loadScheduled, inbox: loadConvs, comments: loadPosts, stats: loadStats })[tab]();
+}
+
+// ── Đăng bài / hẹn lịch ────────────────────────────────────
+$('doPost').onclick = async () => {
+  const text = $('postText').value.trim(), file = $('postImage').files[0], at = $('postAt').value;
+  const targets = [...$('postPages').querySelectorAll('input:checked')].map(i => pages.find(p => p.id === i.value));
+  const log = (cls, t) => $('postLog').append(h('div', { className: cls, textContent: t }));
+  $('postLog').replaceChildren();
+  if (!text && !file) return log('err', 'Chưa có nội dung hoặc ảnh.');
+  if (!targets.length) return log('err', 'Chưa chọn Page.');
+  const when = at ? Math.floor(new Date(at).getTime() / 1000) : 0;
+  if (when && when < Date.now() / 1000 + 600) return log('err', 'Giờ hẹn phải sau hiện tại ít nhất 10 phút (quy định của Facebook).');
+  $('doPost').disabled = true;
+  for (const p of targets) {
+    try {
+      const sched = when ? { published: false, scheduled_publish_time: when } : {};
+      let res;
+      if (file) {
+        const form = new FormData();
+        form.append('source', file);
+        if (text) form.append('caption', text);
+        for (const [k, v] of Object.entries(sched)) form.append(k, String(v));
+        res = await api(`/${p.id}/photos`, form, 'POST', p.access_token);
+      } else {
+        res = await api(`/${p.id}/feed`, { message: text, ...sched }, 'POST', p.access_token);
+      }
+      log('ok', `✓ ${p.name}: ${when ? 'đã hẹn ' + fmtTime(when) : 'đã đăng'} (${res.post_id || res.id})`);
+    } catch (e) { log('err', `✗ ${p.name}: ${e.message}`); }
+  }
+  $('doPost').disabled = false;
+  loadScheduled();
+};
+
+$('loadScheduled').onclick = () => loadScheduled();
+function loadScheduled() {
+  return guard($('scheduled'), async () => {
+    const res = await api(`/${page().id}/scheduled_posts`, { fields: 'id,message,scheduled_publish_time', limit: 50 });
+    $('scheduled').replaceChildren(...(res.data.length ? res.data.map(p => h('div', { className: 'item' },
+      h('div', { className: 'muted', textContent: fmtTime(p.scheduled_publish_time) }),
+      h('div', { textContent: p.message || '(chỉ có ảnh)' }),
+      h('button', { className: 'ghost', textContent: 'Huỷ lịch', onclick: async e => {
+        e.target.disabled = true;
+        await guard($('scheduled'), async () => { await api(`/${p.id}`, {}, 'DELETE'); await loadScheduled(); });
+      } })
+    )) : [h('div', { className: 'item muted', textContent: 'Không có bài hẹn.' })]));
+  });
+}
+
+// ── Inbox ──────────────────────────────────────────────────
+let conv = null; // { id, psid }
+const templates = () => { try { return JSON.parse(store.get('replyTemplates')) || []; } catch { return []; } };
+function renderTemplates() {
+  $('templates').replaceChildren(...templates().map((t, i) => h('button', { textContent: t.length > 30 ? t.slice(0, 30) + '…' : t, title: t,
+    onclick: () => { $('replyText').value = t; },
+    oncontextmenu: e => { e.preventDefault(); const list = templates(); list.splice(i, 1); store.set('replyTemplates', JSON.stringify(list)); renderTemplates(); } })));
+}
+renderTemplates();
+$('saveTemplate').onclick = () => {
+  const t = $('replyText').value.trim();
+  if (t && !templates().includes(t)) { store.set('replyTemplates', JSON.stringify([...templates(), t])); renderTemplates(); }
+};
+$('templates').title = 'Bấm để chèn mẫu, chuột phải để xoá';
+
+$('loadConvs').onclick = () => loadConvs();
+function loadConvs() {
+  return guard($('convs'), async () => {
+    const pid = page().id;
+    const res = await api(`/${pid}/conversations`, { platform: 'messenger', fields: 'id,updated_time,snippet,unread_count,participants', limit: 30 });
+    $('convs').replaceChildren(...(res.data.length ? res.data.map(c => {
+      const other = c.participants?.data.find(u => u.id !== pid) || {};
+      return h('div', { className: 'item' + (conv?.id === c.id ? ' active' : ''), onclick: () => openConv(c.id, other.id) },
+        h('strong', { textContent: (other.name || 'Khách') + (c.unread_count ? ` (${c.unread_count})` : '') }),
+        h('div', { className: 'muted', textContent: `${fmtTime(c.updated_time)} · ${c.snippet || ''}` }));
+    }) : [h('div', { className: 'item muted', textContent: 'Chưa có tin nhắn.' })]));
+  });
+}
+function openConv(id, psid) {
+  conv = { id, psid };
+  $('sendReply').disabled = !psid;
+  [...$('convs').children].forEach(el => el.classList.remove('active'));
+  return guard($('thread'), async () => {
+    const res = await api(`/${id}`, { fields: 'messages.limit(30){message,from,created_time}' });
+    const pid = page().id;
+    $('thread').replaceChildren(...(res.messages?.data || []).reverse().map(m =>
+      h('div', { className: 'msg' + (m.from?.id === pid ? ' me' : ''), title: fmtTime(m.created_time), textContent: m.message || '(tệp đính kèm)' })));
+    $('thread').scrollTop = $('thread').scrollHeight;
+  });
+}
+$('sendReply').onclick = async () => {
+  const text = $('replyText').value.trim();
+  if (!text || !conv?.psid) return;
+  $('sendReply').disabled = true;
+  try {
+    await api(`/${page().id}/messages`, { recipient: { id: conv.psid }, messaging_type: 'RESPONSE', message: { text } }, 'POST');
+    $('replyText').value = '';
+    await openConv(conv.id, conv.psid);
+  } catch (e) { $('thread').append(h('div', { className: 'err', textContent: e.message })); }
+  $('sendReply').disabled = false;
+};
+
+// ── Bình luận ──────────────────────────────────────────────
+$('loadPosts').onclick = () => loadPosts();
+function loadPosts() {
+  return guard($('posts'), async () => {
+    const res = await api(`/${page().id}/posts`, { fields: 'id,message,created_time,comments.limit(0).summary(true)', limit: 20 });
+    $('posts').replaceChildren(...(res.data.length ? res.data.map(p => h('div', { className: 'item', onclick: e => { [...$('posts').children].forEach(x => x.classList.toggle('active', x === e.currentTarget)); loadComments(p.id); } },
+      h('div', { className: 'muted', textContent: `${fmtTime(p.created_time)} · ${p.comments?.summary?.total_count ?? 0} bình luận` }),
+      h('div', { textContent: (p.message || '(không có chữ)').slice(0, 140) }))) : [h('div', { className: 'item muted', textContent: 'Chưa có bài.' })]));
+  });
+}
+function loadComments(postId) {
+  return guard($('comments'), async () => {
+    const res = await api(`/${postId}/comments`, { fields: 'id,from,message,created_time,comments{from,message}', order: 'reverse_chronological', limit: 50 });
+    $('comments').replaceChildren(...(res.data.length ? res.data.map(c => {
+      const input = h('input', { type: 'text', placeholder: 'Trả lời bình luận…' });
+      const btn = h('button', { textContent: 'Gửi', onclick: async () => {
+        if (!input.value.trim()) return;
+        btn.disabled = true;
+        await guard($('comments'), async () => { await api(`/${c.id}/comments`, { message: input.value.trim() }, 'POST'); await loadComments(postId); });
+      } });
+      return h('div', { className: 'item', style: 'cursor:default' },
+        h('strong', { textContent: c.from?.name || 'Người dùng' }), h('span', { className: 'muted', textContent: ' · ' + fmtTime(c.created_time) }),
+        h('div', { textContent: c.message || '' }),
+        ...(c.comments?.data || []).map(r => h('div', { className: 'muted', style: 'margin-left:16px', textContent: `↳ ${r.from?.name || ''}: ${r.message || ''}` })),
+        h('div', { className: 'row' }, input, btn));
+    }) : [h('div', { className: 'item muted', textContent: 'Bài này chưa có bình luận.' })]));
+  });
+}
+
+// ── Số liệu ────────────────────────────────────────────────
+$('loadStats').onclick = () => loadStats();
+function loadStats() {
+  return guard($('statsTable'), async () => {
+    const pid = page().id, until = Math.floor(Date.now() / 1000), since = until - 28 * 86400;
+    const info = await api(`/${pid}`, { fields: 'followers_count,fan_count' });
+    $('followers').textContent = `Người theo dõi: ${(info.followers_count ?? info.fan_count ?? 0).toLocaleString('vi-VN')}`;
+    // Gọi từng chỉ số riêng: một chỉ số bị Meta bỏ thì các chỉ số khác vẫn hiện.
+    const rows = {}, cols = [], errors = [];
+    await Promise.all(Object.keys(METRICS).map(async m => {
+      try {
+        const res = await api(`/${pid}/insights`, { metric: m, period: 'day', since, until });
+        for (const v of res.data[0]?.values || []) {
+          const day = v.end_time.slice(0, 10);
+          (rows[day] ||= {})[m] = typeof v.value === 'number' ? v.value : Object.values(v.value || {}).reduce((a, b) => a + b, 0);
+        }
+        cols.push(m);
+      } catch (e) { errors.push(`${METRICS[m]}: ${e.message}`); }
+    }));
+    const order = Object.keys(METRICS).filter(m => cols.includes(m));
+    const days = Object.keys(rows).sort().reverse();
+    const total = m => days.reduce((s, d) => s + (rows[d][m] || 0), 0);
+    $('statsTable').replaceChildren(
+      h('table', {},
+        h('thead', {}, h('tr', {}, h('th', { textContent: 'Ngày' }), ...order.map(m => h('th', { textContent: METRICS[m] })))),
+        h('tbody', {},
+          h('tr', {}, h('th', { textContent: 'Tổng 28 ngày' }), ...order.map(m => h('th', { textContent: total(m).toLocaleString('vi-VN') }))),
+          ...days.map(d => h('tr', {}, h('td', { textContent: d.split('-').reverse().join('/') }), ...order.map(m => h('td', { textContent: (rows[d][m] ?? '').toLocaleString('vi-VN') })))))),
+      ...errors.map(e => h('p', { className: 'err muted', textContent: e })));
+  });
+}
+</script>
+</body>
+</html>
