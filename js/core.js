@@ -146,7 +146,16 @@ App.resolveVars = (text, { name = '', pageName = '' } = {}, vars = App.templateV
   return out;
 };
 // Gửi chữ rồi ảnh (nếu có) vào hội thoại Messenger. Ngoài 24 giờ kể từ tin cuối của khách, Meta sẽ từ chối.
+// Hội thoại do app khác (chatbot cũ: Fchat, AhaChat, ManyChat…) giữ quyền: giành lại quyền rồi gửi lại một lần.
 App.sendMessage = async (page, psid, text, imageData) => {
+  try { return await sendRaw(page, psid, text, imageData); } catch (e) {
+    if (e.sub !== 2018300) throw e;
+    try { await api(`/${page.id}/take_thread_control`, { recipient: { id: psid }, metadata: 'mabot' }, 'POST', page.access_token); }
+    catch { throw Object.assign(new Error('Hội thoại này đang do một ứng dụng chatbot khác giữ (Fchat, AhaChat, ManyChat…). Vào Cài đặt Page › Nhắn tin nâng cao / Định tuyến cuộc trò chuyện, đặt ứng dụng này làm ứng dụng chính hoặc gỡ ứng dụng kia.'), { code: e.code, sub: e.sub }); }
+    return sendRaw(page, psid, text, imageData);
+  }
+};
+async function sendRaw(page, psid, text, imageData) {
   if (text) await api(`/${page.id}/messages`, { recipient: { id: psid }, messaging_type: 'RESPONSE', message: { text } }, 'POST', page.access_token);
   if (imageData) {
     const blob = await (await fetch(imageData)).blob();
@@ -157,7 +166,7 @@ App.sendMessage = async (page, psid, text, imageData) => {
     form.append('filedata', blob, `anh.${(blob.type.split('/')[1] || 'png').replace('jpeg', 'jpg')}`);
     await api(`/${page.id}/messages`, form, 'POST', page.access_token);
   }
-};
+}
 App.recordTemplateUse = async (tpl, customerKey) => {
   const stats = await DB.get('templateStatsV1', {});
   const s = stats[tpl.id] ||= { title: tpl.title, sent: 0, customers: [], lastAt: 0 };
