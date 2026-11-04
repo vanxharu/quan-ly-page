@@ -34,3 +34,6 @@ body:has([data-panel=inbox]:not([hidden])) .workspace-intro{flex:none;margin-bot
 [data-panel=inbox] .crm:has(form){max-height:min(260px,35dvh)}
 [data-panel=inbox] #ibMore{flex:none;margin-top:8px}
 @media(max-width:620px){[data-panel=inbox] .crm:has(form){max-height:150px}}
+body.compact-chat:has([data-panel=inbox]:not([hidden])) .workspace-intro{display:none}
+body.compact-chat [data-panel=inbox] .composer>.hint{display:none}
+@media(max-width:620px){.compact-chat [data-panel=inbox] .split>.card:first-child{flex-basis:110px}.compact-chat [data-panel=inbox] .split>.card:first-child>.row{display:none}.compact-chat [data-panel=inbox] .crm:not(:has(form)){display:none}.keyboard-chat [data-panel=inbox] .split>.card:first-child,.keyboard-chat [data-panel=inbox] .crm{display:none}}
