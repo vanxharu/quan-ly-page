@@ -43,7 +43,7 @@
         ...rows.filter(r => r.stale && !r.error).map(r => ['pending', `🕒 ${r.page.name}: ${r.lastPost ? 'đã ' + Math.floor((Date.now() - r.lastPost) / 864e5) + ' ngày chưa đăng' : 'chưa có bài'}`, () => { $('page').value = r.page.id; App.show('post'); }])];
       $('dbAlerts').replaceChildren(...alerts.slice(0, 12).map(([cls, t, fn]) => h('div', { className: 'status ' + cls, style: 'margin-bottom:4px;cursor:pointer', textContent: t, onclick: fn })));
       $('dbCards').replaceChildren(...rows.sort((a, b) => b.unread - a.unread || b.followers - a.followers).map(r => h('div', { className: 'pcard', onclick: () => App.openConversation(r.page.id, '') },
-        h('div', { className: 'n', title: r.page.name, textContent: r.page.name }),
+        h('div', { className: 'n', title: r.page.name, style: 'display:flex;gap:8px;align-items:center' }, App.avatar(r.page.name, App.pageAvatarUrl(r.page), 26), h('span', { style: 'overflow:hidden;text-overflow:ellipsis', textContent: r.page.name })),
         r.error ? h('div', { className: 'status err', textContent: r.error }) : h('div', { className: 'm' },
           h('span', {}, 'Theo dõi ', h('b', { textContent: num(r.followers) })), h('span', {}, 'Chưa đọc ', h('b', { textContent: r.unread })),
           h('span', {}, 'Hẹn FB ', h('b', { textContent: r.scheduled })), h('span', {}, 'Hàng chờ ', h('b', { textContent: r.drafts })),

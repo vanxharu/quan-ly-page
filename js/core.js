@@ -261,5 +261,41 @@ App.onPageChange = [];
 App.pageSelect = (allLabel, value = '') => h('select', { style: 'width:auto;max-width:240px' },
   allLabel ? h('option', { value: '', textContent: allLabel }) : null,
   ...App.pages.map(p => h('option', { value: p.id, textContent: p.name, selected: p.id === value })));
-App.pageChecks = (selected = []) => h('div', { className: 'pages' }, ...App.pages.map(p => h('label', { title: p.name }, h('input', { type: 'checkbox', value: p.id, checked: selected.includes(p.id) }), p.name)));
+App.pageChecks = (selected = []) => h('div', { className: 'pages' }, ...App.pages.map(p => h('label', { title: p.name }, h('input', { type: 'checkbox', value: p.id, checked: selected.includes(p.id) }), App.avatar(p.name, App.pageAvatarUrl(p), 20), p.name)));
+
+// ── Ảnh đại diện ───────────────────────────────────────────
+App.pageAvatarUrl = p => p?.picture?.data?.url || '';
+// Ảnh tròn; chưa có ảnh (hoặc ảnh lỗi) thì hiện chữ cái đầu trên nền gradient.
+App.avatar = (name, url, size = 36) => {
+  const el = h('span', { className: 'avatar', style: `width:${size}px;height:${size}px;font-size:${Math.round(size * .36)}px`, textContent: initials(name) });
+  if (url) { const img = h('img', { src: url, alt: '', loading: 'lazy', referrerPolicy: 'no-referrer', onerror: () => img.remove() }); el.append(img); }
+  return el;
+};
+// Ảnh khách Messenger (User Profile API, field profile_pic) theo PSID. Gom 50 PSID/lần gọi bằng Graph batch,
+// nhớ 3 ngày trong IndexedDB vì link ảnh của Facebook hết hạn sau vài ngày.
+const PIC_TTL = 3 * 864e5;
+App.customerPics = async (page, psids) => {
+  const cache = await DB.get('avatarCacheV1', {});
+  const out = new Map(), need = [];
+  for (const id of new Set(psids.filter(Boolean))) {
+    const c = cache[id];
+    if (c && Date.now() - c.at < PIC_TTL) out.set(id, c.url); else need.push(id);
+  }
+  for (let i = 0; i < need.length; i += 50) {
+    const chunk = need.slice(i, i + 50);
+    try {
+      const res = await api('/', { batch: chunk.map(id => ({ method: 'GET', relative_url: `${id}?fields=profile_pic` })), include_headers: false }, 'POST', page.access_token);
+      res.forEach((r, k) => {
+        let url = '';
+        try { url = r?.code === 200 ? JSON.parse(r.body).profile_pic || '' : ''; } catch {}
+        cache[chunk[k]] = { url, at: Date.now() }; out.set(chunk[k], url);
+      });
+    } catch { /* thiếu quyền hoặc mạng lỗi: giữ chữ cái đầu */ }
+  }
+  if (need.length) await DB.set('avatarCacheV1', cache);
+  return out;
+};
+const drawHeaderAvatar = () => $('pageAvt').replaceChildren(App.avatar(App.page()?.name, App.pageAvatarUrl(App.page()), 26));
+App.onLogin.push(drawHeaderAvatar);
+App.onPageChange.push(drawHeaderAvatar);
 App.checkedPages = box => [...box.querySelectorAll('input:checked')].map(i => App.pageById(i.value)).filter(Boolean);

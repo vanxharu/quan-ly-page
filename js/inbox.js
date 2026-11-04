@@ -1,7 +1,10 @@
 /* Hộp thư (giống inbox-tab.js của tiện ích, nhưng đọc qua Graph API): một hoặc tất cả Page, lọc, thời gian khách chờ,
  * tự gắn nhãn theo lời khách (InboxRules), mẫu tin bằng nút "Mẫu" hoặc gõ "/", ảnh đính kèm, khung CRM, báo tin mới. */
 (() => {
-  const S = { scope: local.get('ibScope') || 'one', filter: 'all', convs: [], conv: null, tpl: null, image: '', loading: 0 };
+  const S = { scope: local.get('ibScope') || 'one', filter: 'all', convs: [], conv: null, tpl: null, image: '', loading: 0, pics: new Map() };
+  const picked = () => { try { return JSON.parse(local.get('ibPicked')) || []; } catch { return []; } };
+  // Page cần đọc theo phạm vi: Page đang chọn / Chọn nhiều Page / Tất cả.
+  const scopePages = () => S.scope === 'all' ? App.pages : S.scope === 'pick' ? App.pages.filter(p => picked().includes(p.id)) : [App.page()];
   const settings = async () => InboxRules.withDefaults(await DB.get(InboxRules.SETTINGS_KEY));
 
   async function fetchConvs(page, limit = 50) {
@@ -28,10 +31,11 @@
         h('div', { className: 'card' },
           h('div', { className: 'card-head' }, h('h3', { className: 'card-title', textContent: 'Hội thoại' }),
             h('div', { className: 'row', style: 'gap:6px' },
-              h('select', { id: 'ibScope', style: 'width:auto', onchange: e => { S.scope = e.target.value; local.set('ibScope', S.scope); load(); } },
-                h('option', { value: 'one', textContent: 'Page đang chọn' }), h('option', { value: 'all', textContent: 'Tất cả Page' })),
+              h('select', { id: 'ibScope', style: 'width:auto', onchange: e => { S.scope = e.target.value; local.set('ibScope', S.scope); drawPick(); load(); } },
+                h('option', { value: 'one', textContent: 'Page đang chọn' }), h('option', { value: 'pick', textContent: 'Chọn nhiều Page…' }), h('option', { value: 'all', textContent: 'Tất cả Page' })),
               h('button', { className: 'btn btn-soft', onclick: () => load() }, icon('i-sync'), 'Tải lại'))),
-          h('input', { type: 'search', id: 'ibSearch', placeholder: '🔍 Tìm theo tên khách hoặc nội dung tin…', oninput: () => drawList() }),
+          h('div', { className: 'pick-box', id: 'ibPick', hidden: true }),
+          h('input', { type: 'search', id: 'ibSearch', style: 'margin-top:10px', placeholder: '🔍 Tìm theo tên khách hoặc nội dung tin…', oninput: () => drawList() }),
           h('div', { className: 'row', style: 'margin:10px 0;gap:6px' },
             h('div', { className: 'chips', id: 'ibFilter' }, ...[['all', 'Tất cả'], ['unread', 'Chưa đọc'], ['unanswered', 'Chưa trả lời'], ['today', 'Hôm nay']].map(([f, t]) =>
               h('button', { className: 'chip', dataset: { f }, textContent: t, 'aria-pressed': String(f === S.filter), onclick: () => { S.filter = f; drawList(); } }))),
@@ -55,12 +59,24 @@
             h('div', { className: 'hint', style: 'margin-top:6px' }, h('kbd', {}, 'Enter'), ' gửi · ', h('kbd', {}, 'Shift'), '+', h('kbd', {}, 'Enter'), ' xuống dòng · ',
               h('kbd', {}, '/'), ' chọn mẫu · chỉ trả lời được trong 24 giờ kể từ tin cuối của khách')))));
     },
-    refresh() { $('ibScope').value = S.scope; load(); }
+    refresh() { $('ibScope').value = S.scope; drawPick(); load(); }
   });
   App.onPageChange.push(() => { S.conv = null; resetThread(); });
 
+  function drawPick() {
+    $('ibPick').hidden = S.scope !== 'pick';
+    if (S.scope !== 'pick') return;
+    if (!picked().length) local.set('ibPicked', JSON.stringify([App.page().id]));
+    const box = App.pageChecks(picked());
+    let timer = 0;
+    box.onchange = () => { local.set('ibPicked', JSON.stringify(App.checkedPages(box).map(p => p.id))); clearTimeout(timer); timer = setTimeout(load, 500); };
+    $('ibPick').replaceChildren(h('div', { className: 'row', style: 'margin-bottom:8px' }, h('span', { className: 'muted grow', textContent: 'Tick các Page muốn xem chung:' }),
+      h('button', { className: 'btn btn-ghost btn-sm', textContent: 'Chọn hết', onclick: () => { box.querySelectorAll('input').forEach(i => { i.checked = true; }); box.onchange(); } }),
+      h('button', { className: 'btn btn-ghost btn-sm', textContent: 'Bỏ hết', onclick: () => { box.querySelectorAll('input').forEach(i => { i.checked = false; }); box.onchange(); } })), box);
+  }
   async function load() {
-    const pages = S.scope === 'all' ? App.pages : [App.page()];
+    const pages = scopePages();
+    if (!pages.length) { S.convs = []; $('ibList').replaceChildren(empty('Chưa tick Page nào.')); return; }
     const run = ++S.loading;
     $('ibList').replaceChildren(empty(`Đang tải hội thoại của ${pages.length} Page…`));
     const errors = [];
@@ -72,8 +88,25 @@
     const cur = $('ibLabel').value;
     $('ibLabel').replaceChildren(h('option', { value: '', textContent: 'Mọi nhãn' }), ...labels.map(l => h('option', { value: l, textContent: l, selected: l === cur })));
     S.errors = errors;
+    loadPics(S.convs);
     if (S.pending) { $('ibSearch').value = S.pending; const hit = S.convs.find(c => norm(c.other.name) === norm(S.pending)); S.pending = ''; if (hit) openConv(hit); }
     drawList();
+  }
+  async function loadPics(convs) {
+    const byPage = new Map();
+    for (const c of convs) if (c.other.id && !S.pics.has(c.other.id)) (byPage.get(c.page) || byPage.set(c.page, []).get(c.page)).push(c.other.id);
+    await pool([...byPage], 3, async ([page, ids]) => { for (const [id, url] of await App.customerPics(page, ids)) S.pics.set(id, url); });
+    if (byPage.size) { drawList(); if (S.conv) drawHead(S.conv); }
+  }
+  // Ảnh khách kèm ảnh Page nhỏ ở góc (như Business Suite).
+  const custAvatar = (c, size = 36) => {
+    const pg = App.avatar(c.page.name, App.pageAvatarUrl(c.page), Math.round(size * .42));
+    pg.classList.add('pg'); pg.title = c.page.name;
+    return h('span', { className: 'avwrap' }, App.avatar(c.other.name, S.pics.get(c.other.id), size), pg);
+  };
+  function drawHead(c) {
+    $('ibTitle').replaceChildren(h('span', { className: 'thread-head' }, custAvatar(c, 32),
+      h('span', { style: 'min-width:0' }, h('div', { className: 'card-title', textContent: c.other.name || 'Khách' }), h('div', { className: 'hint', textContent: c.page.name }))));
   }
   async function drawList() {
     const st = await settings();
@@ -84,13 +117,13 @@
       (S.filter !== 'today' || new Date(c.updated_time).toDateString() === today) &&
       (!lab || (S.crm?.[c.key]?.labels || []).includes(lab)) &&
       (!q || norm(`${c.other.name} ${c.snippet} ${(S.crm?.[c.key]?.labels || []).join(' ')}`).includes(q)));
-    const multi = S.scope === 'all';
+    const multi = S.scope !== 'one';
     $('ibList').replaceChildren(...(S.errors || []).map(e => h('div', { className: 'status err', textContent: e })),
       ...(list.length ? list.map(c => {
         const wait = c.fromCustomer ? (Date.now() - c.lastAt) / 60e3 : null;
         const labels = S.crm?.[c.key]?.labels || [];
         return h('div', { className: 'item' + (c.unread_count ? ' unread' : '') + (S.conv?.id === c.id ? ' active' : ''), onclick: () => openConv(c) },
-          h('div', { className: 'avatar', textContent: initials(c.other.name) }),
+          custAvatar(c),
           h('div', { className: 'body' },
             h('div', { className: 'top' }, h('span', { className: 'name', textContent: c.other.name || 'Khách' }),
               c.unread_count ? h('span', { className: 'badge', textContent: c.unread_count }) : null,
@@ -103,23 +136,28 @@
       }) : [empty(S.convs.length ? 'Không có hội thoại khớp bộ lọc.' : 'Chưa có tin nhắn.')]));
   }
   function resetThread() {
-    $('ibTitle').textContent = 'Chưa chọn hội thoại'; $('ibReload').hidden = true; $('ibSend').disabled = true; $('ibCrm').hidden = true;
+    $('ibTitle').replaceChildren('Chưa chọn hội thoại'); $('ibReload').hidden = true; $('ibSend').disabled = true; $('ibCrm').hidden = true;
     $('ibThread').replaceChildren(empty('Chọn một hội thoại bên trái để xem tin nhắn.'));
   }
   async function openConv(c) {
     S.conv = c;
-    $('ibTitle').textContent = `${c.other.name || 'Khách'}${S.scope === 'all' ? ' · ' + c.page.name : ''}`;
+    drawHead(c);
     $('ibReload').hidden = false; $('ibSend').disabled = !c.other.id;
     drawList();
     await guard($('ibThread'), async () => {
       const res = await api(`/${c.id}`, { fields: 'messages.limit(40){message,from,created_time,attachments{image_data,mime_type,name,file_url}}' }, 'GET', c.page.access_token);
       if (S.conv !== c) return;
       const msgs = (res.messages?.data || []).reverse();
-      $('ibThread').replaceChildren(...msgs.map(m => h('div', { className: 'msg' + (m.from?.id === c.page.id ? ' me' : ''), title: fmtTime(m.created_time) },
+      const me = m => m.from?.id === c.page.id;
+      $('ibThread').replaceChildren(...msgs.map((m, i) => h('div', { className: 'msgrow' + (me(m) ? ' me' : '') },
+        // Ảnh chỉ hiện ở tin cuối của mỗi chuỗi tin liên tiếp cùng người gửi.
+        msgs[i + 1] && me(msgs[i + 1]) === me(m) ? h('span', { style: 'width:24px;flex:none' })
+          : me(m) ? App.avatar(c.page.name, App.pageAvatarUrl(c.page), 24) : App.avatar(c.other.name, S.pics.get(c.other.id), 24),
+        h('div', { className: 'msg' + (me(m) ? ' me' : ''), title: fmtTime(m.created_time) },
         m.message || null,
         ...(m.attachments?.data || []).map(a => a.image_data?.url ? h('img', { src: a.image_data.url, alt: '', style: 'display:block;max-width:220px;border-radius:10px;margin-top:4px' })
           : h('a', { href: a.file_url || '#', target: '_blank', rel: 'noopener', textContent: `📎 ${a.name || 'Tệp đính kèm'}` })),
-        !m.message && !m.attachments?.data?.length ? '(nhãn dán / tin đặc biệt)' : null)));
+        !m.message && !m.attachments?.data?.length ? '(nhãn dán / tin đặc biệt)' : null))));
       $('ibThread').scrollTop = $('ibThread').scrollHeight;
       c.unread_count = 0;
       S.messages = msgs.map(m => ({ isCustomer: m.from?.id !== c.page.id, text: m.message || '' }));
