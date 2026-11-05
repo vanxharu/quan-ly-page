@@ -83,7 +83,7 @@
     const button=$('aiDiagnose');if(button)button.disabled=true;
     try{
       const state=await send('STATUS'),job=state.job;
-      const report={capturedAt:new Date().toISOString(),connectorVersion:state.version||'',job:job?{id:job.id,status:job.status,progress:job.progress,postsReceived:job.posts?.length||0,imagesReceived:job.posts?.filter(p=>p.imageData).length||0,reviewKey:job.reviewKey||'',diagnostic:job.diagnostic||null}:null};
+      const report={capturedAt:new Date().toISOString(),connectorVersion:state.version||'',job:job?{id:job.id,status:job.status,error:job.error||'',progress:job.progress,postsReceived:job.posts?.length||0,imagesReceived:job.posts?.filter(p=>p.imageData).length||0,reviewKey:job.reviewKey||'',diagnostic:job.diagnostic||null}:null};
       $('aiDiagnosticResult').textContent=JSON.stringify(report,null,2);$('aiDiagnosticResult').hidden=false;
       const url=URL.createObjectURL(new Blob([JSON.stringify(report,null,2)],{type:'application/json'}));
       const link=h('a',{href:url,download:'meta-assistant-diagnostic.json'});document.body.append(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);
