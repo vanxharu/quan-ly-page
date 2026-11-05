@@ -22,8 +22,8 @@
     mount(el) {
       el.append(
         h('div', { className: 'card ai-launch-card ai-first-hero' },
-          h('div', {}, h('h3', { className: 'card-title', textContent: 'Tạo kế hoạch nội dung bằng AI' }),
-            h('p', { className: 'muted', textContent: 'Tạo bài và ảnh trong bảng tiện ích bên cạnh. Bấm Đưa sang web để nhận bài tại đây, rồi xếp giờ và duyệt.' })),
+          h('div', {}, h('h3', { className: 'card-title', textContent: 'Lên lịch bài marketing từ Reddit' }),
+            h('p', { className: 'muted', textContent: 'Chọn Page và số bài trong Studio AI; GPT tự tìm ý tưởng Reddit, viết bài mới và tạo ảnh 5:4. Bấm Đưa sang web để nhận bài tại đây, rồi xếp giờ và duyệt.' })),
           h('button', { type: 'button', className: 'btn btn-primary', 'data-ai-sidepanel':'1',textContent: '✦ Mở Studio AI', onclick: e => App.ai.open({ mode: 'planner', trigger: e.currentTarget }) })),
         h('div', { id:'plAIDrafts' }),
         h('div', { className: 'grid2' },
@@ -55,7 +55,7 @@
       const groups = new Map();
       for (const i of list) { const k = i.at ? new Date(i.at).toLocaleDateString('vi-VN', { weekday: 'long', day: '2-digit', month: '2-digit' }) : 'Chưa xếp giờ'; (groups.get(k) || groups.set(k, []).get(k)).push(i); }
       $('plList').replaceChildren(...(list.length ? [...groups].flatMap(([day, items]) => [h('h4', { className: 'card-title', style: 'margin:14px 0 8px', textContent: `${day} (${items.length})` }), ...items.map(itemEl)])
-        : [empty('Chưa có bài trong lịch. Bấm Tạo bài bằng AI, chọn Page và chủ đề để bắt đầu.')]));
+        : [empty('Chưa có bài trong lịch. Bấm Tạo bài bằng AI, chọn Page và số bài để bắt đầu.')]));
     }
   });
   const refresh = () => App.tabs.planner.refresh();
@@ -65,6 +65,32 @@
     await DB.set(QUEUE, queue.map(i => i.id === id ? { ...i, ...change } : i));
   }
 
+  function choosePage(item, locked) {
+    if(locked)return;
+    document.querySelector('.planner-page-dialog')?.close();
+    let saving=false;
+    const current=pageOf(item),list=h('div',{className:'planner-page-options'}),error=h('p',{className:'status err',hidden:true,role:'alert'});
+    const search=h('input',{type:'search',placeholder:'Tìm tên hoặc ID Page…','aria-label':'Tìm Fanpage'});
+    const key=value=>String(value||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/đ/g,'d').replace(/Đ/g,'D').toLowerCase();
+    const dialog=h('dialog',{className:'planner-page-dialog','aria-label':'Chọn Fanpage nhận bài',onclose:()=>{
+      dialog.remove();[...document.querySelectorAll('.planner-page-trigger')].find(button=>button.dataset.itemId===item.id)?.focus?.();
+    }});
+    const draw=()=>{
+      const pages=App.pages.filter(page=>key(page.name+' '+page.id).includes(key(search.value)));
+      list.replaceChildren(...pages.map(page=>h('button',{type:'button',className:'planner-page-option','aria-pressed':String(page.id===current?.id),disabled:saving,onclick:async()=>{
+        if(saving)return;saving=true;search.disabled=true;list.querySelectorAll('button').forEach(button=>button.disabled=true);error.hidden=true;
+        try{await patch(item.id,{pageKey:page.id,pageName:page.name});await refresh();dialog.close();}
+        catch(e){saving=false;search.disabled=false;error.textContent='Chưa đổi được Page: '+e.message;error.hidden=false;draw();}
+      }},App.avatar(page.name,App.pageAvatarUrl(page),38),
+        h('span',{className:'planner-page-copy'},h('strong',{textContent:page.name}),h('small',{textContent:'ID '+page.id})),
+        h('span',{className:'planner-page-check','aria-hidden':'true',textContent:page.id===current?.id?'✓':''}))),
+        ...(pages.length?[]:[h('p',{className:'hint',textContent:'Không tìm thấy Page phù hợp.'})]));
+    };
+    search.oninput=draw;
+    dialog.append(h('div',{className:'planner-page-dialog-head'},h('h3',{textContent:'Chọn Fanpage'}),h('button',{type:'button',className:'icon-btn','aria-label':'Đóng chọn Page',textContent:'×',onclick:()=>dialog.close()})),search,error,list);
+    document.body.append(dialog);draw();dialog.showModal();search.focus?.();
+  }
+
   function itemEl(i) {
     const page = pageOf(i), [label, tone] = STATUS[i.status] || [i.status, 'pending'];
     const locked = ['scheduled', 'posted', 'scheduling'].includes(i.status);
@@ -72,13 +98,16 @@
       i.imageData ? h('img', { className: 'thumb', src: i.imageData, alt: '', style: 'width:64px;height:64px' }) : h('span'),
       h('div', {},
         h('div', { className: 'meta' },
-          h('select', { disabled: locked, onchange: e => patch(i.id, { pageKey: e.target.value, pageName: App.pageById(e.target.value)?.name }).then(refresh) },
-            page ? null : h('option', { value: '', textContent: `⚠ ${i.pageName || 'Page không rõ'}` }),
-            ...App.pages.map(p => h('option', { value: p.id, textContent: p.name, selected: p.id === page?.id }))),
+          h('div', { className: 'planner-page-picker', title: page ? `${page.name} · ID ${page.id}` : i.pageName || 'Chọn Page nhận bài' },
+            h('button',{type:'button',className:'planner-page-trigger',dataset:{itemId:i.id},'aria-label':'Page nhận bài: '+(page?.name||i.pageName||'Chưa chọn'),'aria-haspopup':'dialog',disabled:locked,onclick:()=>choosePage(i,locked)},
+              App.avatar(page?.name||i.pageName||'Page',App.pageAvatarUrl(page),32),
+              h('span',{className:'planner-page-copy'},h('strong',{textContent:page?.name||i.pageName||'Chọn Fanpage'}),h('small',{textContent:page?'ID '+page.id:'Page chưa kết nối · Chọn lại'})),
+              h('span',{'aria-hidden':'true',textContent:'⌄'}))),
           h('input', { type: 'datetime-local', value: toLocalInput(i.at), disabled: locked, onchange: e => patch(i.id, { at: e.target.value ? new Date(e.target.value).getTime() : 0 }).then(refresh) }),
           h('span', { className: 'status ' + tone, textContent: i.aiGenerating?'Đang tạo ảnh…':label }),
           i.error ? h('span', { className: 'hint', textContent: i.error }) : null),
         i.topicTitle?h('p',{className:'hint',textContent:'Chủ đề: '+i.topicTitle}):null,
+        ...MetaAIProtocol.sources(i.sources).map(ref=>h('a',{className:'hint',href:ref.url,target:'_blank',rel:'noopener noreferrer',textContent:'Nguồn Reddit · '+(ref.title||'Xem bài gốc')})),
         h('textarea', { value: i.text || '', disabled: locked, onchange: e => patch(i.id, { text: e.target.value }) })),
       h('div', { className: 'acts' },
         !i.aiGenerating&&['draft', 'error', 'missed'].includes(i.status) ? h('button', { className: 'btn btn-soft btn-sm', textContent: '✓ Duyệt', onclick: () => patch(i.id, { status: 'approved', error: '' }).then(refresh) }) : null,

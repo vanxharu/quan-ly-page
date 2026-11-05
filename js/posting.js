@@ -49,9 +49,9 @@
       const body=h('div',{className:'post-manual-body'},...el.children);manual.append(body);
       el.append(
         h('div',{className:'card ai-first-hero'},
-          h('div',{},h('span',{className:'ai-first-eyebrow',textContent:'SÁNG TẠO CÙNG AI'}),h('h3',{textContent:'Tạo bài và ảnh cho từng Page'}),
-            h('p',{textContent:'Mở tiện ích bên cạnh để chọn Page, tạo bài và ảnh. Khi hài lòng, bấm Đưa sang web để chuyển vào danh sách chờ duyệt.'}),
-            h('div',{className:'ai-first-steps'},h('span',{},'1 · Chọn Page & chủ đề'),h('span',{},'2 · AI tạo bài & ảnh'),h('span',{},'3 · Xem lại & đăng'))),
+          h('div',{},h('span',{className:'ai-first-eyebrow',textContent:'SÁNG TẠO CÙNG AI'}),h('h3',{textContent:'Ý tưởng Reddit, bài mới cho từng Page'}),
+            h('p',{textContent:'Chọn Page và số bài. AI tìm nguồn marketing trên Reddit, viết bài khác chủ đề trước và tạo ảnh 5:4. Khi hài lòng, bấm Đưa sang web để chuyển vào danh sách chờ duyệt.'}),
+            h('div',{className:'ai-first-steps'},h('span',{},'1 · Chọn Page'),h('span',{},'2 · AI tạo bài & ảnh'),h('span',{},'3 · Xem lại & đăng'))),
           h('button',{type:'button',className:'btn btn-primary','data-ai-sidepanel':'1',textContent:'✦ Mở Studio AI',onclick:e=>App.ai.open({mode:'post',trigger:e.currentTarget})})),
         h('div',{id:'poAIDrafts'}),manual);
       App.ai.overview($('poAIDrafts'),'post');

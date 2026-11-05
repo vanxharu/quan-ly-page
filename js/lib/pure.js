@@ -164,71 +164,7 @@ window.Pure = (() => {
   }
 
 
-  const DEFAULT_TOPICS = [
-    {
-      id: 'monday-insight', day: 1, dayLabel: 'Thứ Hai', time: '20:00',
-      title: 'Xu hướng & vấn đề marketing thường gặp',
-      style: 'Chuyên gia gần gũi, mở đầu bằng vấn đề thực tế',
-      direction: 'Giúp khách hàng Việt Nam nhận ra một vấn đề marketing hoặc tăng tương tác đang gặp và hiểu hướng xử lý.',
-      postPrompt: 'Viết một bài Facebook hoàn chỉnh về một xu hướng hoặc vấn đề marketing thường gặp tại Việt Nam. Mở đầu bằng tình huống quen thuộc, phân tích ngắn gọn nguyên nhân, đưa ra 3 gợi ý có thể áp dụng ngay và kết thúc bằng một câu hỏi tự nhiên. Không bịa số liệu, không bán hàng trực diện, không giải thích cách bạn viết bài.',
-      imagePrompt: 'Tạo ảnh minh họa hiện đại về việc nhận diện vấn đề marketing và tìm hướng đi rõ ràng, bối cảnh doanh nghiệp Việt Nam, bố cục sạch, màu sắc chuyên nghiệp.',
-      groupPrompt: 'Mình chia sẻ một góc nhìn ngắn về vấn đề marketing nhiều người bán hàng đang gặp. Anh/chị trong nhóm có thể tham khảo và cùng trao đổi cách xử lý phù hợp với thị trường Việt Nam.'
-    },
-    {
-      id: 'tuesday-checklist', day: 2, dayLabel: 'Thứ Ba', time: '08:00',
-      title: 'Mẹo nhanh & checklist tăng tương tác',
-      style: 'Ngắn gọn, dễ quét, thực hành ngay',
-      direction: 'Cung cấp checklist nhỏ giúp người làm nội dung tối ưu tương tác trên Facebook, TikTok, Instagram hoặc YouTube.',
-      postPrompt: 'Viết một bài Facebook dạng checklist ngắn dành cho khách hàng Việt Nam, gồm 5 bước giúp cải thiện nội dung hoặc tăng tương tác mạng xã hội. Mỗi bước phải cụ thể, dễ làm ngay, tránh cam kết kết quả tuyệt đối. Kết bài bằng lời mời lưu bài hoặc chia sẻ kinh nghiệm, không bán hàng trực diện.',
-      imagePrompt: 'Tạo ảnh minh họa checklist marketing mạng xã hội trực quan, tối giản, các biểu tượng dễ hiểu, phù hợp người xem Việt Nam.',
-      groupPrompt: 'Gửi mọi người một checklist ngắn có thể áp dụng ngay khi làm nội dung mạng xã hội. Mọi người thử đối chiếu xem mình đang thiếu bước nào nhé.'
-    },
-    {
-      id: 'wednesday-guide', day: 3, dayLabel: 'Thứ Tư', time: '08:30',
-      title: 'Hướng dẫn chuyên môn từng bước',
-      style: 'Có chiều sâu, rõ cấu trúc, dễ hiểu',
-      direction: 'Hướng dẫn chi tiết một kỹ năng marketing hoặc vận hành nội dung đa nền tảng cho người Việt.',
-      postPrompt: 'Viết một bài hướng dẫn chuyên môn có cấu trúc rõ ràng về một kỹ năng marketing hoặc tăng tương tác mạng xã hội. Giải thích mục tiêu, quy trình từng bước, lỗi cần tránh và cách tự kiểm tra. Dùng ví dụ phù hợp thị trường Việt Nam; không bịa dữ liệu và không chào bán dịch vụ nếu không cần thiết.',
-      imagePrompt: 'Tạo ảnh minh họa quy trình marketing từng bước, phong cách chuyên nghiệp, trực quan, có chiều sâu nhưng không rối mắt.',
-      groupPrompt: 'Mình chia sẻ hướng dẫn từng bước để mọi người dễ áp dụng vào công việc thực tế. Nội dung hơi chi tiết nhưng có thể lưu lại làm tài liệu tham khảo.'
-    },
-    {
-      id: 'thursday-case', day: 4, dayLabel: 'Thứ Năm', time: '15:30',
-      title: 'Case study & giải pháp dịch vụ',
-      style: 'Kể chuyện có bằng chứng, thuyết phục mềm',
-      direction: 'Phân tích một tình huống khách hàng hoặc bài học thực tế; chỉ giới thiệu dịch vụ tự nhiên khi phù hợp.',
-      postPrompt: 'Viết một bài Facebook theo dạng case study marketing dành cho người xem Việt Nam. Nêu bối cảnh, vấn đề, cách tiếp cận, bài học rút ra và gợi ý áp dụng. Chỉ dùng dữ kiện được cung cấp; nếu thiếu số liệu thì mô tả định tính, tuyệt đối không tự bịa kết quả. Có thể giới thiệu dịch vụ nhẹ nhàng ở cuối bài, không cam kết tuyệt đối.',
-      imagePrompt: 'Tạo ảnh minh họa case study marketing theo bố cục trước và sau hoặc vấn đề và giải pháp, chuyên nghiệp, đáng tin cậy, không dùng số liệu giả.',
-      groupPrompt: 'Mình chia sẻ một tình huống thực tế và cách tiếp cận để mọi người tham khảo. Phần quan trọng nhất là bài học có thể áp dụng, không phải quảng cáo dịch vụ.'
-    },
-    {
-      id: 'friday-tools', day: 5, dayLabel: 'Thứ Sáu', time: '08:00',
-      title: 'Công cụ & tài nguyên hữu ích',
-      style: 'Tổng hợp khách quan, thực tế, tiết kiệm thời gian',
-      direction: 'Giới thiệu công cụ, mẫu hoặc tài nguyên hỗ trợ làm nội dung và quản lý mạng xã hội hiệu quả hơn.',
-      postPrompt: 'Viết một bài tổng hợp công cụ hoặc tài nguyên hữu ích cho người làm marketing và mạng xã hội tại Việt Nam. Với mỗi mục, nêu công dụng, trường hợp nên dùng và một lưu ý. Không khẳng định tính năng chưa kiểm chứng, không biến bài thành quảng cáo, kết thúc bằng câu hỏi về công cụ người đọc đang dùng.',
-      imagePrompt: 'Tạo ảnh minh họa bộ công cụ marketing và quản lý mạng xã hội, giao diện khái quát không sao chép thương hiệu, bố cục gọn gàng và hữu ích.',
-      groupPrompt: 'Mình tổng hợp một số công cụ và tài nguyên hữu ích để mọi người tiết kiệm thời gian làm nội dung. Ai có công cụ hay khác có thể bổ sung thêm cho nhóm nhé.'
-    },
-    {
-      id: 'saturday-brand', day: 6, dayLabel: 'Thứ Bảy', time: '10:00',
-      title: 'Hậu trường & câu chuyện thương hiệu',
-      style: 'Đời thường, chân thật, ấm áp',
-      direction: 'Xây dựng sự tin tưởng bằng câu chuyện con người, quy trình làm việc hoặc bài học phía sau thương hiệu.',
-      postPrompt: 'Viết một bài nhẹ nhàng về hậu trường, con người hoặc câu chuyện thương hiệu trong lĩnh vực marketing và tăng tương tác mạng xã hội. Giọng chân thật, gần gũi với người Việt, có một chi tiết đời thường và một bài học nhỏ. Không tô vẽ thành tích, không bán hàng trực diện.',
-      imagePrompt: 'Tạo ảnh hậu trường chân thật về đội ngũ làm nội dung và marketing, ánh sáng tự nhiên, cảm giác gần gũi, không dàn dựng quá mức.',
-      groupPrompt: 'Cuối tuần mình chia sẻ một câu chuyện hậu trường nhỏ phía sau công việc làm nội dung. Hy vọng góc nhìn thật này giúp mọi người hiểu thêm về quá trình phía sau mỗi bài đăng.'
-    },
-    {
-      id: 'sunday-community', day: 0, dayLabel: 'Chủ Nhật', time: '09:30',
-      title: 'Câu hỏi tương tác & kế hoạch tuần mới',
-      style: 'Thân thiện, đối thoại, khuyến khích chia sẻ',
-      direction: 'Tạo cuộc trò chuyện với cộng đồng và giúp người theo dõi xác định ưu tiên marketing cho tuần mới.',
-      postPrompt: 'Viết một bài Facebook nhẹ cho sáng Chủ Nhật, đặt một câu hỏi cụ thể về kế hoạch marketing hoặc mục tiêu tăng tương tác trong tuần mới. Gợi ý 3 lựa chọn để người đọc dễ phản hồi và thêm một bước chuẩn bị nhỏ. Giọng thân thiện với khách hàng Việt Nam, không bán hàng và không dùng câu hỏi chung chung.',
-      imagePrompt: 'Tạo ảnh minh họa lập kế hoạch nội dung cho tuần mới, không khí sáng Chủ Nhật tích cực, tối giản, gần gũi người dùng Việt Nam.',
-      groupPrompt: 'Chủ Nhật mình xin mở một câu hỏi nhỏ: tuần tới mọi người ưu tiên nội dung, tương tác hay tối ưu quy trình? Cùng chia sẻ để tham khảo thêm ý tưởng từ nhau nhé.'
-    }
-  ];
+  const DEFAULT_TOPICS = [{id:MetaAIProtocol.WORKFLOW,title:'Marketing từ Reddit',dayLabel:'Mỗi lần tạo',postPrompt:MetaAIProtocol.POST_PROMPT,imagePrompt:MetaAIProtocol.IMAGE_PROMPT}];
 
   const CONVERTED = /đã chuyển đổi/i;
 

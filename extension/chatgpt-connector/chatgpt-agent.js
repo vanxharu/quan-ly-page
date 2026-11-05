@@ -6,7 +6,7 @@
   const FRAME_LOAD_KEY=typeof location.href==='string'?new URL(location.href).searchParams.get('meta_studio_job')||'':'';
   let embeddedStart=null,embeddedTheme=null;
   function applyEmbeddedTheme(){const root=document.documentElement;if(!root||!embeddedTheme)return;const dark=embeddedTheme==='dark';if(root.classList.contains('dark')!==dark)root.classList.toggle('dark',dark);if(root.classList.contains('light')===dark)root.classList.toggle('light',!dark);if(root.style.colorScheme!==embeddedTheme)root.style.colorScheme=embeddedTheme;}
-  const P=MetaAIProtocol;let working=false,job=null,lastPing=0,stage='',step=0,expectedMarker='',expectedPrefix='',submittedUser=null,baselineUsers=[],baselineReplies=[],baselineTurns=[],baselineSignatures=new Set(),boundConversation='',waitingForImage=false,baselineImages=new Set(),rootReadError='',baselineTurnKeys=new Set();
+  const P=MetaAIProtocol;let working=false,job=null,lastPing=0,stage='',step=0,expectedMarker='',expectedPrefix='',submittedUser=null,baselineUsers=[],baselineReplies=[],baselineTurns=[],baselineSignatures=new Set(),boundConversation='',waitingForImage=false,baselineImages=new Set(),rootReadError='',baselineTurnKeys=new Set(),responseRead={};
   const sleep=ms=>new Promise(r=>setTimeout(r,ms));
   async function message(type,extra={}){const r=await chrome.runtime.sendMessage({type,id:job?.id,nonce:job?.nonce,...extra});if(r?.ok===false)throw Error(r.error);if(r?.cancelled)throw Error('Đã dừng lượt tạo.');return r;}
   let cachedRoots=[],rootsAt=0;
@@ -60,18 +60,34 @@
     const walk=n=>{if(n.nodeType===3)return n.textContent||'';if(n.nodeType!==1)return '';if(n.tagName==='BR')return '\n';const text=[...n.childNodes].map(walk).join('');return /^(P|H[1-6]|PRE|BLOCKQUOTE|DIV|SECTION|LI)$/.test(n.tagName)?'\n'+text+'\n':text;};
     return [...copy.childNodes].map(walk).join('').replace(/\n[ \t]*\n(?:[ \t]*\n)+/g,'\n\n').trim();
   }
+  function responseTexts(turn){
+    // GPT may split a reply across sibling Markdown blocks or a Write editor.
+    // Reading only the first .markdown can return an introduction instead of the JSON.
+    const nodes=[...turn.querySelectorAll('pre,code,[data-markdown-copy-content],[data-testid="chatgpt-writing-block"],[data-oai-writing-block-surface],.markdown,[data-assistant-markdown-root],[data-markdown-text-style="assistant-message"]'),turn];
+    return [...new Set(nodes.flatMap(node=>[node.innerText||'',node.textContent||'',readableText(node)]).map(text=>text.trim()).filter(Boolean))];
+  }
+  function responseJSON(turn){
+    const texts=responseTexts(turn);let json='';
+    for(const text of texts){json=P.findResponse(text,job.input);if(json)break;}
+    responseRead={candidateLengths:texts.map(text=>text.length).slice(-12),jsonLike:texts.some(text=>/"posts"\s*:/.test(text)),valid:!!json};
+    return json;
+  }
   function boundPostResponse(){
     if(!job?.input?.items?.length||waitingForImage)return '';
     for(const turn of assistants().filter(freshTurn).reverse()){
       const preceding=users().filter(user=>user.getRootNode()===turn.getRootNode()&&Boolean(user.compareDocumentPosition(turn)&4)).at(-1);
       if(!preceding||!userText(preceding).includes(expectedMarker))continue;
       const card=turn.querySelector('[data-testid="chatgpt-writing-block"],[data-oai-writing-block-surface]');
-      const body=card?.querySelector('[contenteditable="true"],[data-markdown-copy-content]')||card||turn.querySelector('[data-markdown-text-style="assistant-message"],.markdown')||turn;
+      const body=card?.querySelector('[contenteditable="true"],[data-markdown-copy-content]')||card||turn;
       const text=readableText(body).replace(/^(?:Viết|Write)\s*\n+/i,'').trim();
-      const json=P.findResponse(text,job.input);if(json)return json;
-      if(text.length<70||/^(?:\s*```|\s*[\[{])/.test(text)||/"posts"\s*:/.test(text))continue;
-      if(!card&&text.length<140)continue;
-      const item=job.input.items[0];return JSON.stringify({posts:[{key:item.key,text,imagePrompt:'Minh hoạ đúng Page, chủ đề và yêu cầu ảnh: '+item.brief}]});
+      const json=responseJSON(turn);if(json)return json;
+      if(text.length<20||/^(?:\s*```|\s*[\[{])/.test(text)||/"posts"\s*:/.test(text))continue;
+      // A stable introduction is not a finished post, even if GPT has no visible Stop button.
+      // Natural Write cards must contain the requested hashtags before we accept them.
+      if((text.match(/#[\p{L}\p{N}_]+/gu)||[]).length<1||!card&&text.length<40)continue;
+      const refs=P.sources([...body.querySelectorAll('a[href]')].map(a=>({url:a.href,title:a.textContent})));
+      if(job.input.workflow===P.WORKFLOW&&!refs.length)continue;
+      const item=job.input.items[0];return JSON.stringify({posts:[{key:item.key,text,topicTitle:text.split('\n')[0].slice(0,300),sources:refs}]});
     }return '';
   }
   const conversationKey=path=>path.match(/\/c\/([^/]+)/)?.[1]||path.replace(/\/$/,'')||'/';
@@ -83,15 +99,16 @@
 
   function structuredResponse(){
     if(!job?.input?.items?.length)return '';
+    for(const turn of assistants().filter(freshTurn).reverse()){const found=responseJSON(turn);if(found)return found;}
     queryAll('pre,code');
     rootReadError='';
     for(const root of cachedRoots){try{
       const body=root.body||root,copy=(body.ownerDocument||document).createElement('div');
       // ShadowRoot itself is not clonable in Chromium; its ordinary child nodes are.
       for(const child of body.childNodes)copy.appendChild(child.cloneNode(true));
-      for(const el of copy.querySelectorAll('script,style,textarea,#prompt-textarea'))el.remove();
+      for(const el of copy.querySelectorAll('script,style,textarea,#prompt-textarea,'+USER))el.remove();
       for(const el of copy.querySelectorAll('[contenteditable="true"]'))if(!el.closest(WRITING+','+ASSISTANT))el.remove();
-      const found=P.findResponse(copy.textContent,job.input);if(found)return found;
+      for(const text of [copy.textContent,readableText(copy)]){const found=P.findResponse(text,job.input);if(found)return found;}
     }catch(error){rootReadError=String(error.message||error).slice(0,300);}}return '';
   }
   function validImage(img){
@@ -104,7 +121,7 @@
   }
   function newReply(){return assistants().filter(freshTurn).at(-1)||turns().filter(el=>freshTurn(el)&&!userText(el).includes(expectedMarker)&&!users().some(u=>el===u||el.contains(u))&&!el.matches(USER)&&!el.querySelector(USER)).at(-1)||genericReply(waitingForImage);}
 
-  async function progress(text){if(!/đang xử lý/i.test(text))stage=text;await message('PROGRESS',{text,diagnostic:{agentVersion:'2.1.0',step,rootTextLengths:cachedRoots.map(root=>(root.body||root).textContent?.length||0),structure:queryAll('main,article,section,[data-testid],[role],iframe').slice(-25).map(el=>({tag:el.tagName,role:el.getAttribute('role'),testId:el.getAttribute('data-testid')})),structuredResponseFound:!!structuredResponse(),rootReadError,imageHosts:[...new Set(queryAll('img').filter(img=>img.naturalWidth>=256).map(img=>{try{return new URL(img.currentSrc||img.src).hostname;}catch{return 'invalid';}}))],capturedAt:Date.now(),roots:cachedRoots.length,rawRoleNodes:queryAll(ASSISTANT+','+USER).length,markdownNodes:queryAll('.markdown,[data-assistant-markdown-root],[data-markdown-text-style="assistant-message"],[data-testid="chatgpt-writing-block"]').length,turnNodes:turns().length,imageNodes:queryAll('img').filter(img=>img.naturalWidth>=256).length,documentState:document.readyState,users:users().length,replies:assistants().length,editorEmpty:!editorText(editor()||{}),generationVisible:!!button('stop')}});lastPing=Date.now();}
+  async function progress(text){if(!/đang xử lý/i.test(text))stage=text;await message('PROGRESS',{text,diagnostic:{agentVersion:'2.2.2',step,rootTextLengths:cachedRoots.map(root=>(root.body||root).textContent?.length||0),structure:queryAll('main,article,section,[data-testid],[role],iframe').slice(-25).map(el=>({tag:el.tagName,role:el.getAttribute('role'),testId:el.getAttribute('data-testid')})),structuredResponseFound:!!structuredResponse(),rootReadError,responseRead,imageHosts:[...new Set(queryAll('img').filter(img=>img.naturalWidth>=256).map(img=>{try{return new URL(img.currentSrc||img.src).hostname;}catch{return 'invalid';}}))],capturedAt:Date.now(),roots:cachedRoots.length,rawRoleNodes:queryAll(ASSISTANT+','+USER).length,markdownNodes:queryAll('.markdown,[data-assistant-markdown-root],[data-markdown-text-style="assistant-message"],[data-testid="chatgpt-writing-block"]').length,turnNodes:turns().length,imageNodes:queryAll('img').filter(img=>img.naturalWidth>=256).length,documentState:document.readyState,users:users().length,replies:assistants().length,editorEmpty:!editorText(editor()||{}),generationVisible:!!button('stop')}});lastPing=Date.now();}
   async function ping(){if(Date.now()-lastPing>20000)await progress(stage?stage+' ChatGPT đang xử lý…':'Đang chờ ChatGPT hoàn tất…');}
   async function waitEditor(){
     let explained=false;
@@ -132,6 +149,7 @@
   }
   async function send(prompt,wantImage=false){
     waitingForImage=wantImage;
+    responseRead={};
     checkConversation();const el=await prepareEditor();
     expectedMarker=job.id+':step-'+(++step);
     expectedPrefix=compact(prompt).slice(0,160);submittedUser=null;
@@ -166,11 +184,12 @@
     return newReply()||null;
   }
   async function waitAnswer(before,wantImage=false){
-    let previous='',stableSince=0;
+    let previous='',stableSince=0,waitingNotice=false;
     while(true){await ping();checkConversation();const user=users().at(-1);if(user&&submittedUser&&user!==submittedUser&&!baselineUsers.includes(user)&&!matchesStep(user))throw Error('Có tin nhắn khác trong tab ChatGPT. Đã dừng để không lấy nhầm kết quả.');const last=genericReply(wantImage)||responseAfterUser(before);
-      if(last){const text=textOf(last);const imgs=[...last.querySelectorAll('img')].filter(validImage);const value=text+'|'+imgs.map(i=>i.currentSrc||i.src).join('|');
+      if(last){if(!wantImage&&assistants().filter(freshTurn).some(turn=>responseTexts(turn).some(P.sourceIssue)))throw Error('GPT không đọc được nguồn Reddit. Mở công cụ tìm kiếm web trong ChatGPT rồi tạo lượt mới; chưa lưu bài thiếu nguồn.');const raw=textOf(last),text=wantImage?raw:P.findResponse(raw,job.input)||boundPostResponse();const imgs=[...last.querySelectorAll('img')].filter(validImage);const value=text+'|'+imgs.map(i=>i.currentSrc||i.src).join('|');
         if(value!==previous){previous=value;stableSince=Date.now();}
         if(!button('stop')&&Date.now()-stableSince>6000&&(wantImage?imgs.length:text.length))return {text,images:imgs.map(i=>i.currentSrc||i.src)};
+        if(!wantImage&&!text&&!waitingNotice){await progress('GPT đã bắt đầu trả lời. Đang chờ bài đầy đủ, đúng Page; chưa gửi lại lệnh và không giới hạn thời gian chờ.');waitingNotice=true;}
       }await sleep(1000);
     }
   }
@@ -180,7 +199,7 @@
     const blob=await response.blob();if(!blob.type.startsWith('image/')||blob.size>15*1024*1024)throw Error('Ảnh quá lớn hoặc sai định dạng.');
     const bitmap=await createImageBitmap(blob),scale=Math.min(1,1350/Math.max(bitmap.width,bitmap.height));
     const canvas=new OffscreenCanvas(Math.max(1,Math.round(bitmap.width*scale)),Math.max(1,Math.round(bitmap.height*scale)));canvas.getContext('2d').drawImage(bitmap,0,0,canvas.width,canvas.height);bitmap.close();
-    // Preserve the portrait resolution and use the best JPEG quality that fits the transfer budget.
+    // Preserve the original aspect ratio and resolution and use the best JPEG quality that fits the transfer budget.
     const encode=async quality=>{const blob=await canvas.convertToBlob({type:'image/jpeg',quality});return new Promise((resolve,reject)=>{const r=new FileReader();r.onload=()=>resolve(r.result);r.onerror=reject;r.readAsDataURL(blob);});};
     for(let size=0;size<5;size++){
       for(const quality of [.94,.9,.86,.82,.78,.74]){const data=await encode(quality);if(data.length<=600000)return data;}
@@ -192,8 +211,8 @@
 
   async function run(){
     if(working)return;working=true;
-    try{const claimed=embeddedStart?{job:embeddedStart}:await chrome.runtime.sendMessage({type:'CLAIM',agentVersion:'2.1.0'});embeddedStart=null;if(!claimed?.job)return;job=claimed.job;
-      if(embeddedFrame)await message('FRAME_CLAIM');
+    try{const claimed=embeddedStart?{job:embeddedStart}:await chrome.runtime.sendMessage({type:'CLAIM',agentVersion:'2.2.2'});embeddedStart=null;if(!claimed?.job)return;job=claimed.job;
+      if(embeddedFrame){await message('FRAME_CLAIM');window.parent.postMessage({source:'META_STUDIO_GPT_FRAME',type:'FRAME_CLAIMED',jobId:job.id},EXTENSION_ORIGIN);}
       await waitEditor();
       if(job.status==='running'||sessionStorage.getItem('meta-ai-job:'+job.id))throw Error('Tab ChatGPT đã được tải lại. Giữ các kết quả đã có và tạo lượt mới để tránh gửi lặp.');
       if(!embeddedFrame&&(assistants().length||users().length))throw Error('Tab ChatGPT không phải cuộc trò chuyện mới. Đã dừng để giữ riêng các cuộc trò chuyện của bạn.');
@@ -220,18 +239,23 @@
         job.input=next.input;job.index=next.index;job.total=next.total;
       }
       await message('DONE');
-    }catch(e){if(job)await message('FAILED',{error:e.message}).catch(()=>{});}
+    }catch(e){if(embeddedFrame&&job)window.parent.postMessage({source:'META_STUDIO_GPT_FRAME',type:'FRAME_ERROR',jobId:job.id,error:e.message},EXTENSION_ORIGIN);if(job)await message('FAILED',{error:e.message}).catch(()=>{});}
     finally{working=false;}
   }
   if(embeddedFrame){
-    const announce=()=>window.parent.postMessage({source:'META_STUDIO_GPT_FRAME',type:'FRAME_READY',version:'2.1.0',loadKey:FRAME_LOAD_KEY},EXTENSION_ORIGIN);
+    const announce=()=>window.parent.postMessage({source:'META_STUDIO_GPT_FRAME',type:'FRAME_READY',version:'2.2.2',loadKey:FRAME_LOAD_KEY},EXTENSION_ORIGIN);
     window.addEventListener('message',event=>{
-      const m=event.data;if(event.source!==window.parent||event.origin!==EXTENSION_ORIGIN||m?.source!=='META_STUDIO_PANEL')return;
+      const m=event.data,ownAncestor=location.ancestorOrigins?.[0]===EXTENSION_ORIGIN;
+      const parentSource=event.source===window.parent||(event.source===null&&event.origin===EXTENSION_ORIGIN&&ownAncestor);
+      const parentOrigin=event.origin===EXTENSION_ORIGIN||(event.origin==='null'&&event.source===window.parent&&ownAncestor);
+      if(!parentSource||!parentOrigin||m?.source!=='META_STUDIO_PANEL')return;
+      if(m.type==='FRAME_INSPECT'){window.parent.postMessage({source:'META_STUDIO_GPT_FRAME',type:'FRAME_DIAGNOSTIC',version:'2.2.2',loadKey:FRAME_LOAD_KEY,hasJob:!!job,jobId:job?.id||'',working,step,responseRead,users:users().length,replies:assistants().length,images:queryAll('img').filter(validImage).length,composerFound:!!editor(),documentState:document.readyState},EXTENSION_ORIGIN);return;}
       if(m.type==='FRAME_CANCEL'&&job&&m.jobId===job.id){button('stop')?.click();return;}
       if(m.type==='FRAME_THEME'&&['light','dark'].includes(m.theme)){embeddedTheme=m.theme;applyEmbeddedTheme();return;}
-      if(m.type!=='FRAME_RUN'||job||working)return;
+      if(m.type!=='FRAME_RUN')return;
+      if(job||working){if(job?.id===m.job?.id)window.parent.postMessage({source:'META_STUDIO_GPT_FRAME',type:'FRAME_RUN_ACK',jobId:job.id},EXTENSION_ORIGIN);return;}
       if(!m.job?.id||!m.job?.nonce||m.job?.input?.items?.length!==1)return;
-      embeddedStart=m.job;run();
+      window.parent.postMessage({source:'META_STUDIO_GPT_FRAME',type:'FRAME_RUN_ACK',jobId:m.job.id},EXTENSION_ORIGIN);embeddedStart=m.job;run();
     });
     const watchTheme=()=>{applyEmbeddedTheme();if(document.documentElement&&typeof MutationObserver!=='undefined'){const observer=new MutationObserver(applyEmbeddedTheme);observer.observe(document.documentElement,{attributes:true,attributeFilter:['class']});}};
     document.addEventListener('DOMContentLoaded',watchTheme,{once:true});if(document.readyState!=='loading')watchTheme();

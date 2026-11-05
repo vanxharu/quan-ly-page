@@ -1,0 +1,9 @@
+{
+  "private": true,
+  "scripts": {
+    "test": "node studio-background.test.cjs && node embedded-frame.test.cjs && node response-completion.test.cjs && node reddit-workflow.test.cjs && node studio-interface.test.cjs && node web-transfer.test.cjs && node planner-avatar.test.cjs"
+  },
+  "devDependencies": {
+    "linkedom": "0.18.15"
+  }
+}

@@ -1,0 +1,24 @@
+const fs=require('node:fs'),path=require('node:path'),vm=require('node:vm'),assert=require('node:assert/strict'),{parseHTML}=require('linkedom');
+const repo=path.join(__dirname,'../..'),P=require('../chatgpt-connector/protocol.js');
+const {document}=parseHTML('<html><body></body></html>'),listeners={},outgoing=[],timers=[];
+let transfer={id:'t1',sourceJobId:'run1',posts:[{key:'post1',pageId:'p1',pageName:'Untrusted display name',topicTitle:'Audience research',text:'New article #Marketing #NoiDung',sources:[{url:'https://www.reddit.com/r/marketing/comments/source/example/',title:'Source'},{url:'javascript:alert(1)'}]}]};
+const db={fbScheduleQueueV1:[{id:'old',pageKey:'p1',text:'An old article',topicTitle:'Email marketing',createdAt:1}]};
+const pages=[{id:'p1',name:'Page One'},{id:'p2',name:'Page Two'}];let selected=[pages[0]],id=0;
+const App={pages,selected:()=>selected,pageById:id=>pages.find(p=>p.id===id),pageAvatarUrl:()=> 'https://cdn.example/avatar.jpg?access_token=PRIVATE&size=80',onLogin:[],onPageChange:[],setSelected:ids=>{selected=pages.filter(p=>ids.includes(p.id));},show(){},tabs:{planner:{refresh(){}}}};
+const origin='https://vanxharu.github.io',window={addEventListener:(type,fn)=>{listeners[type]=fn;},dispatchEvent(){},postMessage:m=>{outgoing.push(m);let reply={ok:true};if(m.type==='TRANSFER_PULL')reply.transfer=transfer;if(m.type==='TRANSFER_ACK'){assert.ok(db.fbScheduleQueueV1.some(post=>post.aiSourceId==='run1|post1'),'website must persist before ACK');transfer=null;}queueMicrotask(()=>listeners.message({source:window,origin,data:{source:'META_AI_CONNECTOR_V106',type:'REPLY',id:m.id,...reply}}));}};
+const ctx={App,window,document,location:{origin},URL,MetaAIProtocol:P,uid:()=>String(++id),DB:{get:async(key,fallback)=>structuredClone(db[key]??fallback),set:async(key,value)=>{db[key]=structuredClone(value);}},setTimeout:(fn,ms)=>{timers.push({fn,ms});return timers.length;},clearTimeout(){},setInterval(){},Event:class{},toast(){},setDark(){}};
+vm.runInNewContext(fs.readFileSync(path.join(repo,'js/ai-writer.js'),'utf8'),ctx);
+const flush=()=>new Promise(resolve=>setImmediate(resolve));
+(async()=>{
+  App.ai.syncCatalog();timers.findLast(t=>t.ms===250).fn();await flush();
+  const catalog=outgoing.find(m=>m.type==='CATALOG_SYNC').payload;
+  assert.equal(catalog.pages[0].recentPosts[0].topicTitle,'Email marketing');assert.equal(catalog.pages[1].recentPosts.length,0);
+  assert.ok(!JSON.stringify(catalog).includes('PRIVATE'));assert.equal(catalog.pages[0].topics,undefined);
+  const trigger=()=>listeners.message({source:window,origin,data:{source:'META_AI_CONNECTOR_V106',type:'PANEL_IMPORT_READY'}});
+  const original=structuredClone(transfer);await trigger();await flush();
+  const imported=db.fbScheduleQueueV1.find(post=>post.aiSourceId==='run1|post1');
+  assert.equal(imported.status,'draft');assert.equal(imported.pageName,'Page One');assert.equal(imported.sources.length,1);assert.equal(imported.topicTitle,'Audience research');
+  imported.text='User edited draft';transfer=original;await trigger();await flush();
+  assert.equal(db.fbScheduleQueueV1.length,2);assert.equal(db.fbScheduleQueueV1.find(post=>post.aiSourceId==='run1|post1').text,'User edited draft');
+  console.log('PASS: website sends per-Page recent article context without tokens or old prompts; sources stay with review drafts; ACK after persistence; duplicate transfers retain user edits.');
+})().catch(error=>{console.error(error);process.exitCode=1;});

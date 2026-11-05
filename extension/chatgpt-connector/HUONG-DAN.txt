@@ -1,11 +1,18 @@
-META ASSISTANT · STUDIO AI 2.1.0
+META ASSISTANT · STUDIO AI 2.2.2
 
 1. Bấm Tải lại tiện ích tại chrome://extensions. Nếu trình duyệt yêu cầu xác nhận quyền mới cho khung nhúng, bạn tự xác nhận.
-2. Tải lại Meta Assistant để đồng bộ avatar Page, chủ đề và giao diện sáng/tối.
+2. Tải lại Meta Assistant để đồng bộ avatar Page, lịch sử bài và giao diện sáng/tối.
 3. Bấm biểu tượng tiện ích: bảng có 3 tab Soạn bài – ChatGPT – Bản nháp.
-4. Soạn bài: tìm Page theo tên/ID, chọn Page có avatar, chọn chủ đề dưới từng Page. Mặc định tạo kèm ảnh dọc 4:5.
+4. Soạn bài: tìm Page theo tên/ID, chọn Page có avatar và số bài mỗi Page. Mặc định tạo kèm ảnh ngang 5:4.
 5. Bấm Tạo bài & ảnh. ChatGPT được mở trực tiếp trong tab ChatGPT của tiện ích. Nếu cần, đăng nhập ở tab riêng rồi tải lại khung; có tuỳ chọn dùng tab riêng khi khung không hoạt động.
 6. Giữ bảng tiện ích mở trong lúc GPT nhúng đang tạo. Chuyển giữa 3 tab không tải lại khung. Đóng bảng sẽ ngắt lượt đang chạy, nhưng các bản nháp đã nhận được giữ lại.
 7. Mỗi bài + ảnh được lưu trước khi tạo bài tiếp. Bấm Đưa sang web để mở danh sách Lịch đăng · Chờ duyệt. Không tự đăng.
 
-Sáng/tối đồng bộ với web. Avatar lỗi có chữ viết tắt dự phòng. Ảnh có chữ dưới 25%, liên hệ 0899779488 và nội dung phù hợp chính sách Facebook; mỗi bài có 2–3 hashtag. Bạn xem lại trước khi đăng.
+Sáng/tối đồng bộ với web. Avatar lỗi có chữ viết tắt dự phòng. Ảnh có chữ dưới 25%, liên hệ 0899779488 và nội dung phù hợp chính sách Facebook; mỗi bài có hashtag phù hợp. Bạn xem lại trước khi đăng.
+
+MỌI PAGE DÙNG CHUNG:
+GPT tự chọn góc nhìn, cách kể, giọng văn, cấu trúc và độ dài; không áp số từ, số hashtag hoặc bố cục cố định. Lấy cảm hứng từ nguồn Reddit thật, mỗi bài có góc triển khai mới và hashtag phù hợp.
+Ảnh tự chọn ý tưởng, phong cách, bố cục và màu sắc; ảnh ngang 5:4, có 0899779488, chữ dưới 25%, tuân thủ chính sách Facebook.
+
+GPT cần đọc được nguồn Reddit bằng tìm kiếm web. Mỗi bản nháp có liên kết nguồn riêng để kiểm tra. Tiện ích giữ tối đa 8 bài gần đây mỗi Page để tránh lặp; không cần chọn chủ đề hoặc tự nhập prompt.
+Lịch đăng trên web có avatar cạnh ô chọn Page và ID rút gọn để phân biệt tên trùng.

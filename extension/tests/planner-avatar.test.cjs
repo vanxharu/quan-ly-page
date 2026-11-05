@@ -1,0 +1,37 @@
+const fs=require('node:fs'),path=require('node:path'),vm=require('node:vm'),assert=require('node:assert/strict'),{parseHTML}=require('linkedom');
+const repo=path.join(__dirname,'../..'),P=require('../chatgpt-connector/protocol.js');
+const {document}=parseHTML('<html><body><main id="root"></main></body></html>');
+const createElement=document.createElement.bind(document);document.createElement=tag=>{const el=createElement(tag);if(tag==='dialog'){el.showModal=()=>el.setAttribute('open','');el.close=()=>{el.removeAttribute('open');el.onclose?.();};}return el;};
+const pages=[{id:'111111',name:'Marketing Page',picture:{data:{url:'https://cdn.example/one.jpg'}}},{id:'222222',name:'Marketing Page',picture:{data:{url:'https://cdn.example/two.jpg'}}}];
+const data={fbScheduleQueueV1:[{id:'one',pageKey:pages[0].id,pageName:pages[0].name,text:'Draft one',status:'draft',imageData:'data:image/png;base64,YQ=='},{id:'two',pageKey:pages[1].id,pageName:pages[1].name,text:'Draft two',status:'draft'},{id:'locked',pageKey:pages[0].id,pageName:pages[0].name,text:'Scheduled',status:'scheduled',at:Date.now()+86400000}]};
+const App={pages,tabs:{},pageById:id=>pages.find(p=>p.id===id),isSelected:()=>true,selected:()=>pages,tab:(name,tab)=>App.tabs[name]=tab,ai:{overview(){}}};
+const ctx=vm.createContext({window:{},document,App,MetaAIProtocol:P,Date,norm:s=>String(s||'').toLowerCase(),initials:name=>(name||'?').split(' ').map(w=>w[0]).join(''),toLocalInput:at=>at?new Date(at).toISOString().slice(0,16):'',icon:()=>document.createElement('span'),empty:()=>document.createElement('span'),DB:{get:async(key,fallback)=>structuredClone(data[key]??fallback),set:async(key,value)=>{data[key]=structuredClone(value);}}});
+const core=fs.readFileSync(path.join(repo,'js/core.js'),'utf8');
+vm.runInContext(core.slice(core.indexOf('const $ ='),core.indexOf('// replaceChildren/append')),ctx);
+vm.runInContext(core.slice(core.indexOf('App.pageAvatarUrl ='),core.indexOf('// Ảnh khách Messenger')),ctx);
+vm.runInContext(fs.readFileSync(path.join(repo,'js/lib/pure.js'),'utf8'),ctx);ctx.Pure=ctx.window.Pure;
+vm.runInContext(fs.readFileSync(path.join(repo,'js/planner.js'),'utf8'),ctx);
+(async()=>{
+  App.tabs.planner.mount(document.getElementById('root'));await App.tabs.planner.refresh();
+  const pickers=()=>[...document.querySelectorAll('.planner-page-picker')];
+  assert.equal(pickers().length,3);assert.equal(pickers()[0].querySelector('img').src,pages[0].picture.data.url);assert.equal(pickers()[1].querySelector('img').src,pages[1].picture.data.url);
+  assert.ok(pickers()[0].textContent.includes('ID 111111'));
+  assert.equal(pickers()[2].querySelector('button').disabled,true,'scheduled post retains locked Page');
+  pickers()[2].querySelector('button').onclick();assert.equal(document.querySelector('dialog'),null);
+  pickers()[0].querySelector('button').onclick();
+  let dialog=document.querySelector('dialog');assert.ok(dialog.hasAttribute('open'));
+  assert.equal(dialog.querySelectorAll('.planner-page-option .avatar img').length,2,'every option has its Page avatar');
+  assert.ok(dialog.textContent.includes('ID 111111'));assert.ok(dialog.textContent.includes('ID 222222'));
+  const search=dialog.querySelector('input');search.value='222222';search.oninput();assert.equal(dialog.querySelectorAll('.planner-page-option').length,1);
+  await dialog.querySelector('.planner-page-option').onclick();assert.equal(document.querySelector('dialog'),null);
+
+  assert.equal(data.fbScheduleQueueV1[0].pageKey,pages[1].id);assert.equal(data.fbScheduleQueueV1[0].imageData,'data:image/png;base64,YQ==');
+  assert.equal(pickers()[0].querySelector('img').src,pages[1].picture.data.url,'avatar changes with saved Page');
+  pickers()[0].querySelector('img').onerror();assert.equal(pickers()[0].querySelector('img'),null);assert.ok(pickers()[0].querySelector('.avatar').textContent.trim());
+  data.fbScheduleQueueV1.push({id:'missing',pageKey:'not-connected',pageName:'Disconnected Page',text:'Draft',status:'draft'});await App.tabs.planner.refresh();
+  const missing=pickers().find(p=>p.title==='Disconnected Page');assert.ok(missing);assert.equal(missing.querySelector('img'),null);assert.ok(missing.textContent.includes('Page chưa kết nối'));missing.querySelector('button').onclick();document.querySelector('dialog').close();
+  const originalSet=ctx.DB.set;ctx.DB.set=async()=>{throw Error('Storage unavailable');};
+  pickers()[0].querySelector('button').onclick();dialog=document.querySelector('dialog');
+  await dialog.querySelector('.planner-page-option').onclick();assert.equal(data.fbScheduleQueueV1[0].pageKey,pages[1].id);assert.ok(dialog.querySelector('.status.err').textContent.includes('Storage unavailable'));assert.equal(dialog.querySelector('.status.err').hidden,false);dialog.close();ctx.DB.set=originalSet;
+  console.log('PASS: Page avatars on current selection AND every option; searchable names/IDs; duplicate names distinguishable by ID; choosing another Page updates saved Page and avatar; image attachment preserved; broken/missing avatar fallback and locked scheduled posts.');
+})().catch(error=>{console.error(error);process.exitCode=1;});
