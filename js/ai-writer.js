@@ -17,15 +17,22 @@
     const m=e.data;if(e.source!==window||e.origin!==location.origin||m?.source!=='META_AI_CONNECTOR')return;
     if(m.type==='REPLY'&&pending.has(m.id)){const p=pending.get(m.id);clearTimeout(p.timeout);pending.delete(m.id);m.ok?p.resolve(m):p.reject(Error(m.error||'Tiện ích chưa sẵn sàng.'));return;}
     if(!session||m.id!==session.id)return;
-    if(m.type==='PROGRESS'){session.progress=String(m.text||'').slice(0,500);status(session.progress,'working');return;}
+    if(m.type==='PROGRESS'){session.progress=String(m.text||'').slice(0,500);const text=session.progress;let percent=session.percent||5;
+      if(/soạn nội dung/i.test(text))percent=Math.max(percent,20);
+      else if(/tạo ảnh\s+(\d+)\s*\/\s*(\d+)/i.test(text)){const match=text.match(/tạo ảnh\s+(\d+)\s*\/\s*(\d+)/i);percent=Math.max(percent,Math.round(35+55*(Number(match[1])-1)/Math.max(1,Number(match[2]))));}
+      else if(/mở tab|đang mở/i.test(text))percent=Math.max(percent,8);
+      session.percent=percent;await save();renderProgress(session.progress,percent,true);status(session.progress,'working');return;}
     if(['PARTIAL','RESULT'].includes(m.type)){
       session.posts=mergePosts(m.posts);session.error=String(m.error||'').slice(0,1000);
-      if(m.type==='RESULT'){busy=false;session.done=true;session.progress=m.error?'Đã dừng. Các kết quả đã nhận vẫn được giữ.':'Đã nhận bài và ảnh. Xem lại trước khi sử dụng.';}
-      await save();renderResults();status(session.error||session.progress,session.error?'error':busy?'working':'success');updateButtons();
+      const received=session.posts.filter(p=>p.text||p.imageData||p.imageError).length,total=Math.max(1,session.items?.length||session.posts.length||1);
+      session.percent=session.hasImages?Math.max(session.percent||20,Math.min(95,Math.round(35+60*received/total))):Math.max(session.percent||20,80);
+      if(m.type==='RESULT'){busy=false;session.done=true;session.percent=100;session.progress=m.error?'Đã dừng. Các kết quả đã nhận vẫn được giữ.':'Hoàn tất — đã nhận bài và ảnh. Xem lại trước khi sử dụng.';}
+      await save();renderResults();renderProgress(session.progress,session.percent,busy);status(session.error||session.progress,session.error?'error':busy?'working':'success');updateButtons();
       if(!dialog?.open)toast(m.type==='RESULT'?'ChatGPT đã trả kết quả. Mở AI soạn bài để xem.':'Đã nhận nội dung từ ChatGPT.',5000);
     }
   });
   const status=(text,tone='info')=>{const el=$('aiStatus');if(el){el.textContent=text||'';el.dataset.tone=tone;}};
+  function renderProgress(label,percent,active){const box=$('aiProgressBox');if(!box)return;box.hidden=!label;const bar=$('aiProgress');if(bar){bar.value=Math.max(0,Math.min(100,Number(percent)||0));bar.classList.toggle('is-active',!!active);}const title=$('aiProgressLabel');if(title)title.textContent=label||'';const value=$('aiProgressValue');if(value)value.textContent=`${Math.max(0,Math.min(100,Number(percent)||0))}%`;}
   function connection(connected){
     const el=$('aiConnection');el.dataset.state=connected===null?'checking':connected?'connected':'disconnected';
     $('aiConnectionText').textContent=connected===null?'Đang kiểm tra tiện ích…':connected?'Tiện ích đã kết nối':'Chưa kết nối tiện ích';
@@ -66,6 +73,7 @@
       h('div',{className:'row section-gap'},h('label',{className:'row',style:'gap:7px'},h('input',{id:'aiImages',type:'checkbox',checked:true}),'Tạo thêm ảnh minh hoạ'),h('span',{className:'hint',textContent:'Yêu cầu ảnh không chèn chữ, luôn dưới 25% diện tích chữ.'})),
       h('div',{id:'aiScope',className:'hint section-gap'}),
       h('div',{className:'row section-gap'},h('button',{id:'aiGenerate',type:'button',className:'btn btn-primary','data-ai-generate':'1',textContent:'Tạo bằng ChatGPT',onclick:generate}),h('button',{id:'aiCancel',type:'button',hidden:true,className:'btn btn-ghost',textContent:'Dừng nhận kết quả',onclick:async()=>{try{await send('CANCEL');}catch(e){status(e.message);}}})),
+      h('div',{id:'aiProgressBox',className:'ai-progress-box section-gap',hidden:true},h('div',{className:'ai-progress-head'},h('span',{id:'aiProgressLabel',textContent:'Đang chuẩn bị…'}),h('strong',{id:'aiProgressValue',textContent:'0%'})),h('progress',{id:'aiProgress',max:100,value:0, 'aria-label':'Tiến độ tạo bài'}),h('p',{className:'hint',textContent:'Tiến độ cập nhật theo từng phần bài và ảnh ChatGPT gửi về.'})),
       h('div',{id:'aiStatus',className:'ai-status section-gap',role:'status'}),h('div',{id:'aiResults',className:'ai-results'}));
     document.body.append(dialog);
     dialog.addEventListener('close',()=>current?.trigger?.focus());
@@ -79,7 +87,7 @@
     drawTargets();
     if(options.brief)$('aiBrief').value=options.brief;
     if(!session)session=await DB.get('aiDraftSessionV1',null);
-    if(session&&!session.done){busy=true;} renderResults();updateButtons();dialog.showModal();
+    if(session&&!session.done){busy=true;} renderResults();renderProgress(session?.progress,session?.percent||0,!!(session&&!session.done));updateButtons();dialog.showModal();
     await checkConnection();
   }
   async function checkConnection(){
@@ -87,7 +95,7 @@
     try{const s=await send('STATUS');connection(true);
       if(s.job){session={...session,...s.job,posts:mergePosts(s.job.posts),done:!['opening','running'].includes(s.job.status)};busy=!session.done;await save();renderResults();}
       else if(busy){busy=false;if(session){session.done=true;session.error='Lượt trước đã ngắt kết nối. Các bản nháp đã nhận vẫn được giữ.';await save();}}
-      status(session?.error||session?.progress||'Nhập chủ đề bên trên rồi bấm “Tạo bằng ChatGPT”.',session?.error?'error':busy?'working':session?.posts?.length?'success':'info');
+      renderProgress(session?.progress,session?.percent||0,busy);status(session?.error||session?.progress||'Nhập chủ đề bên trên rồi bấm “Tạo bằng ChatGPT”.',session?.error?'error':busy?'working':session?.posts?.length?'success':'info');
     }catch(e){busy=false;connection(false);status(e.message,'error');}finally{button.disabled=false;} updateButtons();
   }
   async function generate(){
@@ -106,8 +114,8 @@
       }
     }
     // Gửi ngay từ thao tác bấm thật để tiện ích kiểm tra nguồn yêu cầu.
-    busy=true;updateButtons();status('Đang mở tab ChatGPT…','working');
-    try{const result=await send('GENERATE',{items,images:$('aiImages').checked});session={id:result.id,items,posts:[],progress:'ChatGPT đang tạo bài trong tab riêng. Kết quả sẽ tự hiện tại đây; giữ tab đó mở và đăng nhập nếu được yêu cầu.',done:false,mode:current.mode};await save();renderResults();status(session.progress,'working');}
+    busy=true;updateButtons();session={items,posts:[],progress:'Đang mở tab ChatGPT…',percent:5,hasImages:$('aiImages').checked,done:false,mode:current.mode};renderProgress(session.progress,5,true);status(session.progress,'working');
+    try{const result=await send('GENERATE',{items,images:$('aiImages').checked});session={...session,id:result.id,items,posts:[],progress:'Đang chờ ChatGPT soạn bài…',percent:10,hasImages:$('aiImages').checked,done:false,mode:current.mode};await save();renderResults();renderProgress(session.progress,session.percent,true);status(session.progress,'working');}
     catch(e){busy=false;status(e.message,'error');}updateButtons();
   }
   function renderResults(){
