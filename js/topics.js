@@ -37,7 +37,7 @@
         form.onsubmit=async e=>{e.preventDefault();try{await persist();toast('Đã lưu chủ đề cho '+(page?.name||'mẫu chung')+'.');}catch(e){toast('Chưa lưu được: '+e.message);}};
         form.append(h('div',{className:'row'},h('strong',{className:'grow',textContent:t.dayLabel}),Number(t.day)===today?h('span',{className:'tag tone-green',textContent:'Hôm nay'}):null),
           ...FIELDS.map(([key,label])=>h('label',{className:'field'},label,['postPrompt','direction','imagePrompt'].includes(key)?h('textarea',{name:key,value:t[key]||'',style:'min-height:70px'}):h('input',{type:'text',name:key,value:t[key]||''}))),
-          h('p',{className:'hint',textContent:'Ảnh phù hợp chính sách Facebook, không chèn chữ (0%, dưới 25% diện tích).'}),
+          h('p',{className:'hint',textContent:'Ảnh dọc 4:5 cho điện thoại, tiêu đề ngắn và Liên hệ: 0899779488; tổng chữ dưới 25% diện tích, nội dung phù hợp chính sách Facebook.'}),
           h('div',{className:'actions'},h('button',{className:'btn btn-ghost btn-sm',textContent:'Lưu chủ đề'}),h('button',{type:'button',className:'btn btn-soft btn-sm',textContent:'AI tạo bài & ảnh theo chủ đề',onclick:async e=>{if(!page)return toast('Chọn một Page ở trên trước.');const trigger=e.currentTarget;try{await persist();await App.ai.open({mode:'planner',pageIds:[pageId],topicDay:Number(t.day),trigger});}catch(e){toast(e.message);}}})));return form;
       }));
       if(!page){$('tpProfile').hidden=true;return;}$('tpProfile').hidden=false;
