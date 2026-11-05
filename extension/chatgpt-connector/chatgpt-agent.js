@@ -1,5 +1,11 @@
 /* Chỉ chạy công việc được giao cho tab này, không đọc các cuộc trò chuyện khác. */
 (() => {
+  if(globalThis.__metaStudioAgentInstalled)return;globalThis.__metaStudioAgentInstalled=true;
+  const EXTENSION_ORIGIN=chrome.runtime.getURL?chrome.runtime.getURL('').replace(/\/$/,''):'';
+  const embeddedFrame=!!window.parent&&window.parent!==window&&location.ancestorOrigins?.[0]===EXTENSION_ORIGIN;
+  const FRAME_LOAD_KEY=typeof location.href==='string'?new URL(location.href).searchParams.get('meta_studio_job')||'':'';
+  let embeddedStart=null,embeddedTheme=null;
+  function applyEmbeddedTheme(){const root=document.documentElement;if(!root||!embeddedTheme)return;const dark=embeddedTheme==='dark';if(root.classList.contains('dark')!==dark)root.classList.toggle('dark',dark);if(root.classList.contains('light')===dark)root.classList.toggle('light',!dark);if(root.style.colorScheme!==embeddedTheme)root.style.colorScheme=embeddedTheme;}
   const P=MetaAIProtocol;let working=false,job=null,lastPing=0,stage='',step=0,expectedMarker='',expectedPrefix='',submittedUser=null,baselineUsers=[],baselineReplies=[],baselineTurns=[],baselineSignatures=new Set(),boundConversation='',waitingForImage=false,baselineImages=new Set(),rootReadError='',baselineTurnKeys=new Set();
   const sleep=ms=>new Promise(r=>setTimeout(r,ms));
   async function message(type,extra={}){const r=await chrome.runtime.sendMessage({type,id:job?.id,nonce:job?.nonce,...extra});if(r?.ok===false)throw Error(r.error);if(r?.cancelled)throw Error('Đã dừng lượt tạo.');return r;}
@@ -98,7 +104,7 @@
   }
   function newReply(){return assistants().filter(freshTurn).at(-1)||turns().filter(el=>freshTurn(el)&&!userText(el).includes(expectedMarker)&&!users().some(u=>el===u||el.contains(u))&&!el.matches(USER)&&!el.querySelector(USER)).at(-1)||genericReply(waitingForImage);}
 
-  async function progress(text){if(!/đang xử lý/i.test(text))stage=text;await message('PROGRESS',{text,diagnostic:{agentVersion:'2.0.0',step,rootTextLengths:cachedRoots.map(root=>(root.body||root).textContent?.length||0),structure:queryAll('main,article,section,[data-testid],[role],iframe').slice(-25).map(el=>({tag:el.tagName,role:el.getAttribute('role'),testId:el.getAttribute('data-testid')})),structuredResponseFound:!!structuredResponse(),rootReadError,imageHosts:[...new Set(queryAll('img').filter(img=>img.naturalWidth>=256).map(img=>{try{return new URL(img.currentSrc||img.src).hostname;}catch{return 'invalid';}}))],capturedAt:Date.now(),roots:cachedRoots.length,rawRoleNodes:queryAll(ASSISTANT+','+USER).length,markdownNodes:queryAll('.markdown,[data-assistant-markdown-root],[data-markdown-text-style="assistant-message"],[data-testid="chatgpt-writing-block"]').length,turnNodes:turns().length,imageNodes:queryAll('img').filter(img=>img.naturalWidth>=256).length,documentState:document.readyState,users:users().length,replies:assistants().length,editorEmpty:!editorText(editor()||{}),generationVisible:!!button('stop')}});lastPing=Date.now();}
+  async function progress(text){if(!/đang xử lý/i.test(text))stage=text;await message('PROGRESS',{text,diagnostic:{agentVersion:'2.1.0',step,rootTextLengths:cachedRoots.map(root=>(root.body||root).textContent?.length||0),structure:queryAll('main,article,section,[data-testid],[role],iframe').slice(-25).map(el=>({tag:el.tagName,role:el.getAttribute('role'),testId:el.getAttribute('data-testid')})),structuredResponseFound:!!structuredResponse(),rootReadError,imageHosts:[...new Set(queryAll('img').filter(img=>img.naturalWidth>=256).map(img=>{try{return new URL(img.currentSrc||img.src).hostname;}catch{return 'invalid';}}))],capturedAt:Date.now(),roots:cachedRoots.length,rawRoleNodes:queryAll(ASSISTANT+','+USER).length,markdownNodes:queryAll('.markdown,[data-assistant-markdown-root],[data-markdown-text-style="assistant-message"],[data-testid="chatgpt-writing-block"]').length,turnNodes:turns().length,imageNodes:queryAll('img').filter(img=>img.naturalWidth>=256).length,documentState:document.readyState,users:users().length,replies:assistants().length,editorEmpty:!editorText(editor()||{}),generationVisible:!!button('stop')}});lastPing=Date.now();}
   async function ping(){if(Date.now()-lastPing>20000)await progress(stage?stage+' ChatGPT đang xử lý…':'Đang chờ ChatGPT hoàn tất…');}
   async function waitEditor(){
     let explained=false;
@@ -186,10 +192,11 @@
 
   async function run(){
     if(working)return;working=true;
-    try{const claimed=await chrome.runtime.sendMessage({type:'CLAIM',agentVersion:'2.0.0'});if(!claimed?.job)return;job=claimed.job;
+    try{const claimed=embeddedStart?{job:embeddedStart}:await chrome.runtime.sendMessage({type:'CLAIM',agentVersion:'2.1.0'});embeddedStart=null;if(!claimed?.job)return;job=claimed.job;
+      if(embeddedFrame)await message('FRAME_CLAIM');
       await waitEditor();
       if(job.status==='running'||sessionStorage.getItem('meta-ai-job:'+job.id))throw Error('Tab ChatGPT đã được tải lại. Giữ các kết quả đã có và tạo lượt mới để tránh gửi lặp.');
-      if(assistants().length||users().length)throw Error('Tab ChatGPT không phải cuộc trò chuyện mới. Đã dừng để giữ riêng các cuộc trò chuyện của bạn.');
+      if(!embeddedFrame&&(assistants().length||users().length))throw Error('Tab ChatGPT không phải cuộc trò chuyện mới. Đã dừng để giữ riêng các cuộc trò chuyện của bạn.');
       await message('START');
       sessionStorage.setItem('meta-ai-job:'+job.id,'started');
       while(job.input){
@@ -216,5 +223,20 @@
     }catch(e){if(job)await message('FAILED',{error:e.message}).catch(()=>{});}
     finally{working=false;}
   }
-  run();let attempts=0;const timer=setInterval(()=>{if(!job&&!working&&attempts++<20)run();if(job||attempts>=20)clearInterval(timer);},1500);
+  if(embeddedFrame){
+    const announce=()=>window.parent.postMessage({source:'META_STUDIO_GPT_FRAME',type:'FRAME_READY',version:'2.1.0',loadKey:FRAME_LOAD_KEY},EXTENSION_ORIGIN);
+    window.addEventListener('message',event=>{
+      const m=event.data;if(event.source!==window.parent||event.origin!==EXTENSION_ORIGIN||m?.source!=='META_STUDIO_PANEL')return;
+      if(m.type==='FRAME_CANCEL'&&job&&m.jobId===job.id){button('stop')?.click();return;}
+      if(m.type==='FRAME_THEME'&&['light','dark'].includes(m.theme)){embeddedTheme=m.theme;applyEmbeddedTheme();return;}
+      if(m.type!=='FRAME_RUN'||job||working)return;
+      if(!m.job?.id||!m.job?.nonce||m.job?.input?.items?.length!==1)return;
+      embeddedStart=m.job;run();
+    });
+    const watchTheme=()=>{applyEmbeddedTheme();if(document.documentElement&&typeof MutationObserver!=='undefined'){const observer=new MutationObserver(applyEmbeddedTheme);observer.observe(document.documentElement,{attributes:true,attributeFilter:['class']});}};
+    document.addEventListener('DOMContentLoaded',watchTheme,{once:true});if(document.readyState!=='loading')watchTheme();
+    announce();const readyTimer=setInterval(()=>{if(job)clearInterval(readyTimer);else announce();},1500);
+  }else{
+    run();let attempts=0;const timer=setInterval(()=>{if(!job&&!working&&attempts++<20)run();if(job||attempts>=20)clearInterval(timer);},1500);
+  }
 })();

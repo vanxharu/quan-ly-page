@@ -212,6 +212,7 @@ function setDark(on) {
   $('btnDark').setAttribute('aria-label',on?'Chuyển sang giao diện sáng':'Chuyển sang giao diện tối');
   $('btnDark').title=on?'Đang dùng giao diện tối · Chuyển sang sáng':'Đang dùng giao diện sáng · Chuyển sang tối';
   local.set('darkMode', on ? '1' : '0');
+  window.dispatchEvent(new Event('meta-theme-changed'));
 }
 setDark(local.get('darkMode') ? local.get('darkMode') === '1' : matchMedia('(prefers-color-scheme: dark)').matches);
 $('btnDark').onclick = () => setDark(!document.body.classList.contains('dark-mode'));
