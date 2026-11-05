@@ -40,6 +40,7 @@
           h('div', { id: 'plList', className: 'section-gap' })));
     },
     async refresh() {
+      if(!$('plCfg'))return; // Có thể nhận bài AI trước lần mở tab Lịch đăng.
       const s = await getSettings();
       let queue = await DB.get(QUEUE, []);
       // Bài đã hẹn trên FB mà qua giờ → coi như đã đăng.

@@ -196,6 +196,7 @@
   }
   function resetThread() {
     S.draftReady = false; S.image = ''; S.tpl = null;
+    if(!$('ibText'))return; // Đổi Page trước khi mở Hộp thư vẫn hợp lệ.
     $('ibText').value = ''; $('ibText').disabled = true; drawAttach();
     $('ibTitle').replaceChildren('Chưa chọn hội thoại'); $('ibReload').hidden = true; $('ibSend').disabled = true; $('ibCrm').hidden = true;
     $('ibThread').replaceChildren(empty('Chọn một hội thoại bên trái để xem tin nhắn.'));
