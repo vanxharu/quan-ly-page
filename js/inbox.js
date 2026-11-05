@@ -169,7 +169,7 @@
   };
   function drawHead(c) {
     $('ibTitle').replaceChildren(h('span', { className: 'thread-head' }, custAvatar(c, 32),
-      h('span', { style: 'min-width:0' }, h('div', { className: 'card-title', textContent: c.other.name || 'Khách' }), h('div', { className: 'hint', textContent: c.page.name })), h('button', { type: 'button', className: 'btn btn-ghost btn-sm', textContent: 'Tải avatar', title: 'Lấy lại ảnh khách từ ID Messenger của Page', onclick: async e => { const b=e.currentTarget; b.disabled=true; try { await loadPics([c], true); if (!S.pics.get(pictureKey(c))) toast('Facebook chưa trả ảnh cho ID khách này. Kiểm tra quyền nhắn tin của Page.'); } catch { toast('Chưa tải được ảnh khách. Thử lại sau.'); } finally { b.disabled=false; } } })));
+      h('span', { style: 'min-width:0' }, h('div', { className: 'card-title', textContent: c.other.name || 'Khách' }), h('div', { className: 'hint', textContent: c.page.name })), h('button', { type: 'button', className: 'btn btn-ghost btn-sm', textContent: 'Tải avatar', title: 'Truy cập link avatar của khách và lấy lại ảnh', onclick: async e => { const b=e.currentTarget; b.disabled=true; try { await loadPics([c], true); if (!S.pics.get(pictureKey(c))) toast('Facebook chưa trả ảnh cho ID khách này. Kiểm tra quyền nhắn tin của Page.'); } catch { toast('Chưa tải được ảnh khách. Thử lại sau.'); } finally { b.disabled=false; } } })));
   }
   async function drawList() {
     const st = await settings();
