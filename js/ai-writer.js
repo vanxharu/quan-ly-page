@@ -79,6 +79,18 @@
           h('p',{textContent:'Bài: '+(topic?.direction||topic?.postPrompt||topic?.title||'Chưa có chủ đề')}),h('p',{textContent:'Ảnh: '+(topic?.imagePrompt||'Minh hoạ theo nội dung và ngành hàng của Page.')}),h('p',{textContent:'Ngành / sản phẩm: '+(target.data.profile.niche||'Chưa có hồ sơ — bổ sung trong tab Chủ đề.')})):null);
     }));updateScope();updateButtons();
   }
+  async function diagnose(){
+    const button=$('aiDiagnose');if(button)button.disabled=true;
+    try{
+      const state=await send('STATUS'),job=state.job;
+      const report={capturedAt:new Date().toISOString(),connectorVersion:state.version||'',job:job?{id:job.id,status:job.status,progress:job.progress,postsReceived:job.posts?.length||0,imagesReceived:job.posts?.filter(p=>p.imageData).length||0,reviewKey:job.reviewKey||'',diagnostic:job.diagnostic||null}:null};
+      $('aiDiagnosticResult').textContent=JSON.stringify(report,null,2);$('aiDiagnosticResult').hidden=false;
+      const url=URL.createObjectURL(new Blob([JSON.stringify(report,null,2)],{type:'application/json'}));
+      const link=h('a',{href:url,download:'meta-assistant-diagnostic.json'});document.body.append(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);
+      toast('Đã tải báo lỗi. Báo lỗi không chứa bài viết, ảnh, mật khẩu hay token.',7000);
+    }catch(e){$('aiDiagnosticResult').textContent='Không lấy được trạng thái: '+e.message;$('aiDiagnosticResult').hidden=false;}
+    finally{if(button)button.disabled=false;}
+  }
   function ensureDialog(){
     if(dialog)return;
     dialog=h('dialog',{className:'ai-dialog','aria-labelledby':'aiDialogTitle'});
@@ -96,6 +108,7 @@
       h('div',{id:'aiScope',className:'hint section-gap'}),
       h('div',{className:'row section-gap'},h('button',{id:'aiGenerate',type:'button',className:'btn btn-primary','data-ai-generate':'1',textContent:'Tạo bằng ChatGPT',onclick:generate}),h('button',{id:'aiCancel',type:'button',hidden:true,className:'btn btn-ghost',textContent:'Dừng nhận kết quả',onclick:async()=>{try{await send('CANCEL');}catch(e){status(e.message);}}})),
       h('div',{id:'aiProgressBox',className:'ai-progress-box section-gap',hidden:true},h('div',{className:'ai-progress-head'},h('span',{id:'aiProgressLabel',textContent:'Đang chuẩn bị…'}),h('strong',{id:'aiProgressValue',textContent:'0%'})),h('div',{className:'ai-progress-track'},h('progress',{id:'aiProgress',max:100,value:0, 'aria-label':'Tiến độ tạo bài'}),h('span',{className:'ai-progress-sweep','aria-hidden':'true'})),h('p',{className:'hint',textContent:'Chờ đến khi ChatGPT hoàn tất, không giới hạn thời gian. Từng bài được tự lưu ngay; ảnh được bổ sung khi tạo xong.'})),
+      h('div',{className:'section-gap'},h('button',{id:'aiDiagnose',type:'button',className:'btn btn-ghost',textContent:'Kiểm tra lượt đang chạy / Tải báo lỗi',onclick:diagnose}),h('pre',{id:'aiDiagnosticResult',className:'ai-diagnostic-result',hidden:true,style:'white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px;max-height:220px;overflow:auto'})),
       h('div',{id:'aiStatus',className:'ai-status section-gap',role:'status'}),h('div',{id:'aiResults',className:'ai-results'}));
     document.body.append(dialog);
     dialog.addEventListener('close',()=>current?.trigger?.focus());
