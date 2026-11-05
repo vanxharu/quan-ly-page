@@ -129,24 +129,32 @@
       loadPics(S.convs); await drawList();
     } finally { S.moreBusy = false; $('ibMore').disabled = false; $('ibMore').textContent = 'Tải thêm hội thoại'; }
   }
-  async function loadPics(convs) {
+  const pictureKey = c => c.page.id + ":" + c.other.id;
+  const failedPictures = new Set();
+  async function loadPics(convs, force = false) {
     const byPage = new Map();
-    for (const c of convs) if (c.other.id && !S.pics.has(c.other.id)) (byPage.get(c.page) || byPage.set(c.page, []).get(c.page)).push(c.other.id);
-    await pool([...byPage], 3, async ([page, ids]) => { for (const [id, url] of await App.customerPics(page, ids)) if (url) S.pics.set(id, url); });
+    for (const c of convs) if (c.other.id && (force || !S.pics.has(pictureKey(c)))) (byPage.get(c.page) || byPage.set(c.page, []).get(c.page)).push(c.other.id);
+    await pool([...byPage], 3, async ([page, ids]) => { for (const [id, url] of await App.customerPics(page, ids, { force })) { const key = page.id + ":" + id; if (url) S.pics.set(key, url); else S.pics.delete(key); } });
     if (byPage.size) {
       drawList();
       if (S.conv) { drawHead(S.conv); refreshThreadAvatars(S.conv); }
     }
   }
+  function retryPicture(c, url) {
+    const key = pictureKey(c) + ':' + url;
+    if (!url || failedPictures.has(key)) return;
+    failedPictures.add(key); S.pics.delete(pictureKey(c));
+    loadPics([c], true).catch(() => {});
+  }
   // Cập nhật riêng avatar khi ảnh về muộn; giữ nguyên tin nhắn, vị trí cuộn và ô soạn.
   function messageAvatar(c) {
-    const url = S.pics.get(c.other.id) || '';
-    const avatar = App.avatar(c.other.name, url, 24);
+    const url = S.pics.get(pictureKey(c)) || '';
+    const avatar = App.avatar(c.other.name, url, 24, () => retryPicture(c, url));
     Object.assign(avatar.dataset, { customerAvatar: '1', pageId: c.page.id, psid: c.other.id, avatarUrl: url });
     return avatar;
   }
   function refreshThreadAvatars(c) {
-    const url = S.pics.get(c.other.id) || '';
+    const url = S.pics.get(pictureKey(c)) || '';
     for (const avatar of $('ibThread').querySelectorAll('[data-customer-avatar]')) {
       if (avatar.dataset.pageId === c.page.id && avatar.dataset.psid === c.other.id && avatar.dataset.avatarUrl !== url) {
         avatar.replaceWith(messageAvatar(c));
@@ -157,11 +165,11 @@
   const custAvatar = (c, size = 36) => {
     const pg = App.avatar(c.page.name, App.pageAvatarUrl(c.page), Math.round(size * .42));
     pg.classList.add('pg'); pg.title = c.page.name;
-    return h('span', { className: 'avwrap' }, App.avatar(c.other.name, S.pics.get(c.other.id), size), pg);
+    return h('span', { className: 'avwrap' }, App.avatar(c.other.name, S.pics.get(pictureKey(c)), size, () => retryPicture(c, S.pics.get(pictureKey(c)))), pg);
   };
   function drawHead(c) {
     $('ibTitle').replaceChildren(h('span', { className: 'thread-head' }, custAvatar(c, 32),
-      h('span', { style: 'min-width:0' }, h('div', { className: 'card-title', textContent: c.other.name || 'Khách' }), h('div', { className: 'hint', textContent: c.page.name }))));
+      h('span', { style: 'min-width:0' }, h('div', { className: 'card-title', textContent: c.other.name || 'Khách' }), h('div', { className: 'hint', textContent: c.page.name })), h('button', { type: 'button', className: 'btn btn-ghost btn-sm', textContent: 'Tải avatar', title: 'Lấy lại ảnh khách từ ID Messenger của Page', onclick: async e => { const b=e.currentTarget; b.disabled=true; try { await loadPics([c], true); if (!S.pics.get(pictureKey(c))) toast('Facebook chưa trả ảnh cho ID khách này. Kiểm tra quyền nhắn tin của Page.'); } catch { toast('Chưa tải được ảnh khách. Thử lại sau.'); } finally { b.disabled=false; } } })));
   }
   async function drawList() {
     const st = await settings();

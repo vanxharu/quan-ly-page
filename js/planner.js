@@ -22,7 +22,9 @@
     mount(el) {
       el.append(
         h('div', { className: 'planner-ai-action' },
+          h('button',{type:'button',id:'plCompose',className:'btn btn-ghost',textContent:'Soạn tay',onclick:()=>App.posting.open()}),
           h('button', { type: 'button', className: 'btn btn-primary', 'data-ai-sidepanel':'1',textContent: '✦ Mở Studio AI', onclick: e => App.ai.open({ mode: 'planner', trigger: e.currentTarget }) })),
+        h('div',{id:'plComposer'}),
         h('div', { className: 'grid2' },
           h('div', { className: 'card', id: 'plCfg' }),
           h('div', { className: 'card', id: 'plDays' })),
@@ -36,9 +38,11 @@
             h('button', { className: 'btn btn-primary', id: 'plGo', onclick: () => scheduleAll() }, icon('i-send'), 'Lên lịch tất cả bài đã duyệt')),
           h('div', { className: 'log', id: 'plLog' }),
           h('div', { id: 'plList', className: 'section-gap' })));
+      App.posting?.mount($('plComposer'));
     },
     async refresh() {
       if(!$('plCfg'))return; // Có thể nhận bài AI trước lần mở tab Lịch đăng.
+      App.posting?.refresh();
       const s = await getSettings();
       let queue = await DB.get(QUEUE, []);
       // Bài đã hẹn trên FB mà qua giờ → coi như đã đăng.
@@ -55,6 +59,7 @@
     }
   });
   const refresh = () => App.tabs.planner.refresh();
+  App.planner.revealDrafts=()=>{filterStatus='draft';if($('plStatus'))$('plStatus').value='draft';return refresh();};
   const log = (cls, t) => $('plLog').append(h('div', { className: 'status ' + cls, textContent: t }));
   async function patch(id, change) {
     const queue = await DB.get(QUEUE, []);
@@ -66,7 +71,7 @@
     document.querySelector('.planner-page-dialog')?.close();
     let saving=false;
     const current=pageOf(item),list=h('div',{className:'planner-page-options'}),error=h('p',{className:'status err',hidden:true,role:'alert'});
-    const search=h('input',{type:'search',placeholder:'Tìm tên hoặc ID Page…','aria-label':'Tìm Fanpage'});
+    const search=App.pageSearchField?App.pageSearchField({placeholder:'Tìm tên hoặc ID Page…','aria-label':'Tìm Fanpage'}):h('input',{type:'search',autocomplete:'off',placeholder:'Tìm tên hoặc ID Page…','aria-label':'Tìm Fanpage'});
     const key=value=>String(value||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/đ/g,'d').replace(/Đ/g,'D').toLowerCase();
     const dialog=h('dialog',{className:'planner-page-dialog','aria-label':'Chọn Fanpage nhận bài',onclose:()=>{
       dialog.remove();[...document.querySelectorAll('.planner-page-trigger')].find(button=>button.dataset.itemId===item.id)?.focus?.();

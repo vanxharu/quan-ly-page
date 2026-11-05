@@ -1,0 +1,10 @@
+BỘ CẬP NHẬT META ASSISTANT CHO WINDOWS
+
+Giải nén và chạy MetaAssistantUpdater.exe. Chọn tiện ích đang dùng rồi bấm Cài và cập nhật.
+Bộ cài chỉ dùng thư mục Meta Assistant đã đăng ký trong Cốc Cốc/Chrome/Edge, sao lưu tệp cũ và ghi đè tại đó. Chỉ tải gói cố định từ vanxharu.github.io/quan-ly-page.
+Lần đầu mở chrome://extensions (hoặc trang Tiện ích của Cốc Cốc), bấm Tải lại ở Meta Assistant. Có thể cần xác nhận quyền nativeMessaging mới để dùng bộ cập nhật.
+Từ lần sau bấm Cập nhật ở đầu Studio AI. Chờ lượt tạo xong trước khi cập nhật. Tiện ích tự nạp lại, giữ bản nháp và cài đặt.
+Bản sao lưu: %LOCALAPPDATA%\MetaAssistantUpdater\backups.
+Bộ kết nối cài tại %LOCALAPPDATA%\MetaAssistantUpdater; đăng ký HKCU NativeMessagingHosts cho đúng trình duyệt/ID tiện ích đã chọn. Không yêu cầu quyền quản trị.
+
+Mã nguồn: Updater.cs; biên dịch lại bằng Windows PowerShell: .\Build.ps1.

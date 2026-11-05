@@ -12,7 +12,7 @@ App.CONFIG_ID = '1092800303751533';
 // Điều hướng 2 tầng giống tiện ích: nhóm → tab con [id, nhãn, biểu tượng].
 App.NAV = {
   messages: ['Tin nhắn', [['inbox', 'Hộp thư', 'i-msg'], ['templates', 'Mẫu tin', 'i-msg'], ['crm', 'Khách hàng', 'i-user'], ['bulk', 'Gửi hàng loạt', 'i-send']]],
-  publishing: ['Đăng bài', [['post', 'Đăng Fanpage', 'i-pen'], ['planner', 'Lịch đăng', 'i-cal'], ['scheduled', 'Đã hẹn trên FB', 'i-cal'], ['topics', 'Cách AI viết', 'i-grid']]],
+  publishing: ['Đăng bài', [['planner', 'Lịch đăng', 'i-cal'], ['scheduled', 'Đã hẹn trên FB', 'i-cal'], ['topics', 'Cách AI viết', 'i-grid']]],
   auto: ['Tự động', [['botrules', 'Từ khoá', 'i-msg'], ['botcomments', 'Bình luận tự động', 'i-like'], ['botflows', 'Kịch bản', 'i-grid'], ['botmenu', 'Menu & lời chào', 'i-gear'], ['botlog', 'Nhật ký & đơn bot', 'i-cal']]],
   engage: ['Tương tác', [['comments', 'Bình luận', 'i-like'], ['scanner', 'Quét bài viết', 'i-search']]],
   manage: ['Quản lý', [['dashboard', 'Tổng quan', 'i-grid'], ['calendar', 'Lịch nội dung', 'i-cal'], ['stats', 'Số liệu', 'i-grid'], ['sales', 'Bán hàng', 'i-cart'], ['settings', 'Cài đặt', 'i-gear']]]
@@ -287,11 +287,13 @@ App.tab = (id, mod) => {
 let current = '';
 $('groups').replaceChildren(...Object.entries(App.NAV).map(([g, [label]]) => h('button', { type: 'button', textContent: label, dataset: { g }, onclick: () => showGroup(g) })));
 function showGroup(g, tabId) {
+  if(tabId==='post'){g='publishing';tabId='planner';}
   [...$('groups').children].forEach(b => b.setAttribute('aria-pressed', b.dataset.g === g));
   $('subnav').replaceChildren(...App.NAV[g][1].map(([id, label, ic]) => h('button', { type: 'button', role: 'tab', dataset: { tab: id }, onclick: () => showTab(id) }, icon(ic), label)));
   showTab(App.NAV[g][1].some(([id]) => id === tabId) ? tabId : App.NAV[g][1][0][0]);
 }
 function showTab(id) {
+  if(id==='post')id='planner';
   const g = Object.keys(App.NAV).find(k => App.NAV[k][1].some(([t]) => t === id));
   if (![...$('subnav').children].some(b => b.dataset.tab === id)) return showGroup(g, id);
   current = id;
@@ -321,9 +323,9 @@ App.pageChecks = (selected = []) => h('div', { className: 'pages' }, ...App.page
 // ── Ảnh đại diện ───────────────────────────────────────────
 App.pageAvatarUrl = p => p?.picture?.data?.url || '';
 // Ảnh tròn; chưa có ảnh (hoặc ảnh lỗi) thì hiện chữ cái đầu trên nền gradient.
-App.avatar = (name, url, size = 36) => {
+App.avatar = (name, url, size = 36, onError) => {
   const el = h('span', { className: 'avatar', style: `width:${size}px;height:${size}px;font-size:${Math.round(size * .36)}px`, textContent: initials(name) });
-  if (url) { const img = h('img', { src: url, alt: '', loading: 'lazy', referrerPolicy: 'no-referrer', onerror: () => img.remove() }); el.append(img); }
+  if (url) { const img = h('img', { src: url, alt: '', loading: 'lazy', referrerPolicy: 'no-referrer', onerror: () => { img.remove(); onError?.(url); } }); el.append(img); }
   return el;
 };
 // Ảnh khách Messenger (User Profile API, field profile_pic) theo PSID. Gom 50 PSID/lần gọi bằng Graph batch,
@@ -334,35 +336,58 @@ function reportAvatarError(error) {
   const detail = JSON.stringify({ code: error.code, subcode: error.error_subcode ?? error.sub, message: String(error.message || 'Phản hồi ảnh không hợp lệ.').replace(/access_token=[^&\s]+/g, 'access_token=[ẩn]') });
   if (!avatarWarnings.has(detail)) { avatarWarnings.add(detail); console.warn('[Avatar khách]', detail); }
 }
-App.customerPics = async (page, psids) => {
-  const cache = await DB.get('avatarCacheV2', {});
+let avatarWrites = Promise.resolve();
+App.customerPics = async (page, psids, { force = false } = {}) => {
+  const cache = await DB.get('avatarCacheV3', {}), changes = {};
+  const safeURL = value => { try { const u = new URL(value); return u.protocol === 'https:' && !u.username && !u.password && ![...u.searchParams.keys()].some(k => /^(access_token|token|authorization)$/i.test(k)) ? u.href : ''; } catch { return ''; } };
   const out = new Map(), need = [];
-  for (const id of new Set(psids.filter(Boolean))) {
-    const c = cache[id];
-    if (c && Date.now() - c.at < (c.url ? PIC_TTL : 10 * 60e3)) out.set(id, c.url); else need.push(id); // ảnh lỗi chỉ nhớ 10 phút để thử lại
+  for (const id of new Set(psids.filter(Boolean).map(String).filter(id => /^\d+$/.test(id)))) {
+    const c = cache[page.id + ':' + id];
+    if (!force && c && Date.now() - c.at < (c.url ? PIC_TTL : 10 * 60e3)) out.set(id, safeURL(c.url)); else need.push(id);
   }
   for (let i = 0; i < need.length; i += 50) {
     const chunk = need.slice(i, i + 50);
     try {
       const res = await api('/', { batch: chunk.map(id => ({ method: 'GET', relative_url: `${id}?fields=profile_pic` })), include_headers: false }, 'POST', page.access_token);
-      res.forEach((r, k) => {
+      const missing = [];
+      chunk.forEach((id, k) => {
+        const r = res[k];
         let url = '';
         try {
           const profile = JSON.parse(r.body);
-          url = r?.code === 200 ? profile.profile_pic || '' : '';
+          url = r?.code === 200 ? safeURL(profile.profile_pic) : '';
           if (!url && profile.error) reportAvatarError(profile.error);
         } catch { reportAvatarError({}); }
-        cache[chunk[k]] = { url, at: Date.now() }; out.set(chunk[k], url);
+        if (!url) missing.push(id);
+        changes[page.id + ':' + id] = { url, at: Date.now() }; out.set(id, url);
       });
+      // PSID không phải UID toàn cục. Chỉ nhận ảnh do Graph trả về cho đúng ID, bỏ ảnh mặc định.
+      if (missing.length) {
+        const fallback = await api('/', { batch: missing.map(id => ({ method: 'GET', relative_url: `${id}/picture?redirect=false&width=128&height=128` })), include_headers: false }, 'POST', page.access_token);
+        missing.forEach((id, k) => {
+          try { const data = JSON.parse(fallback[k]?.body || '{}'); const url = fallback[k]?.code === 200 && data.data?.is_silhouette === false ? safeURL(data.data.url) : '';
+            if (url) { changes[page.id + ':' + id] = { url, at: Date.now() }; out.set(id, url); }
+            else if (data.error) reportAvatarError(data.error);
+          } catch { reportAvatarError({}); }
+        });
+      }
     } catch (e) { reportAvatarError(e); }
   }
-  if (need.length) await DB.set('avatarCacheV2', cache);
+  if (Object.keys(changes).length) { const write = avatarWrites.catch(() => {}).then(async () => { const latest = await DB.get('avatarCacheV3', {}); await DB.set('avatarCacheV3', { ...latest, ...changes }); }); avatarWrites = write; await write; }
   return out;
 };
 // Dòng Page nhỏ: ảnh + tên (dùng trong danh sách bài, bình luận…).
 App.pageTag = p => h('span', { className: 'page-chip', style: 'display:inline-flex;align-items:center;gap:4px', title: p?.name || '' }, App.avatar(p?.name, App.pageAvatarUrl(p), 14), p?.name || 'Page không rõ');
 
 // ── Bộ chọn nhiều Page trên cùng ───────────────────────────
+App.pageSearchField = props => {
+  const field=h('input',{type:'search',name:'meta-assistant-page-filter',readOnly:true,...props});
+  for(const [key,value] of Object.entries({autocomplete:'off',autocapitalize:'off',spellcheck:'false','data-lpignore':'true','data-1p-ignore':'true','data-form-type':'other'}))field.setAttribute(key,value);
+  field.onpointerdown=()=>{field.readOnly=false;};
+  field.onkeydown=e=>{if(e.key!=='Tab')field.readOnly=false;};
+  const input=props?.oninput;field.oninput=e=>{if(field.readOnly){field.value='';return;}input?.(e);};
+  return field;
+};
 let pickerQuery = '';
 function drawPicker() {
   const list = App.selected();
@@ -373,13 +398,13 @@ function drawPicker() {
   if ($('pageMenu').hidden) return;
   const draft = new Set(selected);
   const rows = h('div', { className: 'page-menu-list' });
-  const drawRows = () => rows.replaceChildren(...App.pages.filter(p => !pickerQuery || norm(p.name).includes(norm(pickerQuery))).map(p => h('label', { className: 'page-row' + (draft.has(p.id) ? ' on' : '') },
+  const drawRows = () => rows.replaceChildren(...App.pages.filter(p => !pickerQuery || norm(p.name+' '+p.id).includes(norm(pickerQuery))).map(p => h('label', { className: 'page-row' + (draft.has(p.id) ? ' on' : '') },
     h('input', { type: 'checkbox', checked: draft.has(p.id), onchange: e => { e.target.checked ? draft.add(p.id) : draft.delete(p.id); e.target.closest('label').classList.toggle('on', e.target.checked); count.textContent = `${draft.size} đã chọn`; } }),
     App.avatar(p.name, App.pageAvatarUrl(p), 28), h('span', { className: 'grow', textContent: p.name }),
     h('button', { type: 'button', className: 'btn btn-ghost btn-sm only', textContent: 'Chỉ Page này', onclick: e => { e.preventDefault(); closePicker(); App.setSelected([p.id]); } }))));
   const count = h('span', { className: 'hint', textContent: `${draft.size} đã chọn` });
   $('pageMenu').replaceChildren(
-    h('input', { type: 'search', placeholder: '🔍 Tìm Page…', value: pickerQuery, oninput: e => { pickerQuery = e.target.value; drawRows(); } }),
+    App.pageSearchField({placeholder:'Tìm tên hoặc ID Page…','aria-label':'Tìm Page',value:pickerQuery,oninput:e=>{pickerQuery=e.target.value;drawRows();}}),
     h('div', { className: 'row', style: 'margin:8px 0;gap:6px' },
       h('button', { type: 'button', className: 'btn btn-ghost btn-sm', textContent: 'Chọn hết', onclick: () => { App.pages.forEach(p => draft.add(p.id)); drawRows(); count.textContent = `${draft.size} đã chọn`; } }),
       h('button', { type: 'button', className: 'btn btn-ghost btn-sm', textContent: 'Bỏ hết', onclick: () => { draft.clear(); drawRows(); count.textContent = '0 đã chọn'; } }), count),
@@ -390,7 +415,7 @@ function drawPicker() {
   drawRows();
 }
 function closePicker() { $('pageMenu').hidden = true; $('pageBtn').setAttribute('aria-expanded', 'false'); }
-$('pageBtn').onclick = () => { const open = $('pageMenu').hidden; $('pageMenu').hidden = !open; $('pageBtn').setAttribute('aria-expanded', String(open)); drawPicker(); if (open) $('pageMenu').querySelector('input')?.focus(); };
+$('pageBtn').onclick = () => { const open = $('pageMenu').hidden; if(open)pickerQuery=''; $('pageMenu').hidden = !open; $('pageBtn').setAttribute('aria-expanded', String(open)); drawPicker(); if (open) $('pageMenu').querySelector('input')?.focus(); };
 // composedPath: phần tử bị bấm có thể đã được vẽ lại (rời DOM) khi sự kiện tới document.
 document.addEventListener('click', e => { if (!e.composedPath().includes($('pagePicker'))) closePicker(); });
 document.addEventListener('keydown', e => { if (e.key === 'Escape') closePicker(); });

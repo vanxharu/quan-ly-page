@@ -1,12 +1,13 @@
 {
   "manifest_version": 3,
   "name": "Meta Assistant · Kết nối ChatGPT",
-  "version": "2.2.2",
+  "version": "2.4.0",
   "description": "Studio AI: chọn Page có avatar, tạo bài và ảnh bằng GPT nhúng, lưu nháp và chuyển sang web khi bạn chọn.",
   "permissions": [
     "storage",
     "sidePanel",
-    "declarativeNetRequestWithHostAccess"
+    "declarativeNetRequestWithHostAccess",
+    "nativeMessaging"
   ],
   "host_permissions": [
     "https://chatgpt.com/*",
@@ -42,9 +43,19 @@
     "default_path": "sidepanel.html"
   },
   "action": {
-    "default_title": "Mở Studio AI · Meta Assistant"
+    "default_title": "Mở Studio AI · Meta Assistant",
+    "default_icon": {
+      "16": "icons/logo.png",
+      "32": "icons/logo.png"
+    }
   },
   "content_security_policy": {
     "extension_pages": "script-src 'self'; object-src 'self'; frame-src https://chatgpt.com; img-src 'self' data: blob: https:; style-src 'self';"
+  },
+  "icons": {
+    "16": "icons/logo.png",
+    "32": "icons/logo.png",
+    "48": "icons/logo.png",
+    "128": "icons/logo.png"
   }
 }

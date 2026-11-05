@@ -1,114 +1,97 @@
-/* Đăng Fanpage: đăng ngay / hẹn giờ lên nhiều Page, hoặc đưa vào Lịch đăng (fbScheduleQueueV1) làm nháp để xếp giờ và duyệt.
- * Đã hẹn trên FB: bài Facebook đang giữ để tự đăng (scheduled_posts) của Page đang chọn. */
+/* Soạn tay trong Lịch đăng; giữ kho nháp cũ postDraftV1 và quản lý bài đã hẹn trên Facebook. */
 (() => {
-  const QUEUE = 'fbScheduleQueueV1';
-  let draftImage = '', draftPageId = '', imageRead = Promise.resolve(''), draftWrites = Promise.resolve(), edited = false;
-  function savePostDraft() {
-    const text = $('poText').value, at = $('poAt').value, pendingImage = imageRead, pageId = draftPageId;
-    $('poDraftState').textContent = 'Đang lưu nháp…';
-    draftWrites = draftWrites.catch(() => {}).then(async () => DB.set('postDraftV1', { text, at, pageId, image: await pendingImage }));
-    draftWrites.then(() => { $('poDraftState').textContent = 'Đã lưu nháp tự động.'; }, () => { $('poDraftState').textContent = 'Chưa lưu được nháp. Hãy giữ trang mở hoặc sao chép nội dung.'; });
+  const QUEUE='fbScheduleQueueV1';
+  let draftImage='',draftPageId='',imageRead=Promise.resolve(''),draftWrites=Promise.resolve(),edited=false,publishing=false,queueing=false;
+  const active=()=>publishing||queueing;
+  const targets=()=>draftPageId?[App.pageById(draftPageId)].filter(Boolean):App.selected();
+  function refresh(){
+    if(!$('poComposer'))return;
+    const page=App.pageById(draftPageId),list=targets();
+    $('poTitle').textContent=draftPageId?(page?'Bài riêng cho '+page.name:'Page của bản nháp chưa kết nối'):`Dùng cho ${list.length} Page đang chọn`;
+    $('poTargetHint').textContent=draftPageId?'Bài này giữ đúng Page đã gán.':'Chọn Page ở thanh trên cùng.';
+    $('poReleasePage').hidden=!draftPageId;
+    $('poPages').replaceChildren(...list.map(App.pageTag));
+    $('poGo').textContent=publishing?'Đang gửi…':$('poAt').value?'Hẹn giờ trên Facebook':'Đăng ngay';
+    $('poToQueue').textContent=queueing?'Đang lưu…':'Lưu vào danh sách duyệt';
+    ['poGo','poToQueue','poText','poImage','poAt','poReleasePage'].forEach(id=>$(id).disabled=active());
+    $('poPreview').querySelectorAll('button').forEach(button=>button.disabled=active());
+    if($('plCompose'))$('plCompose').textContent=$('poText').value.trim()||draftImage?'Tiếp tục bản nháp':'Soạn tay';
   }
-  function drawDraftImage() {
-    $('poPreview').replaceChildren(...(draftImage ? [h('img', { className: 'thumb', src: draftImage, alt: 'Ảnh bài viết' }),
-      h('button', { type: 'button', className: 'btn btn-ghost btn-sm', textContent: 'Bỏ ảnh', onclick: () => {
-        edited = true; $('poImage').value = ''; draftImage = ''; imageRead = Promise.resolve(''); drawDraftImage(); savePostDraft();
-      } })] : []));
+  function savePostDraft(){
+    const text=$('poText').value,at=$('poAt').value,pageId=draftPageId,pendingImage=imageRead;
+    $('poDraftState').textContent='Đang lưu nháp…';
+    const write=draftWrites.catch(()=>{}).then(async()=>DB.set('postDraftV1',{text,at,pageId,image:await pendingImage}));
+    draftWrites=write;
+    write.then(()=>{$('poDraftState').textContent='Đã lưu nháp tự động.';},()=>{$('poDraftState').textContent='Chưa lưu được nháp. Giữ trang mở hoặc sao chép nội dung.';});
+    refresh();return write;
   }
-  App.posting = { async applyAI(post) {
-    if(!post.pageId||!App.pageById(post.pageId))throw Error('Không tìm thấy Page của bài AI. Kết nối lại Page trước khi dùng bài.');
-    App.show('post'); edited = true; if($('poManual'))$('poManual').open=true;
-    draftPageId=String(post.pageId);
-    $('poText').value = post.text || ''; $('poImage').value = '';
-    draftImage = post.imageData || ''; imageRead = Promise.resolve(draftImage);
-    drawDraftImage(); savePostDraft(); App.tabs.post.refresh();
-  } };
-  App.tab('post', {
-    mount(el) {
-      el.append(
-        h('div', { className: 'card' },
-          h('div', { className: 'card-head' }, h('h3', { className: 'card-title', textContent: 'Soạn bài' }),
-            h('button', { type: 'button', className: 'btn btn-soft', 'data-ai-sidepanel':'1',textContent: '✦ Studio AI bên cạnh', onclick: e => App.ai.open({ mode: 'post', pageIds: draftPageId?[draftPageId]:undefined, trigger: e.currentTarget }) })),
-          h('textarea', { id: 'poText', placeholder: 'Nội dung bài viết…' }),
-          h('div', { id: 'poDraftState', className: 'hint', style: 'margin-top:8px', role: 'status', textContent: 'Nội dung, ảnh và giờ hẹn được lưu nháp trên trình duyệt này.' }),
-          h('div', { className: 'row', style: 'margin-top:12px' },
-            h('label', { className: 'field' }, 'Ảnh (tuỳ chọn)', h('input', { type: 'file', id: 'poImage', accept: 'image/*' })),
-            h('label', { className: 'field' }, 'Hẹn giờ (bỏ trống = đăng ngay / để Lịch đăng xếp giờ)', h('input', { type: 'datetime-local', id: 'poAt' }))),
-          h('div', { className: 'row', id: 'poPreview', style: 'margin-top:12px' })),
-        h('div', { className: 'card' },
-          h('div', { className: 'card-head' }, h('h3', { className: 'card-title', id: 'poTitle' }), h('span', { id:'poTargetHint', className: 'hint' })),
-          h('div', { className: 'tags', id: 'poPages' }),
-          h('button',{id:'poReleasePage',type:'button',className:'btn btn-ghost btn-sm',hidden:true,textContent:'Đổi sang các Page đang chọn',onclick:()=>{if(!confirm('Dùng bài này cho các Page đang chọn ở thanh trên?'))return;draftPageId='';edited=true;savePostDraft();App.tabs.post.refresh();}}),
-          h('div', { className: 'row', style: 'margin-top:14px' },
-            h('button', { className: 'btn btn-primary', id: 'poGo', onclick: () => go() }, icon('i-send'), 'Đăng / Hẹn giờ ngay'),
-            h('button', { className: 'btn btn-soft', onclick: () => toQueue() }, icon('i-cal'), 'Thêm vào Lịch đăng (nháp)'),
-            h('span', { className: 'hint', textContent: 'Giờ hẹn phải sau hiện tại ít nhất 10 phút.' })),
-          h('div', { className: 'log', id: 'poLog' })));
-      const manual=h('details',{id:'poManual',className:'post-manual'},
-        h('summary',{},h('span',{},'Tự viết hoặc chỉnh sửa bài'),h('span',{className:'hint',textContent:'Tuỳ chọn'})));
-      const body=h('div',{className:'post-manual-body'},...el.children);manual.append(body);
-      el.append(
-        h('div',{className:'card ai-first-hero'},
-          h('div',{},h('span',{className:'ai-first-eyebrow',textContent:'SÁNG TẠO CÙNG AI'}),h('h3',{textContent:'Ý tưởng Reddit, bài mới cho từng Page'}),
-            h('p',{textContent:'Chọn Page và số bài. AI tìm nguồn marketing trên Reddit, viết bài khác chủ đề trước và tạo ảnh 5:4. Khi hài lòng, bấm Đưa sang web để chuyển vào danh sách chờ duyệt.'}),
-            h('div',{className:'ai-first-steps'},h('span',{},'1 · Chọn Page'),h('span',{},'2 · AI tạo bài & ảnh'),h('span',{},'3 · Xem lại & đăng'))),
-          h('button',{type:'button',className:'btn btn-primary','data-ai-sidepanel':'1',textContent:'✦ Mở Studio AI',onclick:e=>App.ai.open({mode:'post',trigger:e.currentTarget})})),
-        h('div',{id:'poAIDrafts'}),manual);
-      App.ai.overview($('poAIDrafts'),'post');
-      for (const id of ['poText', 'poAt']) $(id).oninput = () => { edited = true; savePostDraft(); };
-      $('poImage').onchange = () => {
-        edited = true; const file = $('poImage').files[0];
-        imageRead = file ? fileToDataUrl(file) : Promise.resolve('');
-        imageRead.then(url => { if ($('poImage').files[0] === file) { draftImage = url; drawDraftImage(); } }).catch(() => toast('Không đọc được ảnh. Chọn lại tệp giúp bạn nhé.'));
+  function drawDraftImage(){
+    $('poPreview').replaceChildren(...(draftImage?[h('img',{className:'thumb',src:draftImage,alt:'Ảnh bài viết'}),h('button',{type:'button',className:'btn btn-ghost btn-sm',textContent:'Bỏ ảnh',disabled:active(),onclick:()=>{
+      edited=true;$('poImage').value='';draftImage='';imageRead=Promise.resolve('');drawDraftImage();savePostDraft();
+    }})]:[]));
+  }
+  function open(){
+    App.show('planner');if(!$('poComposer'))return;
+    $('poComposer').hidden=false;refresh();$('poComposer').scrollIntoView?.({block:'start',behavior:'smooth'});$('poText').focus?.({preventScroll:true});
+  }
+  App.posting={open,refresh,
+    async applyAI(post){
+      if(!post.pageId||!App.pageById(post.pageId))throw Error('Không tìm thấy Page của bài AI. Kết nối lại Page trước khi dùng bài.');
+      open();edited=true;draftPageId=String(post.pageId);$('poText').value=post.text||'';$('poImage').value='';draftImage=post.imageData||'';imageRead=Promise.resolve(draftImage);drawDraftImage();await savePostDraft();refresh();
+    },
+    mount(el){
+      if($('poComposer'))return;
+      el.append(h('section',{id:'poComposer',className:'post-manual planner-composer',hidden:true,'aria-label':'Soạn bài thủ công'},
+        h('div',{className:'planner-composer-head'},h('h3',{className:'card-title',textContent:'Soạn bài'}),h('button',{type:'button',className:'btn btn-ghost btn-sm',textContent:'Đóng','aria-label':'Đóng trình soạn bài',onclick:()=>{$('poComposer').hidden=true;$('plCompose')?.focus?.();}})),
+        h('label',{className:'field'},'Nội dung',h('textarea',{id:'poText',rows:6,placeholder:'Viết nội dung bài đăng…'})),
+        h('p',{id:'poDraftState',className:'hint',role:'status',textContent:'Nội dung, ảnh và giờ hẹn được tự lưu nháp trên trình duyệt này.'}),
+        h('div',{className:'form-grid'},
+          h('label',{className:'field'},'Ảnh (tuỳ chọn)',h('input',{type:'file',id:'poImage',accept:'image/*'})),
+          h('label',{className:'field'},'Hẹn giờ (tuỳ chọn)',h('input',{type:'datetime-local',id:'poAt'}))),
+        h('div',{className:'row',id:'poPreview'}),
+        h('div',{className:'planner-composer-target'},h('strong',{id:'poTitle'}),h('span',{id:'poTargetHint',className:'hint'}),h('div',{className:'tags',id:'poPages'}),
+          h('button',{id:'poReleasePage',type:'button',className:'btn btn-ghost btn-sm',hidden:true,textContent:'Dùng các Page đang chọn',onclick:()=>{draftPageId='';edited=true;savePostDraft();}})),
+        h('div',{className:'row'},h('button',{type:'button',className:'btn btn-primary',id:'poToQueue',textContent:'Lưu vào danh sách duyệt',onclick:toQueue}),h('button',{type:'button',className:'btn btn-ghost',id:'poGo',textContent:'Đăng ngay',onclick:go})),
+        h('p',{className:'hint',textContent:'Để trống giờ hẹn để đăng ngay hoặc lưu nháp cho Lịch đăng tự xếp giờ.'}),h('div',{className:'log',id:'poLog'})));
+      for(const id of ['poText','poAt'])$(id).oninput=()=>{edited=true;savePostDraft();};
+      $('poImage').onchange=()=>{
+        edited=true;const file=$('poImage').files[0];imageRead=file?fileToDataUrl(file):Promise.resolve('');
+        imageRead.then(url=>{if($('poImage').files[0]===file){draftImage=url;drawDraftImage();refresh();}}).catch(()=>toast('Không đọc được ảnh. Chọn lại tệp giúp bạn nhé.'));
         savePostDraft();
       };
-      DB.get('postDraftV1', {}).then(draft => {
-        if (edited) return;
-        $('poText').value = draft.text || ''; $('poAt').value = draft.at || '';
-        draftPageId = String(draft.pageId||''); draftImage = draft.image || ''; imageRead = Promise.resolve(draftImage); drawDraftImage(); App.tabs.post.refresh();
-        if (draft.text || draft.image) {$('poDraftState').textContent = 'Đã khôi phục bản nháp trước.';$('poManual').open=true;}
-      }).catch(() => {});
-    },
-    refresh() {
-      const page=App.pageById(draftPageId), list=draftPageId?(page?[page]:[]):App.selected();
-      $('poTitle').textContent = draftPageId ? (page?'Bài riêng cho '+page.name:'Page của bài nháp chưa kết nối') : `Đăng lên ${list.length} Page đang chọn`;
-      $('poTargetHint').textContent=draftPageId?'Giữ đúng Page của bài AI, kể cả khi đổi bộ lọc Page ở trên.':'Đổi Page ở ô chọn Page trên cùng.';
-      $('poReleasePage').hidden=!draftPageId;
-      $('poPages').replaceChildren(...list.map(App.pageTag));
+      DB.get('postDraftV1',{}).then(draft=>{
+        if(edited)return;$('poText').value=draft.text||'';$('poAt').value=draft.at||'';draftPageId=String(draft.pageId||'');draftImage=draft.image||'';imageRead=Promise.resolve(draftImage);drawDraftImage();refresh();
+        if(draft.text||draft.image)$('poDraftState').textContent='Đã khôi phục bản nháp trước. Bấm Tiếp tục bản nháp để mở.';
+      }).catch(()=>{});refresh();
     }
-  });
-  const log = (cls, t) => $('poLog').append(h('div', { className: 'status ' + cls, textContent: t }));
-  const read = async () => {
-    const text = $('poText').value.trim(), file = $('poImage').files[0] || draftImage, at = $('poAt').value;
-    const page=App.pageById(draftPageId);
-    return { text, file, when: at ? new Date(at).getTime() : 0, targets: draftPageId?(page?[page]:[]):App.selected() };
   };
-  async function go() {
-    const { text, file, when, targets } = await read();
-    $('poLog').replaceChildren();
-    if (!text && !file) return log('err', 'Chưa có nội dung hoặc ảnh.');
-    if (!targets.length) return log('err', 'Chưa chọn Page.');
-    if (when && when < Date.now() + 600e3) return log('err', 'Giờ hẹn phải sau hiện tại ít nhất 10 phút (quy định của Facebook).');
-    $('poGo').disabled = true;
-    for (const p of targets) {
-      try {
-        const res = await App.publish(p, text, file, when ? Math.floor(when / 1000) : 0);
-        log('ok', `✓ ${p.name}: ${when ? 'đã hẹn ' + fmtTime(when) : 'đã đăng'} (${res.post_id || res.id})`);
-      } catch (e) { log('err', `✗ ${p.name}: ${e.message}`); }
-    }
-    $('poGo').disabled = false;
+  const log=(cls,text)=>$('poLog').append(h('div',{className:'status '+cls,textContent:text}));
+  async function read(){
+    const text=$('poText').value.trim(),at=$('poAt').value,list=[...targets()],pendingImage=imageRead;
+    if(at&&!Number.isFinite(new Date(at).getTime()))throw Error('Giờ hẹn không hợp lệ.');
+    const file=await pendingImage;return {text,file,when:at?new Date(at).getTime():0,targets:list};
   }
-  async function toQueue() {
-    const { text, file, when, targets } = await read();
-    $('poLog').replaceChildren();
-    if (!text && !file) return log('err', 'Chưa có nội dung hoặc ảnh.');
-    if (!targets.length) return log('err', 'Chưa chọn Page.');
-    const imageData = typeof file === 'string' ? file : file ? await fileToDataUrl(file) : '';
-    const queue = await DB.get(QUEUE, []);
-    for (const p of targets) queue.push({ id: uid('fs'), pageKey: p.id, pageName: p.name, text, imageData, at: when || 0, status: 'draft', createdAt: Date.now(), source: 'web' });
-    await DB.set(QUEUE, queue);
-    log('ok', `Đã thêm ${targets.length} bài nháp vào Lịch đăng.`);
-    toast('Đã thêm vào Lịch đăng. Mở Đăng bài › Lịch đăng để xếp giờ và duyệt.');
+  async function go(){
+    if(active())return;publishing=true;refresh();$('poLog').replaceChildren();
+    try{
+      const {text,file,when,targets:list}=await read();
+      if(!text&&!file)return log('err','Chưa có nội dung hoặc ảnh.');
+      if(!list.length)return log('err','Chưa chọn Page hoặc Page của bản nháp chưa kết nối.');
+      if(when&&(!Number.isFinite(when)||when<Date.now()+600e3))return log('err','Giờ hẹn phải sau hiện tại ít nhất 10 phút.');
+      for(const page of list){try{const result=await App.publish(page,text,file,when?Math.floor(when/1000):0);log('ok',`✓ ${page.name}: ${when?'đã hẹn '+fmtTime(when):'đã đăng'} (${result.post_id||result.id})`);}catch(e){log('err',`✗ ${page.name}: ${e.message}`);}}
+    }catch(e){log('err','Chưa gửi được bài: '+e.message);}finally{publishing=false;refresh();}
+  }
+  async function toQueue(){
+    if(active())return;queueing=true;refresh();$('poLog').replaceChildren();
+    try{
+      const {text,file,when,targets:list}=await read();
+      if(!text&&!file)return log('err','Chưa có nội dung hoặc ảnh.');
+      if(!list.length)return log('err','Chưa chọn Page hoặc Page của bản nháp chưa kết nối.');
+      const queue=await DB.get(QUEUE,[]);
+      for(const page of list)queue.push({id:uid('fs'),pageKey:page.id,pageName:page.name,text,imageData:file,at:when||0,status:'draft',createdAt:Date.now(),source:'web'});
+      await DB.set(QUEUE,queue);App.setSelected([...new Set([...App.selected().map(page=>page.id),...list.map(page=>page.id)])]);await App.planner.revealDrafts();
+      log('ok',`Đã lưu ${list.length} bài nháp vào danh sách duyệt.`);toast('Đã lưu bản nháp. Xem và duyệt ngay trong Lịch đăng.');
+    }catch(e){log('err','Chưa lưu được bản nháp: '+e.message);}finally{queueing=false;refresh();}
   }
 
   App.tab('scheduled', {

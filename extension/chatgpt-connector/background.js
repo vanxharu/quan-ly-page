@@ -1,5 +1,16 @@
 importScripts('protocol.js','embed-rules.js');
 const P=MetaAIProtocol;
+let updatingExtension=false;
+const callUpdater=action=>new Promise((resolve,reject)=>{
+  if(typeof chrome.runtime.sendNativeMessage!=='function')return reject(Error('Cần cài bộ cập nhật Windows và Tải lại tiện ích một lần.'));
+  chrome.runtime.sendNativeMessage('com.metaassistant.updater',{action},result=>{
+    if(chrome.runtime.lastError)return reject(Error('Chưa kết nối bộ cập nhật Windows. Cài bộ kết nối một lần rồi Tải lại tiện ích.'));
+    if(!result?.ok)return reject(Error(result?.error||'Không cập nhật được tiện ích.'));
+    resolve(result);
+  });
+});
+const configureInput=async input=>{input.settings=P.settings((await chrome.storage.local.get('studioSettings')).studioSettings);input.workflow=input.settings.reddit?P.WORKFLOW:'custom-post-v1';for(const item of input.items)item.brief=input.settings.postPrompt;return input;};
+const homeFor=async()=>P.settings((await chrome.storage.local.get('studioSettings')).studioSettings).gptHome;
 const getJob=async()=> (await chrome.storage.session.get('job')).job || null;
 const save=async job=>{await chrome.storage.session.set({job});if(job.mode==='panel')await chrome.storage.local.set({panelJob:job});};
 async function attachHistory(input,catalog){
@@ -11,7 +22,7 @@ async function rememberPosts(posts){
   for(const post of posts)history[post.pageId]=P.recentPosts([{key:post.key,topicTitle:post.topicTitle,text:post.text,createdAt:Date.now()},...(history[post.pageId]||[])]);
   await chrome.storage.local.set({marketingHistoryV1:history});
 }
-const inputFor=job=>({items:[job.input.items[job.currentIndex||0]],images:job.input.images,workflow:job.input.workflow});
+const inputFor=job=>({items:[job.input.items[job.currentIndex||0]],images:job.input.images,workflow:job.input.workflow,settings:job.input.settings});
 async function notify(job,type,extra={}) {if(job.mode==='panel')return;try{await chrome.tabs.sendMessage(job.webTab,{channel:'META_AI_EVENT',type,id:job.id,...extra});}catch{/* Kết quả vẫn giữ trong session để trang khôi phục khi tải lại. */}}
 async function finish(job,error='') {
   job.status=error?'error':'done';job.error=error;job.updatedAt=Date.now();await save(job);
@@ -28,15 +39,16 @@ function cleanCatalog(payload){
   return {updatedAt:Date.now(),theme:payload?.theme==='dark'?'dark':'light',pages:(Array.isArray(payload?.pages)?payload.pages:[]).slice(0,250).filter(p=>p?.id&&p?.name).map(p=>({id:String(p.id).slice(0,40),name:String(p.name).slice(0,300),avatar:safeAvatar(p.avatar),selected:p.selected===true,recentPosts:P.recentPosts(p.recentPosts)}))};
 }
 async function startPanel(input,transport='tab',panelId=''){
+  if(updatingExtension)throw Error('Tiện ích đang cập nhật. Hãy chờ nạp lại xong.');
   const existing=await getJob();if(existing&&['opening','running'].includes(existing.status))throw Error('Một lượt đang chạy. Chờ xong hoặc bấm Dừng trước.');
   const previous=(await chrome.storage.local.get('panelJob')).panelJob;if(previous?.posts.some(p=>!p.transferredAt))throw Error('Chuyển các bản nháp đang giữ sang web trước khi tạo lượt mới, để không mất bài.');
   const catalog=(await chrome.storage.local.get('pageCatalog')).pageCatalog;
-  const validated=P.validate(input);for(const item of validated.items){const page=catalog?.pages.find(p=>p.id===item.pageId);if(!page)throw Error('Page chưa đồng bộ từ website.');item.pageName=page.name;}
+  const validated=await configureInput(P.validate(input));for(const item of validated.items){const page=catalog?.pages.find(p=>p.id===item.pageId);if(!page)throw Error('Page chưa đồng bộ từ website.');item.pageName=page.name;}
   await attachHistory(validated,catalog);
   if(transport==='embedded')await StudioEmbed.prepare();
   const job={id:'ai-'+crypto.randomUUID(),nonce:crypto.randomUUID(),mode:'panel',transport:transport==='embedded'?'embedded':'tab',ownerPanelId:String(panelId).slice(0,100),input:validated,posts:[],completedKeys:[],status:'opening',progress:'Đang mở ChatGPT…',updatedAt:Date.now(),webTab:null,gptTab:null};await save(job);
   if(job.transport==='embedded')return {ok:true,id:job.id,runJob:{id:job.id,nonce:job.nonce,input:inputFor(job),index:0,total:job.input.items.length,status:'opening'}};
-  try{const tab=await chrome.tabs.create({url:'https://chatgpt.com/',active:true});job.gptTab=tab.id;await save(job);}catch(e){await finish(job,'Không mở được ChatGPT.');throw e;}return {ok:true,id:job.id};
+  try{const tab=await chrome.tabs.create({url:job?.input?.settings?.gptHome||await homeFor(),active:true});job.gptTab=tab.id;await save(job);}catch(e){await finish(job,'Không mở được ChatGPT.');throw e;}return {ok:true,id:job.id};
 }
 async function transferPanel(keys){
   const live=await getJob(),job=live?.mode==='panel'?live:(await chrome.storage.local.get('panelJob')).panelJob;
@@ -48,13 +60,21 @@ async function transferPanel(keys){
 async function handle(m,sender) {
   const fromWeb=P.website(sender.url),fromGPT=(()=>{try{return new URL(sender.url).origin==='https://chatgpt.com';}catch{return false;}})();
   if(panelSender(sender)){
+    if(m.type==='PANEL_SAVE_SETTINGS'){const job=await getJob();if(updatingExtension||job&&['opening','running'].includes(job.status))throw Error('Chờ lượt tạo hoặc cập nhật hoàn tất trước khi đổi cài đặt.');const settings=P.settings(m.settings);await chrome.storage.local.set({studioSettings:settings});return {ok:true,settings};}
+    if(m.type==='PANEL_UPDATE'){
+      const job=await getJob();if(updatingExtension)throw Error('Tiện ích đang cập nhật.');
+      if(job&&['opening','running'].includes(job.status))throw Error('Chờ GPT tạo xong hoặc dừng lượt tạo trước khi cập nhật.');
+      updatingExtension=true;let reload=false;
+      try{const result=await callUpdater('update');if(result.updated){await chrome.storage.local.set({lastExtensionUpdate:{version:result.version,at:Date.now()}});reload=true;setTimeout(()=>chrome.runtime.reload(),600);}return {ok:true,updated:!!result.updated,version:result.version};}
+      finally{if(!reload)updatingExtension=false;}
+    }
     if(m.type==='PANEL_FRAME_ERROR'){const job=await getJob();if(job?.mode==='panel'&&job.transport==='embedded'&&job.id===m.jobId&&['opening','running'].includes(job.status))await finish(job,String(m.error||'Khung GPT chưa nhận lệnh.').slice(0,500));return {ok:true};}
     if(m.type==='PANEL_PREPARE_EMBED'){await StudioEmbed.prepare();return {ok:true};}
     if(m.type==='PANEL_ATTACH'){const job=await getJob();if(job?.mode==='panel'&&job.transport==='embedded'&&['opening','running'].includes(job.status)&&job.ownerPanelId!==m.panelId){job.status='interrupted';job.progress='Khung GPT đã đóng hoặc tải lại. Các bản nháp đã nhận vẫn được giữ.';await save(job);}return {ok:true};}
-    if(m.type==='PANEL_OPEN_GPT'){const job=await getJob();if(job?.gptTab){try{await chrome.tabs.update(job.gptTab,{active:true});return {ok:true};}catch{}}await chrome.tabs.create({url:'https://chatgpt.com/',active:true});return {ok:true};}
-    if(m.type==='PANEL_SWITCH_TO_TAB'){const job=await getJob();if(!job||job.mode!=='panel'||job.transport!=='embedded'||job.status!=='opening'||job.posts.length)throw Error('GPT đã bắt đầu lượt này. Bấm Dừng trước khi đổi cách mở để tránh gửi lặp.');const tab=await chrome.tabs.create({url:'https://chatgpt.com/',active:true});job.transport='tab';job.gptTab=tab.id;job.frameDocumentId=null;await save(job);return {ok:true};}
+    if(m.type==='PANEL_OPEN_GPT'){const job=await getJob();if(job?.gptTab){try{await chrome.tabs.update(job.gptTab,{active:true});return {ok:true};}catch{}}await chrome.tabs.create({url:job?.input?.settings?.gptHome||await homeFor(),active:true});return {ok:true};}
+    if(m.type==='PANEL_SWITCH_TO_TAB'){const job=await getJob();if(!job||job.mode!=='panel'||job.transport!=='embedded'||job.status!=='opening'||job.posts.length)throw Error('GPT đã bắt đầu lượt này. Bấm Dừng trước khi đổi cách mở để tránh gửi lặp.');const tab=await chrome.tabs.create({url:job?.input?.settings?.gptHome||await homeFor(),active:true});job.transport='tab';job.gptTab=tab.id;job.frameDocumentId=null;await save(job);return {ok:true};}
     if(m.type==='PANEL_THEME'){const theme=m.theme==='dark'?'dark':'light';await chrome.storage.local.set({studioTheme:theme});for(const tab of await chrome.tabs.query({url:'https://vanxharu.github.io/quan-ly-page/*'})){try{await chrome.tabs.sendMessage(tab.id,{channel:'META_AI_EVENT',type:'THEME_CHANGED',theme});}catch{}}return {ok:true};}
-    if(m.type==='PANEL_STATUS'){const local=await chrome.storage.local.get(['panelJob','pageCatalog','pendingTransfer','studioTheme','marketingHistoryV1']);const live=await getJob();if(local.panelJob&&['opening','running'].includes(local.panelJob.status)&&live?.id!==local.panelJob.id){local.panelJob.status='interrupted';local.panelJob.progress='Lượt tạo đã ngắt khi trình duyệt hoặc tiện ích tải lại. Các bản nháp đã xong vẫn được giữ.';await chrome.storage.local.set({panelJob:local.panelJob});}return {ok:true,version:'2.2.2',...local,externalRunning:!!live&&live.mode!=='panel'&&['opening','running'].includes(live.status)};}
+    if(m.type==='PANEL_STATUS'){const local=await chrome.storage.local.get(['panelJob','pageCatalog','pendingTransfer','studioTheme','marketingHistoryV1','studioSettings']);const live=await getJob();if(local.panelJob&&['opening','running'].includes(local.panelJob.status)&&live?.id!==local.panelJob.id){local.panelJob.status='interrupted';local.panelJob.progress='Lượt tạo đã ngắt khi trình duyệt hoặc tiện ích tải lại. Các bản nháp đã xong vẫn được giữ.';await chrome.storage.local.set({panelJob:local.panelJob});}return {ok:true,version:'2.4.0',...local,externalRunning:!!live&&live.mode!=='panel'&&['opening','running'].includes(live.status)};}
     if(m.type==='PANEL_GENERATE')return startPanel(m.payload,m.transport,m.panelId);
     if(m.type==='PANEL_CANCEL'){const job=await getJob();if(job&&['opening','running'].includes(job.status)){job.status='cancelled';job.progress='Đã dừng. Các bài đã tạo được giữ trong tiện ích.';await save(job);}return {ok:true};}
     if(m.type==='PANEL_EDIT'){const live=await getJob();const job=live?.mode==='panel'?live:(await chrome.storage.local.get('panelJob')).panelJob;const post=job?.posts.find(p=>p.key===m.key);if(!post)throw Error('Không tìm thấy bài.');post.text=String(m.text||'').slice(0,18000);if(live?.id===job.id)await save(job);else await chrome.storage.local.set({panelJob:job});return {ok:true};}
@@ -66,15 +86,16 @@ async function handle(m,sender) {
   if(m?.type==='THEME_SYNC'&&fromWeb){await chrome.storage.local.set({studioTheme:m.payload?.theme==='dark'?'dark':'light'});return {ok:true};}
   if(m?.type==='TRANSFER_PULL'&&fromWeb){const transfer=(await chrome.storage.local.get('pendingTransfer')).pendingTransfer;return {ok:true,transfer:transfer?.webTab===sender.tab.id?transfer:null};}
   if(m?.type==='TRANSFER_ACK'&&fromWeb){const transfer=(await chrome.storage.local.get('pendingTransfer')).pendingTransfer;if(!transfer||transfer.id!==m.payload?.id||transfer.webTab!==sender.tab.id)throw Error('Xác nhận chuyển bài không hợp lệ.');const live=await getJob(),job=live?.id===transfer.sourceJobId?live:(await chrome.storage.local.get('panelJob')).panelJob;if(job?.id===transfer.sourceJobId){for(const post of job.posts)if(transfer.posts.some(p=>p.key===post.key))post.transferredAt=Date.now();if(live?.id===job.id)await save(job);else await chrome.storage.local.set({panelJob:job});}await chrome.storage.local.remove('pendingTransfer');return {ok:true};}
-  if(m?.type==='STATUS'&&fromWeb){const job=await getJob();return {ok:true,version:'2.2.2',job:job?.webTab===sender.tab.id?{id:job.id,status:job.status,posts:job.posts||[],error:job.error||'',progress:job.progress||'',reviewKey:job.pendingCommit||'',diagnostic:job.diagnostic||null}:null};}
+  if(m?.type==='STATUS'&&fromWeb){const job=await getJob();return {ok:true,version:'2.4.0',job:job?.webTab===sender.tab.id?{id:job.id,status:job.status,posts:job.posts||[],error:job.error||'',progress:job.progress||'',reviewKey:job.pendingCommit||'',diagnostic:job.diagnostic||null}:null};}
   if(m?.type==='GENERATE'&&fromWeb){
+    if(updatingExtension)throw Error('Tiện ích đang cập nhật. Hãy chờ nạp lại xong.');
     const existing=await getJob();
     if(existing&&['opening','running'].includes(existing.status))throw Error('Đang có một lượt tạo bài. Hãy chờ hoàn tất hoặc bấm Dừng.');
     if(!/^ai-[a-zA-Z0-9_-]{1,90}$/.test(m.id))throw Error('Mã yêu cầu không hợp lệ.');
-    const input=P.validate(m.payload);await attachHistory(input,(await chrome.storage.local.get('pageCatalog')).pageCatalog);
+    const input=await configureInput(P.validate(m.payload));await attachHistory(input,(await chrome.storage.local.get('pageCatalog')).pageCatalog);
     const job={id:m.id,nonce:crypto.randomUUID(),webTab:sender.tab.id,gptTab:null,input,posts:[],status:'opening',progress:'Đang mở ChatGPT…',updatedAt:Date.now()};
     await save(job);
-    try{const tab=await chrome.tabs.create({url:'https://chatgpt.com/',active:true});job.gptTab=tab.id;await save(job);}catch(e){await finish(job,'Không mở được tab ChatGPT.');throw e;}
+    try{const tab=await chrome.tabs.create({url:job?.input?.settings?.gptHome||await homeFor(),active:true});job.gptTab=tab.id;await save(job);}catch(e){await finish(job,'Không mở được tab ChatGPT.');throw e;}
     return {ok:true,id:job.id};
   }
   if(m?.type==='DRAFT_SAVED'&&fromWeb){const job=await getJob();if(!job||job.webTab!==sender.tab.id||job.id!==m.payload?.jobId||!['opening','running'].includes(job.status)||!job.pendingCommit||job.pendingCommit!==m.payload?.key)throw Error('Xác nhận lưu bài không hợp lệ.');job.reviewSaved=job.pendingCommit;await save(job);return {ok:true};}
@@ -89,7 +110,7 @@ async function handle(m,sender) {
     if(job.frameClaimed&&!job.frameDocumentId&&sender.documentId){job.frameDocumentId=sender.documentId;job.frameBindingInfo={...job.frameBindingInfo,documentIdAvailableLater:true};await save(job);}
     if(!job.frameClaimed){if(!['START','FRAME_CLAIM'].includes(m.type))return {ok:true,job:null,cancelled:true};job.frameClaimed=true;job.frameDocumentId=sender.documentId||null;job.frameBindingInfo={hasDocumentId:!!sender.documentId,hasTab:!!sender.tab,frameId:Number.isInteger(sender.frameId)?sender.frameId:null};await save(job);}
   }else if(job.gptTab!==sender.tab?.id)return {ok:true,job:null,cancelled:true};
-  if(m.type==='CLAIM'&&m.agentVersion!=='2.2.2'){await finish(job,'Tab ChatGPT đang dùng tiện ích cũ. Cập nhật tiện ích và tải lại cả trang Meta Assistant lẫn tab ChatGPT.');return {ok:false,error:'Phiên bản tiện ích trong tab ChatGPT chưa đồng bộ.'};}
+  if(m.type==='CLAIM'&&m.agentVersion!=='2.4.0'){await finish(job,'Tab ChatGPT đang dùng tiện ích cũ. Cập nhật tiện ích và tải lại cả trang Meta Assistant lẫn tab ChatGPT.');return {ok:false,error:'Phiên bản tiện ích trong tab ChatGPT chưa đồng bộ.'};}
   if(m.type==='CLAIM')return {ok:true,job:{id:job.id,nonce:job.nonce,input:inputFor(job),index:job.currentIndex||0,total:job.input.items.length,status:job.status}};
   if(m.nonce!==job.nonce||m.id!==job.id)throw Error('Lượt tạo không hợp lệ.');
   if(m.type==='FRAME_CLAIM')return {ok:true};

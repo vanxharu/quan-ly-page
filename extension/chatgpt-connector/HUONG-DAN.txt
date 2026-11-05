@@ -1,11 +1,11 @@
-META ASSISTANT · STUDIO AI 2.2.2
+META ASSISTANT · STUDIO AI 2.4.0
 
 1. Bấm Tải lại tiện ích tại chrome://extensions. Nếu trình duyệt yêu cầu xác nhận quyền mới cho khung nhúng, bạn tự xác nhận.
 2. Tải lại Meta Assistant để đồng bộ avatar Page, lịch sử bài và giao diện sáng/tối.
-3. Bấm biểu tượng tiện ích: bảng có 3 tab Soạn bài – ChatGPT – Bản nháp.
+3. Bấm biểu tượng tiện ích: bảng có 4 tab Soạn bài – ChatGPT – Bản nháp – Cài đặt.
 4. Soạn bài: tìm Page theo tên/ID, chọn Page có avatar và số bài mỗi Page. Mặc định tạo kèm ảnh ngang 5:4.
 5. Bấm Tạo bài & ảnh. ChatGPT được mở trực tiếp trong tab ChatGPT của tiện ích. Nếu cần, đăng nhập ở tab riêng rồi tải lại khung; có tuỳ chọn dùng tab riêng khi khung không hoạt động.
-6. Giữ bảng tiện ích mở trong lúc GPT nhúng đang tạo. Chuyển giữa 3 tab không tải lại khung. Đóng bảng sẽ ngắt lượt đang chạy, nhưng các bản nháp đã nhận được giữ lại.
+6. Giữ bảng tiện ích mở trong lúc GPT nhúng đang tạo. Chuyển giữa các tab không tải lại khung. Đóng bảng sẽ ngắt lượt đang chạy, nhưng các bản nháp đã nhận được giữ lại.
 7. Mỗi bài + ảnh được lưu trước khi tạo bài tiếp. Bấm Đưa sang web để mở danh sách Lịch đăng · Chờ duyệt. Không tự đăng.
 
 Sáng/tối đồng bộ với web. Avatar lỗi có chữ viết tắt dự phòng. Ảnh có chữ dưới 25%, liên hệ 0899779488 và nội dung phù hợp chính sách Facebook; mỗi bài có hashtag phù hợp. Bạn xem lại trước khi đăng.
@@ -14,5 +14,9 @@ MỌI PAGE DÙNG CHUNG:
 GPT tự chọn góc nhìn, cách kể, giọng văn, cấu trúc và độ dài; không áp số từ, số hashtag hoặc bố cục cố định. Lấy cảm hứng từ nguồn Reddit thật, mỗi bài có góc triển khai mới và hashtag phù hợp.
 Ảnh tự chọn ý tưởng, phong cách, bố cục và màu sắc; ảnh ngang 5:4, có 0899779488, chữ dưới 25%, tuân thủ chính sách Facebook.
 
-GPT cần đọc được nguồn Reddit bằng tìm kiếm web. Mỗi bản nháp có liên kết nguồn riêng để kiểm tra. Tiện ích giữ tối đa 8 bài gần đây mỗi Page để tránh lặp; không cần chọn chủ đề hoặc tự nhập prompt.
+GPT cần đọc được nguồn Reddit bằng tìm kiếm web. Mỗi bản nháp có liên kết nguồn riêng để kiểm tra. Tiện ích giữ tối đa 8 bài gần đây mỗi Page để tránh lặp; không cần chọn chủ đề; sửa prompt tại tab Cài đặt nếu muốn.
 Lịch đăng trên web có avatar cạnh ô chọn Page và ID rút gọn để phân biệt tên trùng.
+
+CÀI ĐẶT: sửa trang chủ GPT (chatgpt.com hoặc đường dẫn GPT tuỳ chỉnh), prompt bài và prompt ảnh; bấm Lưu cài đặt. Có thể tắt yêu cầu nguồn Reddit nếu đổi cách viết. Lượt mới dùng cài đặt mới; chặn thay đổi khi đang tạo.
+CẬP NHẬT WINDOWS: tải meta-assistant-updater.zip từ website, giải nén, chạy MetaAssistantUpdater.exe và chọn đúng thư mục đang dùng. Bộ cài sao lưu, cập nhật vào thư mục đó và kết nối với đúng ID tiện ích. Bấm Tải lại tiện ích một lần để nạp quyền mới. Từ lần sau bấm Cập nhật ngay ở đầu Studio AI; tiện ích tự nạp lại, giữ nháp và cài đặt. Không cập nhật giữa lượt GPT.
+LỊCH ĐĂNG: chức năng Đăng Fanpage đã gộp vào Lịch đăng. Bấm Soạn tay để viết/tải ảnh, đăng ngay hoặc lưu vào danh sách duyệt. Bản nháp cũ vẫn được giữ.

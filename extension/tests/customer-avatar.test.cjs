@@ -1,0 +1,13 @@
+const fs=require('fs'),vm=require('vm'),assert=require('assert/strict');
+const source=fs.readFileSync(__dirname+'/../../js/core.js','utf8');const section=source.slice(source.indexOf('const PIC_TTL'),source.indexOf('// Dòng Page nhỏ'));
+const values={},requests=[];let phase=0;
+const App={},DB={get:async(k,f)=>structuredClone(values[k]||f),set:async(k,v)=>{values[k]=structuredClone(v)}};
+const api=async(path,p,method,token)=>{requests.push({p,token});return p.batch.map(b=>({code:200,body:JSON.stringify(b.relative_url.includes('/picture')?{data:{is_silhouette:b.relative_url.startsWith('2/'),url:'https://cdn.example/fallback.jpg'}}:{profile_pic:b.relative_url.startsWith('1?')?'https://cdn.example/'+token+phase+'.jpg':b.relative_url.startsWith('4?')?'https://cdn.example/avatar?access_token=secret':''})}));};
+vm.runInNewContext(section,{App,DB,api,URL,console,Date,Set,Map,Promise});
+(async()=>{const a={id:'10',access_token:'pageA'},b={id:'20',access_token:'pageB'};
+const first=await App.customerPics(a,['1','2','3','4']);assert.equal(first.get('1'),'https://cdn.example/pageA0.jpg');assert.equal(first.get('3'),'https://cdn.example/fallback.jpg');assert.equal(first.get('2'),'','silhouette is not a customer avatar');assert.ok(!JSON.stringify(values).includes('secret'),'token-bearing image URLs rejected');
+const n=requests.length;await App.customerPics(a,['1','2']);assert.equal(requests.length,n,'positive and negative caches respected');await App.customerPics(b,['1']);assert.equal(requests.at(-1).token,'pageB','same ID on another Page fetched separately');phase=1;assert.equal((await App.customerPics(a,['1'],{force:true})).get('1'),'https://cdn.example/pageA1.jpg');
+await Promise.all([App.customerPics(a,['5'],{force:true}),App.customerPics(b,['6'],{force:true})]);assert.ok(values.avatarCacheV3['10:5']&&values.avatarCacheV3['20:6'],'parallel Page cache updates retained');
+const inputPart=source.slice(source.indexOf('App.pageSearchField ='),source.indexOf('let pickerQuery'));
+const h=(_,props)=>({...props,setAttribute(k,v){this[k]=v}});vm.runInNewContext(inputPart,{App,h});let searches=0;const field=App.pageSearchField({oninput:()=>searches++});assert.equal(field.autocomplete,'off');assert.equal(field.readOnly,true);field.value='autofilled@example.com';field.oninput({target:field});assert.equal(field.value,'');assert.equal(searches,0);field.onkeydown({key:'m'});field.value='Mộc';field.oninput({target:field});assert.equal(searches,1,'real keyboard input enabled');
+console.log('PASS: authenticated avatar fallback; silhouettes and token URLs rejected; Page-scoped cache, forced refresh, concurrent writes; Page search blocks autofill and accepts user input.');})().catch(e=>{console.error(e);process.exitCode=1});

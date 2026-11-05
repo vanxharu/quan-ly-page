@@ -3,7 +3,7 @@
   const copy = {
     inbox: 'Tất cả cuộc trò chuyện, trong một không gian.', templates: 'Những câu trả lời hay, luôn sẵn sàng.',
     crm: 'Theo sát từng khách hàng, từ lần đầu đến đơn tiếp theo.', bulk: 'Chăm sóc đúng nhóm khách, đúng thời điểm.',
-    post: 'Biến ý tưởng thành nội dung trên các Page của bạn.', planner: 'Sắp xếp nội dung và duyệt lịch đăng theo cách của bạn.',
+    planner: 'Sắp xếp nội dung và duyệt lịch đăng theo cách của bạn.',
     scheduled: 'Theo dõi các bài đã hẹn trực tiếp trên Facebook.', topics: 'Giữ cảm hứng và định hướng nội dung cho từng Page.',
     botrules: 'Thiết lập câu trả lời phù hợp với từng từ khoá.', botcomments: 'Tiếp nhận khách hàng ngay từ bình luận đầu tiên.',
     botflows: 'Kết nối từng bước để tạo hành trình trò chuyện.', botmenu: 'Một lời chào rõ ràng. Một khởi đầu dễ dàng.',
