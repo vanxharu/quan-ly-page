@@ -32,7 +32,7 @@
     }
   });
   const status=(text,tone='info')=>{const el=$('aiStatus');if(el){el.textContent=text||'';el.dataset.tone=tone;}};
-  function renderProgress(label,percent,active){const box=$('aiProgressBox');if(!box)return;box.hidden=!label;const bar=$('aiProgress');if(bar){bar.value=Math.max(0,Math.min(100,Number(percent)||0));bar.classList.toggle('is-active',!!active);}const title=$('aiProgressLabel');if(title)title.textContent=label||'';const value=$('aiProgressValue');if(value)value.textContent=`${Math.max(0,Math.min(100,Number(percent)||0))}%`;}
+  function renderProgress(label,percent,active){const box=$('aiProgressBox');if(!box)return;box.hidden=!label;box.dataset.active=String(!!active);const bar=$('aiProgress');if(bar)bar.value=Math.max(0,Math.min(100,Number(percent)||0));const title=$('aiProgressLabel');if(title)title.textContent=label||'';const value=$('aiProgressValue');if(value)value.textContent=`${Math.max(0,Math.min(100,Number(percent)||0))}%`;}
   function connection(connected){
     const el=$('aiConnection');el.dataset.state=connected===null?'checking':connected?'connected':'disconnected';
     $('aiConnectionText').textContent=connected===null?'Đang kiểm tra tiện ích…':connected?'Tiện ích đã kết nối':'Chưa kết nối tiện ích';
@@ -73,7 +73,7 @@
       h('div',{className:'row section-gap'},h('label',{className:'row',style:'gap:7px'},h('input',{id:'aiImages',type:'checkbox',checked:true}),'Tạo thêm ảnh minh hoạ'),h('span',{className:'hint',textContent:'Yêu cầu ảnh không chèn chữ, luôn dưới 25% diện tích chữ.'})),
       h('div',{id:'aiScope',className:'hint section-gap'}),
       h('div',{className:'row section-gap'},h('button',{id:'aiGenerate',type:'button',className:'btn btn-primary','data-ai-generate':'1',textContent:'Tạo bằng ChatGPT',onclick:generate}),h('button',{id:'aiCancel',type:'button',hidden:true,className:'btn btn-ghost',textContent:'Dừng nhận kết quả',onclick:async()=>{try{await send('CANCEL');}catch(e){status(e.message);}}})),
-      h('div',{id:'aiProgressBox',className:'ai-progress-box section-gap',hidden:true},h('div',{className:'ai-progress-head'},h('span',{id:'aiProgressLabel',textContent:'Đang chuẩn bị…'}),h('strong',{id:'aiProgressValue',textContent:'0%'})),h('progress',{id:'aiProgress',max:100,value:0, 'aria-label':'Tiến độ tạo bài'}),h('p',{className:'hint',textContent:'Tiến độ cập nhật theo từng phần bài và ảnh ChatGPT gửi về.'})),
+      h('div',{id:'aiProgressBox',className:'ai-progress-box section-gap',hidden:true},h('div',{className:'ai-progress-head'},h('span',{id:'aiProgressLabel',textContent:'Đang chuẩn bị…'}),h('strong',{id:'aiProgressValue',textContent:'0%'})),h('div',{className:'ai-progress-track'},h('progress',{id:'aiProgress',max:100,value:0, 'aria-label':'Tiến độ tạo bài'}),h('span',{className:'ai-progress-sweep','aria-hidden':'true'})),h('p',{className:'hint',textContent:'Thanh chạy khi ChatGPT đang xử lý; phần trăm tăng theo bài và ảnh nhận được.'})),
       h('div',{id:'aiStatus',className:'ai-status section-gap',role:'status'}),h('div',{id:'aiResults',className:'ai-results'}));
     document.body.append(dialog);
     dialog.addEventListener('close',()=>current?.trigger?.focus());
