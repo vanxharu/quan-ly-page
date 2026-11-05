@@ -76,12 +76,12 @@
             page ? null : h('option', { value: '', textContent: `⚠ ${i.pageName || 'Page không rõ'}` }),
             ...App.pages.map(p => h('option', { value: p.id, textContent: p.name, selected: p.id === page?.id }))),
           h('input', { type: 'datetime-local', value: toLocalInput(i.at), disabled: locked, onchange: e => patch(i.id, { at: e.target.value ? new Date(e.target.value).getTime() : 0 }).then(refresh) }),
-          h('span', { className: 'status ' + tone, textContent: label }),
+          h('span', { className: 'status ' + tone, textContent: i.aiGenerating?'Đang tạo ảnh…':label }),
           i.error ? h('span', { className: 'hint', textContent: i.error }) : null),
         i.topicTitle?h('p',{className:'hint',textContent:'Chủ đề: '+i.topicTitle}):null,
         h('textarea', { value: i.text || '', disabled: locked, onchange: e => patch(i.id, { text: e.target.value }) })),
       h('div', { className: 'acts' },
-        ['draft', 'error', 'missed'].includes(i.status) ? h('button', { className: 'btn btn-soft btn-sm', textContent: '✓ Duyệt', onclick: () => patch(i.id, { status: 'approved', error: '' }).then(refresh) }) : null,
+        !i.aiGenerating&&['draft', 'error', 'missed'].includes(i.status) ? h('button', { className: 'btn btn-soft btn-sm', textContent: '✓ Duyệt', onclick: () => patch(i.id, { status: 'approved', error: '' }).then(refresh) }) : null,
         i.status === 'approved' ? h('button', { className: 'btn btn-ghost btn-sm', textContent: 'Bỏ duyệt', onclick: () => patch(i.id, { status: 'draft' }).then(refresh) }) : null,
         i.status === 'approved' ? h('button', { className: 'btn btn-primary btn-sm', textContent: 'Lên lịch', onclick: () => scheduleOne(i).then(refresh) }) : null,
         h('button', { className: 'btn btn-danger btn-sm', textContent: 'Xoá', onclick: async () => {
@@ -92,6 +92,7 @@
   }
 
   async function scheduleOne(i) {
+    if(i.aiGenerating)return patch(i.id,{status:'draft',error:'Chờ AI tạo và lưu ảnh xong trước khi duyệt.'});
     const page = pageOf(i);
     if (!page) return patch(i.id, { status: 'error', error: 'Không tìm thấy Page. Chọn lại Page cho bài.' });
     if (!i.at || i.at < Date.now() + 600e3) return patch(i.id, { status: 'error', error: 'Giờ đăng phải sau hiện tại ít nhất 10 phút.' });
@@ -115,7 +116,7 @@
   }
   async function approveAll() {
     const queue = await DB.get(QUEUE, []);
-    await DB.set(QUEUE, queue.map(i => i.status === 'draft' && inSel(i) ? { ...i, status: 'approved' } : i));
+    await DB.set(QUEUE, queue.map(i => i.status === 'draft' && !i.aiGenerating && inSel(i) ? { ...i, status: 'approved' } : i));
     refresh();
   }
   async function autoTime() {
