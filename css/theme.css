@@ -80,3 +80,4 @@ button:focus-visible,a:focus-visible,summary:focus-visible{outline:2px solid var
 *{scrollbar-width:thin;scrollbar-color:var(--input-border) transparent}
 ::selection{background:var(--primary-soft);color:var(--text-primary)}
 @media(max-width:620px){.ai-page-targets{max-height:240px}.ai-dialog{padding:16px}.sidebar-link{font-size:13px}}
+#tpProfile .form-grid{grid-template-columns:repeat(3,minmax(0,1fr))}#tpProfile textarea{min-height:78px}#tpProfile .wide>.btn{justify-self:start}.ai-dialog .form-grid{grid-template-columns:repeat(2,minmax(0,1fr))}@media(max-width:620px){#tpProfile .form-grid,.ai-dialog .form-grid{grid-template-columns:1fr}}
