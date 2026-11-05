@@ -15,11 +15,18 @@
         edited = true; $('poImage').value = ''; draftImage = ''; imageRead = Promise.resolve(''); drawDraftImage(); savePostDraft();
       } })] : []));
   }
+  App.posting = { async applyAI(post) {
+    App.show('post'); edited = true;
+    $('poText').value = post.text || ''; $('poImage').value = '';
+    draftImage = post.imageData || ''; imageRead = Promise.resolve(draftImage);
+    drawDraftImage(); savePostDraft();
+  } };
   App.tab('post', {
     mount(el) {
       el.append(
         h('div', { className: 'card' },
-          h('div', { className: 'card-head' }, h('h3', { className: 'card-title', textContent: 'Soạn bài' })),
+          h('div', { className: 'card-head' }, h('h3', { className: 'card-title', textContent: 'Soạn bài' }),
+            h('button', { type: 'button', className: 'btn btn-soft', textContent: '✦ AI soạn bài & tạo ảnh', onclick: e => App.ai.open({ mode: 'post', brief: $('poText').value, trigger: e.currentTarget }) })),
           h('textarea', { id: 'poText', placeholder: 'Nội dung bài viết…' }),
           h('div', { id: 'poDraftState', className: 'hint', style: 'margin-top:8px', role: 'status', textContent: 'Nội dung, ảnh và giờ hẹn được lưu nháp trên trình duyệt này.' }),
           h('div', { className: 'row', style: 'margin-top:12px' },

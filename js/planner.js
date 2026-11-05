@@ -21,6 +21,10 @@
   App.tab('planner', {
     mount(el) {
       el.append(
+        h('div', { className: 'card ai-launch-card' },
+          h('div', {}, h('h3', { className: 'card-title', textContent: '✦ Tạo kế hoạch nội dung cùng ChatGPT' }),
+            h('p', { className: 'muted', textContent: 'Tự soạn bài và tạo ảnh theo các Page đang chọn. Nhận về bản nháp, xếp giờ rồi duyệt để đăng.' })),
+          h('button', { type: 'button', className: 'btn btn-primary', textContent: 'AI soạn bài & tạo ảnh', onclick: e => App.ai.open({ mode: 'planner', trigger: e.currentTarget }) })),
         h('div', { className: 'grid2' },
           h('div', { className: 'card', id: 'plCfg' }),
           h('div', { className: 'card', id: 'plDays' })),

@@ -43,10 +43,9 @@
       S.picker = picker;
       el.append(h('div', { className: 'split' },
         h('div', { className: 'card' },
-          h('div', { className: 'card-head' }, h('h3', { className: 'card-title', textContent: 'Hội thoại' }),
-            h('div', { className: 'row', style: 'gap:6px' },
-              h('button', { className: 'btn btn-soft', onclick: () => load() }, icon('i-sync'), 'Tải lại'))),
-          h('input', { type: 'search', id: 'ibSearch', placeholder: '🔍 Tìm theo tên khách hoặc nội dung tin…', oninput: () => drawList() }),
+          h('div', { className: 'card-head inbox-search-row' },
+            h('input', { type: 'search', id: 'ibSearch', 'aria-label': 'Tìm hội thoại', placeholder: 'Tìm khách hoặc nội dung tin…', oninput: () => drawList() }),
+            h('button', { className: 'icon-btn', title: 'Tải lại hội thoại', 'aria-label': 'Tải lại hội thoại', onclick: () => load() }, icon('i-sync'))),
           h('div', { className: 'row', style: 'margin:10px 0;gap:6px' },
             h('div', { className: 'chips', id: 'ibFilter' }, ...[['all', 'Tất cả'], ['unread', 'Chưa đọc'], ['unanswered', 'Chưa trả lời'], ['today', 'Hôm nay']].map(([f, t]) =>
               h('button', { className: 'chip', dataset: { f }, textContent: t, 'aria-pressed': String(f === S.filter), onclick: () => { S.filter = f; drawList(); } }))),
