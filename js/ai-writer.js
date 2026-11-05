@@ -17,21 +17,29 @@
     const m=e.data;if(e.source!==window||e.origin!==location.origin||m?.source!=='META_AI_CONNECTOR')return;
     if(m.type==='REPLY'&&pending.has(m.id)){const p=pending.get(m.id);clearTimeout(p.timeout);pending.delete(m.id);m.ok?p.resolve(m):p.reject(Error(m.error||'Tiện ích chưa sẵn sàng.'));return;}
     if(!session||m.id!==session.id)return;
-    if(m.type==='PROGRESS'){session.progress=String(m.text||'').slice(0,500);status(session.progress);return;}
+    if(m.type==='PROGRESS'){session.progress=String(m.text||'').slice(0,500);status(session.progress,'working');return;}
     if(['PARTIAL','RESULT'].includes(m.type)){
       session.posts=mergePosts(m.posts);session.error=String(m.error||'').slice(0,1000);
       if(m.type==='RESULT'){busy=false;session.done=true;session.progress=m.error?'Đã dừng. Các kết quả đã nhận vẫn được giữ.':'Đã nhận bài và ảnh. Xem lại trước khi sử dụng.';}
-      await save();renderResults();status(session.progress);updateButtons();
+      await save();renderResults();status(session.error||session.progress,session.error?'error':busy?'working':'success');updateButtons();
       if(!dialog?.open)toast(m.type==='RESULT'?'ChatGPT đã trả kết quả. Mở AI soạn bài để xem.':'Đã nhận nội dung từ ChatGPT.',5000);
     }
   });
-  const status=text=>{const el=$('aiStatus');if(el)el.textContent=text||'';};
+  const status=(text,tone='info')=>{const el=$('aiStatus');if(el){el.textContent=text||'';el.dataset.tone=tone;}};
+  function connection(connected){
+    const el=$('aiConnection');el.dataset.state=connected===null?'checking':connected?'connected':'disconnected';
+    $('aiConnectionText').textContent=connected===null?'Đang kiểm tra tiện ích…':connected?'Tiện ích đã kết nối':'Chưa kết nối tiện ích';
+    $('aiInstall').hidden=connected===true;
+    if(connected===true)$('aiInstall').open=false;
+    else if(connected===false)$('aiInstall').open=true;
+  }
   function updateButtons(){if($('aiGenerate'))$('aiGenerate').disabled=busy;if($('aiCancel'))$('aiCancel').hidden=!busy;dialog?.querySelectorAll('[data-ai-apply]').forEach(b=>b.disabled=busy);}
   function ensureDialog(){
     if(dialog)return;
     dialog=h('dialog',{className:'ai-dialog','aria-labelledby':'aiDialogTitle'});
-    dialog.append(h('div',{className:'ai-dialog-head'},h('div',{},h('h2',{id:'aiDialogTitle',textContent:'AI soạn bài & tạo ảnh'}),h('p',{className:'muted',textContent:'Dùng tab ChatGPT đang đăng nhập, nhận kết quả về bản nháp.'})),h('button',{type:'button',className:'icon-btn','aria-label':'Đóng trợ lý',textContent:'×',onclick:()=>dialog.close()})),
-      h('details',{className:'ai-install'},h('summary',{textContent:'Kết nối ChatGPT lần đầu'}),h('p',{textContent:'Tải và giải nén tiện ích. Trong Chrome, mở chrome://extensions, bật Chế độ dành cho nhà phát triển, chọn Tải tiện ích đã giải nén rồi chọn thư mục có manifest.json. Sau đó tải lại trang này.'}),
+    dialog.append(h('div',{className:'ai-dialog-head'},h('div',{},h('h2',{id:'aiDialogTitle',textContent:'AI soạn bài & tạo ảnh'}),h('p',{className:'muted',textContent:'Nhập chủ đề → ChatGPT tạo bài trong tab riêng → nhận bản nháp tại đây.'})),h('button',{type:'button',className:'icon-btn','aria-label':'Đóng trợ lý',textContent:'×',onclick:()=>dialog.close()})),
+      h('div',{id:'aiConnection',className:'ai-connection',role:'status'},h('span',{id:'aiConnectionText',textContent:'Đang kiểm tra tiện ích…'}),h('button',{type:'button',className:'btn btn-ghost',textContent:'Kiểm tra lại',onclick:checkConnection})),
+      h('details',{id:'aiInstall',className:'ai-install'},h('summary',{textContent:'Kết nối ChatGPT lần đầu'}),h('p',{textContent:'Tải và giải nén tiện ích. Trong Chrome, mở chrome://extensions, bật Chế độ dành cho nhà phát triển, chọn Tải tiện ích đã giải nén rồi chọn thư mục có manifest.json. Sau đó tải lại trang này.'}),
         h('a',{className:'btn btn-ghost',href:'chatgpt-connector.zip',download:'meta-assistant-chatgpt-connector.zip',textContent:'Tải tiện ích kết nối'}),h('p',{className:'hint',textContent:'Tiện ích cần truy cập ChatGPT, ảnh ChatGPT và trang Meta Assistant này. Không dùng quyền gỡ lỗi. Giữ tab ChatGPT mở khi tạo bài.'})),
       h('div',{className:'form-grid'},
         h('label',{className:'field wide'},'Chủ đề / yêu cầu',h('textarea',{id:'aiBrief',placeholder:'Ví dụ: giới thiệu bộ sưu tập mới, đối tượng khách, lợi ích, giá và ưu đãi có thật…',rows:4})),
@@ -40,7 +48,7 @@
       h('div',{className:'row section-gap'},h('label',{className:'row',style:'gap:7px'},h('input',{id:'aiImages',type:'checkbox',checked:true}),'Tạo thêm ảnh minh hoạ'),h('span',{className:'hint',textContent:'Yêu cầu ảnh không chèn chữ, luôn dưới 25% diện tích chữ.'})),
       h('div',{id:'aiScope',className:'hint section-gap'}),
       h('div',{className:'row section-gap'},h('button',{id:'aiGenerate',type:'button',className:'btn btn-primary','data-ai-generate':'1',textContent:'Tạo bằng ChatGPT',onclick:generate}),h('button',{id:'aiCancel',type:'button',hidden:true,className:'btn btn-ghost',textContent:'Dừng nhận kết quả',onclick:async()=>{try{await send('CANCEL');}catch(e){status(e.message);}}})),
-      h('div',{id:'aiStatus',className:'status pending section-gap',role:'status',textContent:'Đang kiểm tra kết nối…'}),h('div',{id:'aiResults',className:'ai-results'}));
+      h('div',{id:'aiStatus',className:'ai-status section-gap',role:'status'}),h('div',{id:'aiResults',className:'ai-results'}));
     document.body.append(dialog);
     dialog.addEventListener('close',()=>current?.trigger?.focus());
   }
@@ -51,14 +59,18 @@
     if(options.brief)$('aiBrief').value=options.brief;
     if(!session)session=await DB.get('aiDraftSessionV1',null);
     if(session&&!session.done){busy=true;} renderResults();updateButtons();dialog.showModal();
-    try{const s=await send('STATUS');
+    await checkConnection();
+  }
+  async function checkConnection(){
+    const button=$('aiConnection').querySelector('button');button.disabled=true;connection(null);
+    try{const s=await send('STATUS');connection(true);
       if(s.job){session={...session,...s.job,posts:mergePosts(s.job.posts),done:!['opening','running'].includes(s.job.status)};busy=!session.done;await save();renderResults();}
       else if(busy){busy=false;if(session){session.done=true;session.error='Lượt trước đã ngắt kết nối. Các bản nháp đã nhận vẫn được giữ.';await save();}}
-      status(session?.error||session?.progress||'Đã kết nối tiện ích. Sẵn sàng dùng tab ChatGPT.');
-    }catch(e){busy=false;status(e.message);} updateButtons();
+      status(session?.error||session?.progress||'Nhập chủ đề bên trên rồi bấm “Tạo bằng ChatGPT”.',session?.error?'error':busy?'working':session?.posts?.length?'success':'info');
+    }catch(e){busy=false;connection(false);status(e.message,'error');}finally{button.disabled=false;} updateButtons();
   }
   async function generate(){
-    if(busy)return;const brief=$('aiBrief').value.trim();if(!brief)return status('Nhập chủ đề và thông tin thực tế cho bài viết.');
+    if(busy)return;const brief=$('aiBrief').value.trim();if(!brief){status('Nhập chủ đề và thông tin thực tế cho bài viết.','warning');$('aiBrief').focus();return;}
     const pages=App.selected();if(!pages.length)return status('Chọn Page ở thanh trên trước khi tạo bài.');
     const count=current.mode==='planner'?Math.max(1,Math.min(3,Number($('aiCount').value)||1)):1;
     const total=current.mode==='planner'?pages.length*count:1;if(total>6)return status('Tối đa 6 bài mỗi lượt. Giảm số Page hoặc số bài mỗi Page.');
@@ -66,9 +78,9 @@
     if(current.mode==='planner')for(const p of pages)for(let i=0;i<count;i++)items.push({key:uid('post'),pageId:p.id,pageName:p.name,brief:brief+`\nĐây là bài ${i+1}/${count} cho Page này, cần khác các bài còn lại.`,tone:$('aiTone').value});
     else items.push({key:uid('post'),pageId:pages[0].id,pageName:pages.map(p=>p.name).join(', ').slice(0,300),brief,tone:$('aiTone').value});
     // Gửi ngay từ thao tác bấm thật để tiện ích kiểm tra nguồn yêu cầu.
-    busy=true;updateButtons();status('Đang mở tab ChatGPT…');
-    try{const result=await send('GENERATE',{items,images:$('aiImages').checked});session={id:result.id,posts:[],progress:'Đang làm việc trong tab ChatGPT. Nếu cần, hãy đăng nhập tại tab đó.',done:false,mode:current.mode};await save();renderResults();status(session.progress);}
-    catch(e){busy=false;status(e.message);}updateButtons();
+    busy=true;updateButtons();status('Đang mở tab ChatGPT…','working');
+    try{const result=await send('GENERATE',{items,images:$('aiImages').checked});session={id:result.id,posts:[],progress:'ChatGPT đang tạo bài trong tab riêng. Kết quả sẽ tự hiện tại đây; giữ tab đó mở và đăng nhập nếu được yêu cầu.',done:false,mode:current.mode};await save();renderResults();status(session.progress,'working');}
+    catch(e){busy=false;status(e.message,'error');}updateButtons();
   }
   function renderResults(){
     const root=$('aiResults');if(!root)return;
