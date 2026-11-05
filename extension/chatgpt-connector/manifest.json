@@ -1,0 +1,45 @@
+{
+  "manifest_version": 3,
+  "name": "Meta Assistant · Kết nối ChatGPT",
+  "version": "2.0.0",
+  "description": "Studio AI bên cạnh trình duyệt: tạo bài và ảnh cho từng Page, lưu tại tiện ích, chuyển sang web khi bạn chọn.",
+  "permissions": [
+    "storage",
+    "sidePanel"
+  ],
+  "host_permissions": [
+    "https://chatgpt.com/*",
+    "https://*.oaiusercontent.com/*",
+    "https://vanxharu.github.io/quan-ly-page/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://vanxharu.github.io/quan-ly-page/*"
+      ],
+      "js": [
+        "web-bridge.js"
+      ],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "https://chatgpt.com/*"
+      ],
+      "js": [
+        "protocol.js",
+        "chatgpt-agent.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
+  "action": {
+    "default_title": "Mở Studio AI · Meta Assistant"
+  }
+}

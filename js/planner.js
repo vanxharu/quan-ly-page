@@ -23,8 +23,8 @@
       el.append(
         h('div', { className: 'card ai-launch-card ai-first-hero' },
           h('div', {}, h('h3', { className: 'card-title', textContent: 'Tạo kế hoạch nội dung bằng AI' }),
-            h('p', { className: 'muted', textContent: 'Chọn Page và chủ đề đã lưu. AI tạo bài, ảnh riêng cho đúng Page; bạn xếp giờ và duyệt trước khi đăng.' })),
-          h('button', { type: 'button', className: 'btn btn-primary', textContent: '✦ Tạo bài bằng AI', onclick: e => App.ai.open({ mode: 'planner', trigger: e.currentTarget }) })),
+            h('p', { className: 'muted', textContent: 'Tạo bài và ảnh trong bảng tiện ích bên cạnh. Bấm Đưa sang web để nhận bài tại đây, rồi xếp giờ và duyệt.' })),
+          h('button', { type: 'button', className: 'btn btn-primary', 'data-ai-sidepanel':'1',textContent: '✦ Mở Studio AI', onclick: e => App.ai.open({ mode: 'planner', trigger: e.currentTarget }) })),
         h('div', { id:'plAIDrafts' }),
         h('div', { className: 'grid2' },
           h('div', { className: 'card', id: 'plCfg' }),

@@ -28,7 +28,7 @@
       el.append(
         h('div', { className: 'card' },
           h('div', { className: 'card-head' }, h('h3', { className: 'card-title', textContent: 'Soạn bài' }),
-            h('button', { type: 'button', className: 'btn btn-soft', textContent: '✦ AI soạn bài & tạo ảnh', onclick: e => App.ai.open({ mode: 'post', pageIds: draftPageId?[draftPageId]:undefined, trigger: e.currentTarget }) })),
+            h('button', { type: 'button', className: 'btn btn-soft', 'data-ai-sidepanel':'1',textContent: '✦ Studio AI bên cạnh', onclick: e => App.ai.open({ mode: 'post', pageIds: draftPageId?[draftPageId]:undefined, trigger: e.currentTarget }) })),
           h('textarea', { id: 'poText', placeholder: 'Nội dung bài viết…' }),
           h('div', { id: 'poDraftState', className: 'hint', style: 'margin-top:8px', role: 'status', textContent: 'Nội dung, ảnh và giờ hẹn được lưu nháp trên trình duyệt này.' }),
           h('div', { className: 'row', style: 'margin-top:12px' },
@@ -50,9 +50,9 @@
       el.append(
         h('div',{className:'card ai-first-hero'},
           h('div',{},h('span',{className:'ai-first-eyebrow',textContent:'SÁNG TẠO CÙNG AI'}),h('h3',{textContent:'Tạo bài và ảnh cho từng Page'}),
-            h('p',{textContent:'Chọn chủ đề đã lưu. ChatGPT soạn bài có hashtag, tạo ảnh dọc và lưu từng bài ngay khi xong.'}),
+            h('p',{textContent:'Mở tiện ích bên cạnh để chọn Page, tạo bài và ảnh. Khi hài lòng, bấm Đưa sang web để chuyển vào danh sách chờ duyệt.'}),
             h('div',{className:'ai-first-steps'},h('span',{},'1 · Chọn Page & chủ đề'),h('span',{},'2 · AI tạo bài & ảnh'),h('span',{},'3 · Xem lại & đăng'))),
-          h('button',{type:'button',className:'btn btn-primary',textContent:'✦ Tạo bài bằng AI',onclick:e=>App.ai.open({mode:'post',trigger:e.currentTarget})})),
+          h('button',{type:'button',className:'btn btn-primary','data-ai-sidepanel':'1',textContent:'✦ Mở Studio AI',onclick:e=>App.ai.open({mode:'post',trigger:e.currentTarget})})),
         h('div',{id:'poAIDrafts'}),manual);
       App.ai.overview($('poAIDrafts'),'post');
       for (const id of ['poText', 'poAt']) $(id).oninput = () => { edited = true; savePostDraft(); };

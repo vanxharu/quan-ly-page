@@ -12,13 +12,13 @@
   }
   async function save(pageId,list){
     if(pageId){const all=await DB.get(PAGE_LIB,{});all[pageId]=list;await DB.set(PAGE_LIB,all);}
-    else await DB.set(LIB,list);
+    else await DB.set(LIB,list);App.ai?.syncCatalog();
   }
   App.topics={load,save,open(pageId){scope=String(pageId||'');App.show('topics');}};
   App.tab('topics',{
     mount(el){el.append(h('div',{className:'card'},h('div',{className:'row'},
       h('label',{className:'field grow'},'Chọn Page để chỉnh chủ đề',h('select',{id:'tpScope',onchange:e=>{scope=e.target.value;this.refresh();}})),
-      h('button',{type:'button',className:'btn btn-primary',textContent:'AI tạo bài & ảnh',onclick:e=>{if(!scope)return toast('Chọn một Page trước khi tạo bài.');App.ai.open({mode:'planner',pageIds:[scope],trigger:e.currentTarget});}})),
+      h('button',{type:'button',className:'btn btn-primary','data-ai-sidepanel':'1',textContent:'Mở Studio AI',onclick:e=>{if(!scope)return toast('Chọn một Page trước khi tạo bài.');App.ai.open({mode:'planner',pageIds:[scope],trigger:e.currentTarget});}})),
       h('p',{id:'tpScopeHint',className:'hint'})),h('div',{className:'card',id:'tpProfile'}),
       h('div',{className:'card-head section-gap'},h('h3',{id:'tpListTitle',className:'card-title'}),
         h('button',{className:'btn btn-ghost btn-sm',textContent:'Khôi phục mẫu',onclick:async()=>{const pageId=scope;if(!confirm(pageId?'Bỏ tuỳ chỉnh của Page này và dùng mẫu chung?':'Khôi phục mẫu chung mặc định?'))return;if(pageId){const all=await DB.get(PAGE_LIB,{});delete all[pageId];await DB.set(PAGE_LIB,all);}else await DB.del(LIB);this.refresh();}})),
@@ -38,11 +38,11 @@
         form.append(h('div',{className:'row'},h('strong',{className:'grow',textContent:t.dayLabel}),Number(t.day)===today?h('span',{className:'tag tone-green',textContent:'Hôm nay'}):null),
           ...FIELDS.map(([key,label])=>h('label',{className:'field'},label,['postPrompt','direction','imagePrompt'].includes(key)?h('textarea',{name:key,value:t[key]||'',style:'min-height:70px'}):h('input',{type:'text',name:key,value:t[key]||''}))),
           h('p',{className:'hint',textContent:'Ảnh dọc 4:5 cho điện thoại, tiêu đề ngắn và Liên hệ: 0899779488; tổng chữ dưới 25% diện tích, nội dung phù hợp chính sách Facebook.'}),
-          h('div',{className:'actions'},h('button',{className:'btn btn-ghost btn-sm',textContent:'Lưu chủ đề'}),h('button',{type:'button',className:'btn btn-soft btn-sm',textContent:'AI tạo bài & ảnh theo chủ đề',onclick:async e=>{if(!page)return toast('Chọn một Page ở trên trước.');const trigger=e.currentTarget;try{await persist();await App.ai.open({mode:'planner',pageIds:[pageId],topicDay:Number(t.day),trigger});}catch(e){toast(e.message);}}})));return form;
+          h('div',{className:'actions'},h('button',{className:'btn btn-ghost btn-sm',textContent:'Lưu chủ đề'}),h('button',{type:'button',className:'btn btn-soft btn-sm','data-ai-sidepanel':'1',textContent:'Tạo trong Studio AI',onclick:async e=>{if(!page)return toast('Chọn một Page ở trên trước.');const trigger=e.currentTarget;try{await persist();await App.ai.open({mode:'planner',pageIds:[pageId],topicDay:Number(t.day),trigger});}catch(e){toast(e.message);}}})));return form;
       }));
       if(!page){$('tpProfile').hidden=true;return;}$('tpProfile').hidden=false;
       const p=data.profile;
-      const form=h('form',{className:'form-grid',onsubmit:async e=>{e.preventDefault();const f=new FormData(e.target),all=await DB.get(PROFILES,{});all[pageId]={...p,niche:String(f.get('niche')||''),audience:String(f.get('audience')||''),voice:String(f.get('voice')||''),updatedAt:Date.now()};await DB.set(PROFILES,all);toast('Đã lưu hồ sơ '+page.name+'.');}});
+      const form=h('form',{className:'form-grid',onsubmit:async e=>{e.preventDefault();const f=new FormData(e.target),all=await DB.get(PROFILES,{});all[pageId]={...p,niche:String(f.get('niche')||''),audience:String(f.get('audience')||''),voice:String(f.get('voice')||''),updatedAt:Date.now()};await DB.set(PROFILES,all);App.ai?.syncCatalog();toast('Đã lưu hồ sơ '+page.name+'.');}});
       form.append(...[['niche','Ngành / sản phẩm'],['audience','Khách hàng'],['voice','Giọng văn']].map(([key,label])=>h('label',{className:'field'},label,h('textarea',{name:key,value:p[key]||'',rows:2}))),h('div',{className:'field wide'},h('button',{className:'btn btn-primary btn-sm',textContent:'Lưu hồ sơ Page'})));
       $('tpProfile').replaceChildren(h('div',{className:'card-head'},h('h3',{className:'card-title',textContent:'Hồ sơ · '+page.name})),form);
     }

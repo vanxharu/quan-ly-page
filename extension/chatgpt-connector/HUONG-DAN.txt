@@ -1,0 +1,12 @@
+META ASSISTANT · STUDIO AI 2.0.0
+
+1. Tải lại tiện ích đã cập nhật tại chrome://extensions.
+2. Mở Meta Assistant và đăng nhập Page để đồng bộ Page, hồ sơ và chủ đề vào tiện ích. Không đồng bộ token Facebook.
+3. Bấm biểu tượng tiện ích hoặc nút Mở Studio AI trên web. Bảng xuất hiện ở bên cạnh; nếu trình duyệt không hỗ trợ sidePanel, tiện ích mở cửa sổ nhỏ riêng.
+4. Chọn từng Page và chủ đề, bấm Tạo bài & ảnh. ChatGPT dùng tab riêng đang đăng nhập; không cần API.
+5. Bài 1 → ảnh 1 → lưu trong tiện ích → bài 2 → ảnh 2. Bản nháp giữ lại khi đóng bảng.
+6. Xem và chỉnh bài trong bảng. Bấm Đưa bài này sang web hoặc Đưa bài đã xong sang web.
+7. Tiện ích mở Meta Assistant và đưa bài vào Lịch đăng · Chờ duyệt, giữ đúng Page. Không tự đăng hay tự duyệt.
+
+Ảnh dọc 4:5, ưu tiên chất lượng cao, chữ dưới 25%, liên hệ 0899779488; nội dung phải phù hợp chính sách Facebook. Mỗi bài có 2–3 hashtag. Xem lại nội dung, chữ và ảnh trước khi đăng.
+Tiện ích cần quyền storage để giữ bản nháp, sidePanel để mở bảng bên cạnh; truy cập ChatGPT và ảnh được tạo, cùng trang Meta Assistant để chuyển bản nháp.

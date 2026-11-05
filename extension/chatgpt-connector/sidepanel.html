@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Studio AI · Meta Assistant</title><link rel="stylesheet" href="sidepanel.css"></head>
+<body><header><span class="brand">M</span><div><h1>Studio AI</h1><p>Bài và ảnh riêng cho từng Page</p></div><button id="openWeb" class="quiet">Mở web ↗</button></header>
+<main><section class="intro"><h2>Tạo ở đây, duyệt trên web</h2><p>Chọn Page và chủ đề. Mỗi bài được tạo cùng ảnh, lưu ngay trong tiện ích. Bạn quyết định lúc đưa sang web.</p></section>
+<div id="notice" role="status" hidden></div>
+<section class="box"><div class="section-head"><h2>Page & chủ đề</h2><button id="refresh" class="quiet">Làm mới</button></div><p id="catalogHint" class="hint"></p><div id="pages"></div>
+<label class="field">Thông tin bổ sung <span class="hint">Tuỳ chọn</span><textarea id="brief" rows="3" placeholder="Sản phẩm, giá hoặc ưu đãi có thật cần nhắc đến…" maxlength="1500"></textarea></label>
+<div class="options"><label class="field">Bài / Page<input id="count" type="number" min="1" max="3" value="1"></label><label class="check"><input id="images" type="checkbox" checked>Tạo kèm ảnh</label></div>
+<p class="hint">Ảnh dọc 4:5 · Chữ dưới 25% · 0899779488 · Bài có hashtag</p><p id="scope" class="hint"></p>
+<div class="actions"><button id="generate" class="primary">✦ Tạo bài & ảnh</button><button id="cancel" class="quiet" hidden>Dừng</button></div></section>
+<section id="progressBox" class="box" hidden><div class="section-head"><h2 id="progressTitle">Đang tạo</h2><span id="progressCount"></span></div><div class="track"><progress id="progress" max="100" value="0"></progress><span id="loading"></span></div><p id="progressText" role="status"></p></section>
+<section><div class="section-head"><h2>Bản nháp trong tiện ích</h2><span id="draftCount" class="hint"></span></div><p class="hint">Đóng bảng rồi mở lại vẫn giữ bản nháp. Chưa có bài nào được tự đăng.</p><div id="results"></div><p id="empty" class="empty">Bài đã tạo sẽ xuất hiện ở đây.</p></section></main>
+<footer><button id="transfer" class="primary" disabled>Đưa bài đã xong sang web ↗</button><p id="transferHint" class="hint">Chuyển vào Lịch đăng · Chờ duyệt</p></footer>
+<script src="sidepanel.js"></script></body></html>
