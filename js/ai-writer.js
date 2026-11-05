@@ -12,7 +12,7 @@
     imageError:String(p.imageError||'').slice(0,500)
   }));
   function mergePosts(incoming){return safePosts(incoming).map(post=>{const assigned=session?.items?.find(x=>x.key===post.key);if(assigned)post={...post,pageId:assigned.pageId,pageName:assigned.pageName,topicTitle:assigned.topicTitle};const previous=session?.posts?.find(x=>x.key===post.key);return previous?{...post,...(previous._editedText?{text:previous.text,_editedText:true}:{}),...(previous._editedImage?{imageData:previous.imageData,imageError:'',_editedImage:true}:{})}:post;});}
-  const save=async()=>{if(session)await DB.set('aiDraftSessionV1',session);};
+  const save=async()=>{if(session){await DB.set('aiDraftSessionV1',session);window.dispatchEvent(new Event('ai-drafts-updated'));}};
   window.addEventListener('message',async e=>{
     const m=e.data;if(e.source!==window||e.origin!==location.origin||m?.source!=='META_AI_CONNECTOR')return;
     if(m.type==='REPLY'&&pending.has(m.id)){const p=pending.get(m.id);clearTimeout(p.timeout);pending.delete(m.id);m.ok?p.resolve(m):p.reject(Error(m.error||'Tiện ích chưa sẵn sàng.'));return;}
@@ -151,5 +151,22 @@
     }));
     if(focused){const card=[...root.querySelectorAll('[data-ai-key]')].find(el=>el.dataset.aiKey===focused);const field=card?.querySelector('textarea');if(field){field.focus();if(Number.isInteger(selection.start))field.setSelectionRange(selection.start,selection.end);}}
   }
-  App.ai={open};
+  function overview(host,mode){
+    let revision=0;
+    const draw=async()=>{
+      const own=++revision,s=await DB.get('aiDraftSessionV1',null);if(own!==revision)return;
+      const posts=safePosts(s?.posts),active=s&&!s.done;
+      host.replaceChildren(h('div',{className:'card ai-draft-overview'},
+        h('div',{className:'card-head'},h('h3',{className:'card-title',textContent:posts.length?`Bài AI đã lưu · ${posts.length}`:'Bài AI của bạn'}),
+          s?h('button',{type:'button',className:'btn btn-ghost btn-sm',textContent:active?'Xem tiến độ':'Mở kết quả AI',onclick:e=>open({mode,trigger:e.currentTarget})}):null),
+        active?h('div',{className:'ai-overview-working',role:'status'},h('span',{className:'ai-working-dot','aria-hidden':'true'}),s.progress||'ChatGPT đang tạo bài…'):null,
+        posts.length?h('div',{className:'ai-draft-grid'},...posts.map(post=>h('article',{className:'ai-draft-tile'},
+          post.imageData?h('img',{src:post.imageData,alt:'Ảnh bài '+post.pageName,loading:'lazy'}):h('div',{className:'ai-draft-image-placeholder',textContent:active?'Đang chuẩn bị ảnh':'Bài viết'}),
+          h('div',{className:'ai-draft-tile-body'},h('strong',{textContent:post.pageName}),h('p',{className:'ai-draft-excerpt',textContent:post.text}),
+            h('button',{type:'button',className:'btn btn-soft',textContent:mode==='planner'?'Xem & thêm vào lịch':'Xem & dùng bài này',onclick:async e=>{await open({mode,trigger:e.currentTarget});const card=[...$('aiResults').querySelectorAll('[data-ai-key]')].find(el=>el.dataset.aiKey===post.key);card?.scrollIntoView({block:'center',behavior:'smooth'});}}) ) ))):
+          h('p',{className:'hint',textContent:active?'Từng bài sẽ xuất hiện ở đây ngay khi được lưu.':'Bài và ảnh do AI tạo sẽ xuất hiện ở đây. Bạn xem lại trước khi đăng hoặc xếp lịch.'})));
+    };
+    window.addEventListener('ai-drafts-updated',()=>{draw().catch(()=>{});});draw().catch(()=>{});
+  }
+  App.ai={open,overview};
 })();

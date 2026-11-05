@@ -17,7 +17,7 @@
   }
   App.posting = { async applyAI(post) {
     if(!post.pageId||!App.pageById(post.pageId))throw Error('Không tìm thấy Page của bài AI. Kết nối lại Page trước khi dùng bài.');
-    App.show('post'); edited = true;
+    App.show('post'); edited = true; if($('poManual'))$('poManual').open=true;
     draftPageId=String(post.pageId);
     $('poText').value = post.text || ''; $('poImage').value = '';
     draftImage = post.imageData || ''; imageRead = Promise.resolve(draftImage);
@@ -44,6 +44,17 @@
             h('button', { className: 'btn btn-soft', onclick: () => toQueue() }, icon('i-cal'), 'Thêm vào Lịch đăng (nháp)'),
             h('span', { className: 'hint', textContent: 'Giờ hẹn phải sau hiện tại ít nhất 10 phút.' })),
           h('div', { className: 'log', id: 'poLog' })));
+      const manual=h('details',{id:'poManual',className:'post-manual'},
+        h('summary',{},h('span',{},'Tự viết hoặc chỉnh sửa bài'),h('span',{className:'hint',textContent:'Tuỳ chọn'})));
+      const body=h('div',{className:'post-manual-body'},...el.children);manual.append(body);
+      el.append(
+        h('div',{className:'card ai-first-hero'},
+          h('div',{},h('span',{className:'ai-first-eyebrow',textContent:'SÁNG TẠO CÙNG AI'}),h('h3',{textContent:'Tạo bài và ảnh cho từng Page'}),
+            h('p',{textContent:'Chọn chủ đề đã lưu. ChatGPT soạn bài có hashtag, tạo ảnh dọc và lưu từng bài ngay khi xong.'}),
+            h('div',{className:'ai-first-steps'},h('span',{},'1 · Chọn Page & chủ đề'),h('span',{},'2 · AI tạo bài & ảnh'),h('span',{},'3 · Xem lại & đăng'))),
+          h('button',{type:'button',className:'btn btn-primary',textContent:'✦ Tạo bài bằng AI',onclick:e=>App.ai.open({mode:'post',trigger:e.currentTarget})})),
+        h('div',{id:'poAIDrafts'}),manual);
+      App.ai.overview($('poAIDrafts'),'post');
       for (const id of ['poText', 'poAt']) $(id).oninput = () => { edited = true; savePostDraft(); };
       $('poImage').onchange = () => {
         edited = true; const file = $('poImage').files[0];
@@ -55,7 +66,7 @@
         if (edited) return;
         $('poText').value = draft.text || ''; $('poAt').value = draft.at || '';
         draftPageId = String(draft.pageId||''); draftImage = draft.image || ''; imageRead = Promise.resolve(draftImage); drawDraftImage(); App.tabs.post.refresh();
-        if (draft.text || draft.image) $('poDraftState').textContent = 'Đã khôi phục bản nháp trước.';
+        if (draft.text || draft.image) {$('poDraftState').textContent = 'Đã khôi phục bản nháp trước.';$('poManual').open=true;}
       }).catch(() => {});
     },
     refresh() {

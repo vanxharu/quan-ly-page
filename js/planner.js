@@ -21,10 +21,11 @@
   App.tab('planner', {
     mount(el) {
       el.append(
-        h('div', { className: 'card ai-launch-card' },
-          h('div', {}, h('h3', { className: 'card-title', textContent: '✦ Tạo kế hoạch nội dung cùng ChatGPT' }),
+        h('div', { className: 'card ai-launch-card ai-first-hero' },
+          h('div', {}, h('h3', { className: 'card-title', textContent: 'Tạo kế hoạch nội dung bằng AI' }),
             h('p', { className: 'muted', textContent: 'Chọn Page và chủ đề đã lưu. AI tạo bài, ảnh riêng cho đúng Page; bạn xếp giờ và duyệt trước khi đăng.' })),
-          h('button', { type: 'button', className: 'btn btn-primary', textContent: 'AI soạn bài & tạo ảnh', onclick: e => App.ai.open({ mode: 'planner', trigger: e.currentTarget }) })),
+          h('button', { type: 'button', className: 'btn btn-primary', textContent: '✦ Tạo bài bằng AI', onclick: e => App.ai.open({ mode: 'planner', trigger: e.currentTarget }) })),
+        h('div', { id:'plAIDrafts' }),
         h('div', { className: 'grid2' },
           h('div', { className: 'card', id: 'plCfg' }),
           h('div', { className: 'card', id: 'plDays' })),
@@ -38,6 +39,7 @@
             h('button', { className: 'btn btn-primary', id: 'plGo', onclick: () => scheduleAll() }, icon('i-send'), 'Lên lịch tất cả bài đã duyệt')),
           h('div', { className: 'log', id: 'plLog' }),
           h('div', { id: 'plList', className: 'section-gap' })));
+      App.ai.overview($('plAIDrafts'),'planner');
     },
     async refresh() {
       if(!$('plCfg'))return; // Có thể nhận bài AI trước lần mở tab Lịch đăng.
@@ -53,7 +55,7 @@
       const groups = new Map();
       for (const i of list) { const k = i.at ? new Date(i.at).toLocaleDateString('vi-VN', { weekday: 'long', day: '2-digit', month: '2-digit' }) : 'Chưa xếp giờ'; (groups.get(k) || groups.set(k, []).get(k)).push(i); }
       $('plList').replaceChildren(...(list.length ? [...groups].flatMap(([day, items]) => [h('h4', { className: 'card-title', style: 'margin:14px 0 8px', textContent: `${day} (${items.length})` }), ...items.map(itemEl)])
-        : [empty('Hàng chờ trống. Soạn bài ở Đăng bài › Đăng Fanpage rồi bấm "Thêm vào Lịch đăng".')]));
+        : [empty('Chưa có bài trong lịch. Bấm Tạo bài bằng AI, chọn Page và chủ đề để bắt đầu.')]));
     }
   });
   const refresh = () => App.tabs.planner.refresh();
