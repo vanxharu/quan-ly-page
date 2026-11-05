@@ -209,6 +209,8 @@ App.publish = async (page, text, imageData, when = 0) => {
 function setDark(on) {
   document.body.classList.toggle('dark-mode', on);
   $('btnDark').querySelector('use').setAttribute('href', on ? '#i-sun' : '#i-moon');
+  $('btnDark').setAttribute('aria-label',on?'Chuyển sang giao diện sáng':'Chuyển sang giao diện tối');
+  $('btnDark').title=on?'Đang dùng giao diện tối · Chuyển sang sáng':'Đang dùng giao diện sáng · Chuyển sang tối';
   local.set('darkMode', on ? '1' : '0');
 }
 setDark(local.get('darkMode') ? local.get('darkMode') === '1' : matchMedia('(prefers-color-scheme: dark)').matches);

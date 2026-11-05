@@ -1,47 +1,50 @@
-/* Chủ đề (giống topic-library.js + hồ sơ Page của tiện ích): kế hoạch nội dung 7 ngày và hồ sơ ngành/khách/giọng văn từng Page.
- * Trang web không dùng ChatGPT nên đây là gợi ý để tự viết; "Viết bài theo chủ đề" mở Đăng Fanpage kèm dàn ý.
- * Lưu: marketingTopicLibraryV1, fanpageProfilesV1 (cùng khoá với tiện ích). */
+/* Thư viện chủ đề riêng từng Page, kế thừa mẫu chung khi chưa tuỳ chỉnh. */
 (() => {
-  const LIB = 'marketingTopicLibraryV1', PROFILES = 'fanpageProfilesV1';
-  const FIELDS = [['title', 'Chủ đề'], ['time', 'Giờ gợi ý'], ['style', 'Phong cách'], ['direction', 'Định hướng'], ['postPrompt', 'Gợi ý nội dung bài']];
-  const topics = async () => { const v = await DB.get(LIB); return Array.isArray(v) && v.length ? v : Pure.DEFAULT_TOPICS.map(t => ({ ...t })); };
-  App.tab('topics', {
-    mount(el) {
-      el.append(h('div', { className: 'card', id: 'tpProfile' }), h('div', { className: 'card-head section-gap' },
-        h('h3', { className: 'card-title', textContent: 'Kế hoạch chủ đề 7 ngày' }),
-        h('button', { className: 'btn btn-ghost btn-sm', textContent: 'Khôi phục mặc định', onclick: async () => { if (confirm('Đưa 7 chủ đề về mặc định?')) { await DB.del(LIB); this.refresh(); } } })),
-        h('div', { className: 'tpl-cards', id: 'tpList' }));
-    },
-    async refresh() {
-      const list = await topics(), today = new Date().getDay();
-      $('tpList').replaceChildren(...list.map((t, idx) => h('form', { className: 'tpl-card', style: Number(t.day) === today ? 'border-color:var(--primary)' : '', onsubmit: async e => {
-        e.preventDefault(); const f = new FormData(e.target); const all = await topics();
-        all[idx] = { ...all[idx], ...Object.fromEntries(FIELDS.map(([k]) => [k, String(f.get(k) || '')])) }; await DB.set(LIB, all); toast('Đã lưu chủ đề.');
-      } },
-        h('div', { className: 'row' }, h('strong', { className: 'grow', textContent: t.dayLabel }), Number(t.day) === today ? h('span', { className: 'tag tone-green', textContent: 'Hôm nay' }) : null),
-        ...FIELDS.map(([k, label]) => h('label', { className: 'field' }, label, k === 'postPrompt' || k === 'direction' ? h('textarea', { name: k, value: t[k] || '', style: 'min-height:70px' }) : h('input', { type: 'text', name: k, value: t[k] || '' }))),
-        h('div', { className: 'actions' }, h('button', { className: 'btn btn-ghost btn-sm', textContent: 'Lưu' }),
-          h('button', { type: 'button', className: 'btn btn-soft btn-sm', textContent: 'Viết bài theo chủ đề', onclick: () => {
-            App.show('post'); $('poText').value = `${t.title}\n\n${t.direction || ''}`.trim(); $('poText').focus();
-          } })))));
-      // Hồ sơ từng Page đang chọn
-      const all = await DB.get(PROFILES, {});
-      $('tpProfile').replaceChildren(h('div', { className: 'card-head' }, h('h3', { className: 'card-title', textContent: `Hồ sơ Page (${App.selected().length} Page đang chọn)` })),
-        ...App.selected().map(page => {
-          const key = Object.keys(all).find(k => k === page.id || k.includes(page.id)) || page.id, p = all[key] || {};
-          return h('details', { className: 'section-gap', open: App.selected().length === 1 },
-            h('summary', { style: 'cursor:pointer;display:flex;gap:8px;align-items:center' }, App.avatar(page.name, App.pageAvatarUrl(page), 24), h('strong', { textContent: page.name }),
-              h('span', { className: 'hint', textContent: p.niche ? '' : '· chưa có hồ sơ' })),
-            h('form', { className: 'form-grid', style: 'margin-top:8px', onsubmit: async e => {
-              e.preventDefault(); const f = new FormData(e.target); const cur = await DB.get(PROFILES, {});
-              cur[key] = { ...(cur[key] || {}), niche: String(f.get('niche')), audience: String(f.get('audience')), voice: String(f.get('voice')), updatedAt: Date.now() };
-              await DB.set(PROFILES, cur); toast(`Đã lưu hồ sơ ${page.name}.`);
-            } },
-              h('label', { className: 'field' }, 'Ngành / sản phẩm', h('textarea', { name: 'niche', value: p.niche || '', style: 'min-height:60px' })),
-              h('label', { className: 'field' }, 'Khách hàng', h('textarea', { name: 'audience', value: p.audience || '', style: 'min-height:60px' })),
-              h('label', { className: 'field' }, 'Giọng văn', h('textarea', { name: 'voice', value: p.voice || '', style: 'min-height:60px' })),
-              h('div', { className: 'field wide' }, h('button', { className: 'btn btn-primary btn-sm', textContent: 'Lưu hồ sơ', style: 'justify-self:start' }))));
-        }));
+  const LIB='marketingTopicLibraryV1', PAGE_LIB='marketingPageTopicsV1', PROFILES='fanpageProfilesV1';
+  const FIELDS=[['title','Chủ đề'],['time','Giờ gợi ý'],['style','Phong cách'],['direction','Định hướng'],['postPrompt','Yêu cầu soạn bài'],['imagePrompt','Yêu cầu tạo ảnh']];
+  let scope=null,revision=0;
+  async function load(pageId='') {
+    const [shared,perPage,profiles]=await Promise.all([DB.get(LIB,[]),DB.get(PAGE_LIB,{}),DB.get(PROFILES,{})]);
+    const base=Array.isArray(shared)&&shared.length?shared:Pure.DEFAULT_TOPICS;
+    const own=pageId&&Array.isArray(perPage[pageId])&&perPage[pageId].length?perPage[pageId]:null;
+    const profileKey=Object.keys(profiles).find(k=>k===pageId)||Object.keys(profiles).find(k=>k.split(/[^0-9]+/).includes(String(pageId)));
+    return {topics:(own||base).map(t=>({...t})),profile:profiles[profileKey]||{},inherited:!!pageId&&!own};
+  }
+  async function save(pageId,list){
+    if(pageId){const all=await DB.get(PAGE_LIB,{});all[pageId]=list;await DB.set(PAGE_LIB,all);}
+    else await DB.set(LIB,list);
+  }
+  App.topics={load,save,open(pageId){scope=String(pageId||'');App.show('topics');}};
+  App.tab('topics',{
+    mount(el){el.append(h('div',{className:'card'},h('div',{className:'row'},
+      h('label',{className:'field grow'},'Chọn Page để chỉnh chủ đề',h('select',{id:'tpScope',onchange:e=>{scope=e.target.value;this.refresh();}})),
+      h('button',{type:'button',className:'btn btn-primary',textContent:'AI tạo bài & ảnh',onclick:e=>{if(!scope)return toast('Chọn một Page trước khi tạo bài.');App.ai.open({mode:'planner',pageIds:[scope],trigger:e.currentTarget});}})),
+      h('p',{id:'tpScopeHint',className:'hint'})),h('div',{className:'card',id:'tpProfile'}),
+      h('div',{className:'card-head section-gap'},h('h3',{id:'tpListTitle',className:'card-title'}),
+        h('button',{className:'btn btn-ghost btn-sm',textContent:'Khôi phục mẫu',onclick:async()=>{const pageId=scope;if(!confirm(pageId?'Bỏ tuỳ chỉnh của Page này và dùng mẫu chung?':'Khôi phục mẫu chung mặc định?'))return;if(pageId){const all=await DB.get(PAGE_LIB,{});delete all[pageId];await DB.set(PAGE_LIB,all);}else await DB.del(LIB);this.refresh();}})),
+      h('div',{className:'tpl-cards',id:'tpList'}));},
+    async refresh(){
+      const version=++revision;
+      if(scope===null||(scope&&!App.pageById(scope)))scope=App.selected()[0]?.id||App.pages[0]?.id||'';
+      const pageId=scope,page=App.pageById(pageId),data=await load(pageId);if(version!==revision)return;
+      $('tpScope').replaceChildren(h('option',{value:'',textContent:'Mẫu chung cho các Page chưa tuỳ chỉnh',selected:!pageId}),...App.pages.map(p=>h('option',{value:p.id,textContent:p.name,selected:p.id===pageId})));
+      $('tpScopeHint').textContent=page?(data.inherited?'Page đang dùng mẫu chung. Bấm Lưu trên chủ đề để tạo bản riêng cho Page này.':'Chủ đề này chỉ áp dụng cho '+page.name+'.')+' AI dùng cả hồ sơ Page, nội dung và yêu cầu ảnh bên dưới.':'Mẫu dự phòng cho các Page chưa có chủ đề riêng. Chọn từng Page để tuỳ chỉnh ngành hàng và hình ảnh.';
+      $('tpListTitle').textContent='Chủ đề 7 ngày · '+(page?.name||'Mẫu chung');
+      const today=new Date().getDay();
+      $('tpList').replaceChildren(...data.topics.map((t,index)=>{
+        const form=h('form',{className:'tpl-card',style:Number(t.day)===today?'border-color:var(--primary)':''});
+        const persist=async()=>{const all=(await load(pageId)).topics;const f=new FormData(form);all[index]={...t,...Object.fromEntries(FIELDS.map(([key])=>[key,String(f.get(key)||'')]))};await save(pageId,all);return all[index];};
+        form.onsubmit=async e=>{e.preventDefault();try{await persist();toast('Đã lưu chủ đề cho '+(page?.name||'mẫu chung')+'.');}catch(e){toast('Chưa lưu được: '+e.message);}};
+        form.append(h('div',{className:'row'},h('strong',{className:'grow',textContent:t.dayLabel}),Number(t.day)===today?h('span',{className:'tag tone-green',textContent:'Hôm nay'}):null),
+          ...FIELDS.map(([key,label])=>h('label',{className:'field'},label,['postPrompt','direction','imagePrompt'].includes(key)?h('textarea',{name:key,value:t[key]||'',style:'min-height:70px'}):h('input',{type:'text',name:key,value:t[key]||''}))),
+          h('p',{className:'hint',textContent:'Ảnh phù hợp chính sách Facebook, không chèn chữ (0%, dưới 25% diện tích).'}),
+          h('div',{className:'actions'},h('button',{className:'btn btn-ghost btn-sm',textContent:'Lưu chủ đề'}),h('button',{type:'button',className:'btn btn-soft btn-sm',textContent:'AI tạo bài & ảnh theo chủ đề',onclick:async e=>{if(!page)return toast('Chọn một Page ở trên trước.');const trigger=e.currentTarget;try{await persist();await App.ai.open({mode:'planner',pageIds:[pageId],topicDay:Number(t.day),trigger});}catch(e){toast(e.message);}}})));return form;
+      }));
+      if(!page){$('tpProfile').hidden=true;return;}$('tpProfile').hidden=false;
+      const p=data.profile;
+      const form=h('form',{className:'form-grid',onsubmit:async e=>{e.preventDefault();const f=new FormData(e.target),all=await DB.get(PROFILES,{});all[pageId]={...p,niche:String(f.get('niche')||''),audience:String(f.get('audience')||''),voice:String(f.get('voice')||''),updatedAt:Date.now()};await DB.set(PROFILES,all);toast('Đã lưu hồ sơ '+page.name+'.');}});
+      form.append(...[['niche','Ngành / sản phẩm'],['audience','Khách hàng'],['voice','Giọng văn']].map(([key,label])=>h('label',{className:'field'},label,h('textarea',{name:key,value:p[key]||'',rows:2}))),h('div',{className:'field wide'},h('button',{className:'btn btn-primary btn-sm',textContent:'Lưu hồ sơ Page'})));
+      $('tpProfile').replaceChildren(h('div',{className:'card-head'},h('h3',{className:'card-title',textContent:'Hồ sơ · '+page.name})),form);
     }
   });
 })();

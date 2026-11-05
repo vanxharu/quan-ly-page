@@ -2,11 +2,11 @@
  * Đã hẹn trên FB: bài Facebook đang giữ để tự đăng (scheduled_posts) của Page đang chọn. */
 (() => {
   const QUEUE = 'fbScheduleQueueV1';
-  let draftImage = '', imageRead = Promise.resolve(''), draftWrites = Promise.resolve(), edited = false;
+  let draftImage = '', draftPageId = '', imageRead = Promise.resolve(''), draftWrites = Promise.resolve(), edited = false;
   function savePostDraft() {
-    const text = $('poText').value, at = $('poAt').value, pendingImage = imageRead;
+    const text = $('poText').value, at = $('poAt').value, pendingImage = imageRead, pageId = draftPageId;
     $('poDraftState').textContent = 'Đang lưu nháp…';
-    draftWrites = draftWrites.catch(() => {}).then(async () => DB.set('postDraftV1', { text, at, image: await pendingImage }));
+    draftWrites = draftWrites.catch(() => {}).then(async () => DB.set('postDraftV1', { text, at, pageId, image: await pendingImage }));
     draftWrites.then(() => { $('poDraftState').textContent = 'Đã lưu nháp tự động.'; }, () => { $('poDraftState').textContent = 'Chưa lưu được nháp. Hãy giữ trang mở hoặc sao chép nội dung.'; });
   }
   function drawDraftImage() {
@@ -16,17 +16,19 @@
       } })] : []));
   }
   App.posting = { async applyAI(post) {
+    if(!post.pageId||!App.pageById(post.pageId))throw Error('Không tìm thấy Page của bài AI. Kết nối lại Page trước khi dùng bài.');
     App.show('post'); edited = true;
+    draftPageId=String(post.pageId);
     $('poText').value = post.text || ''; $('poImage').value = '';
     draftImage = post.imageData || ''; imageRead = Promise.resolve(draftImage);
-    drawDraftImage(); savePostDraft();
+    drawDraftImage(); savePostDraft(); App.tabs.post.refresh();
   } };
   App.tab('post', {
     mount(el) {
       el.append(
         h('div', { className: 'card' },
           h('div', { className: 'card-head' }, h('h3', { className: 'card-title', textContent: 'Soạn bài' }),
-            h('button', { type: 'button', className: 'btn btn-soft', textContent: '✦ AI soạn bài & tạo ảnh', onclick: e => App.ai.open({ mode: 'post', brief: $('poText').value, trigger: e.currentTarget }) })),
+            h('button', { type: 'button', className: 'btn btn-soft', textContent: '✦ AI soạn bài & tạo ảnh', onclick: e => App.ai.open({ mode: 'post', pageIds: draftPageId?[draftPageId]:undefined, trigger: e.currentTarget }) })),
           h('textarea', { id: 'poText', placeholder: 'Nội dung bài viết…' }),
           h('div', { id: 'poDraftState', className: 'hint', style: 'margin-top:8px', role: 'status', textContent: 'Nội dung, ảnh và giờ hẹn được lưu nháp trên trình duyệt này.' }),
           h('div', { className: 'row', style: 'margin-top:12px' },
@@ -34,8 +36,9 @@
             h('label', { className: 'field' }, 'Hẹn giờ (bỏ trống = đăng ngay / để Lịch đăng xếp giờ)', h('input', { type: 'datetime-local', id: 'poAt' }))),
           h('div', { className: 'row', id: 'poPreview', style: 'margin-top:12px' })),
         h('div', { className: 'card' },
-          h('div', { className: 'card-head' }, h('h3', { className: 'card-title', id: 'poTitle' }), h('span', { className: 'hint', textContent: 'Đổi Page ở ô chọn Page trên cùng.' })),
+          h('div', { className: 'card-head' }, h('h3', { className: 'card-title', id: 'poTitle' }), h('span', { id:'poTargetHint', className: 'hint' })),
           h('div', { className: 'tags', id: 'poPages' }),
+          h('button',{id:'poReleasePage',type:'button',className:'btn btn-ghost btn-sm',hidden:true,textContent:'Đổi sang các Page đang chọn',onclick:()=>{if(!confirm('Dùng bài này cho các Page đang chọn ở thanh trên?'))return;draftPageId='';edited=true;savePostDraft();App.tabs.post.refresh();}}),
           h('div', { className: 'row', style: 'margin-top:14px' },
             h('button', { className: 'btn btn-primary', id: 'poGo', onclick: () => go() }, icon('i-send'), 'Đăng / Hẹn giờ ngay'),
             h('button', { className: 'btn btn-soft', onclick: () => toQueue() }, icon('i-cal'), 'Thêm vào Lịch đăng (nháp)'),
@@ -51,20 +54,23 @@
       DB.get('postDraftV1', {}).then(draft => {
         if (edited) return;
         $('poText').value = draft.text || ''; $('poAt').value = draft.at || '';
-        draftImage = draft.image || ''; imageRead = Promise.resolve(draftImage); drawDraftImage();
+        draftPageId = String(draft.pageId||''); draftImage = draft.image || ''; imageRead = Promise.resolve(draftImage); drawDraftImage(); App.tabs.post.refresh();
         if (draft.text || draft.image) $('poDraftState').textContent = 'Đã khôi phục bản nháp trước.';
       }).catch(() => {});
     },
     refresh() {
-      const list = App.selected();
-      $('poTitle').textContent = `Đăng lên ${list.length} Page đang chọn`;
+      const page=App.pageById(draftPageId), list=draftPageId?(page?[page]:[]):App.selected();
+      $('poTitle').textContent = draftPageId ? (page?'Bài riêng cho '+page.name:'Page của bài nháp chưa kết nối') : `Đăng lên ${list.length} Page đang chọn`;
+      $('poTargetHint').textContent=draftPageId?'Giữ đúng Page của bài AI, kể cả khi đổi bộ lọc Page ở trên.':'Đổi Page ở ô chọn Page trên cùng.';
+      $('poReleasePage').hidden=!draftPageId;
       $('poPages').replaceChildren(...list.map(App.pageTag));
     }
   });
   const log = (cls, t) => $('poLog').append(h('div', { className: 'status ' + cls, textContent: t }));
   const read = async () => {
     const text = $('poText').value.trim(), file = $('poImage').files[0] || draftImage, at = $('poAt').value;
-    return { text, file, when: at ? new Date(at).getTime() : 0, targets: App.selected() };
+    const page=App.pageById(draftPageId);
+    return { text, file, when: at ? new Date(at).getTime() : 0, targets: draftPageId?(page?[page]:[]):App.selected() };
   };
   async function go() {
     const { text, file, when, targets } = await read();

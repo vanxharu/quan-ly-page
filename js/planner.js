@@ -23,7 +23,7 @@
       el.append(
         h('div', { className: 'card ai-launch-card' },
           h('div', {}, h('h3', { className: 'card-title', textContent: '✦ Tạo kế hoạch nội dung cùng ChatGPT' }),
-            h('p', { className: 'muted', textContent: 'Tự soạn bài và tạo ảnh theo các Page đang chọn. Nhận về bản nháp, xếp giờ rồi duyệt để đăng.' })),
+            h('p', { className: 'muted', textContent: 'Chọn Page và chủ đề đã lưu. AI tạo bài, ảnh riêng cho đúng Page; bạn xếp giờ và duyệt trước khi đăng.' })),
           h('button', { type: 'button', className: 'btn btn-primary', textContent: 'AI soạn bài & tạo ảnh', onclick: e => App.ai.open({ mode: 'planner', trigger: e.currentTarget }) })),
         h('div', { className: 'grid2' },
           h('div', { className: 'card', id: 'plCfg' }),
@@ -75,6 +75,7 @@
           h('input', { type: 'datetime-local', value: toLocalInput(i.at), disabled: locked, onchange: e => patch(i.id, { at: e.target.value ? new Date(e.target.value).getTime() : 0 }).then(refresh) }),
           h('span', { className: 'status ' + tone, textContent: label }),
           i.error ? h('span', { className: 'hint', textContent: i.error }) : null),
+        i.topicTitle?h('p',{className:'hint',textContent:'Chủ đề: '+i.topicTitle}):null,
         h('textarea', { value: i.text || '', disabled: locked, onchange: e => patch(i.id, { text: e.target.value }) })),
       h('div', { className: 'acts' },
         ['draft', 'error', 'missed'].includes(i.status) ? h('button', { className: 'btn btn-soft btn-sm', textContent: '✓ Duyệt', onclick: () => patch(i.id, { status: 'approved', error: '' }).then(refresh) }) : null,

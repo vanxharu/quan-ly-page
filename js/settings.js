@@ -1,7 +1,7 @@
 /* Cài đặt: nhập dữ liệu từ tiện ích / khôi phục sao lưu, xuất sao lưu, quy tắc Hộp thư (InboxRules), thông báo tin mới, xoá dữ liệu. */
 (() => {
   const BY_ID = ['templates', 'categories', 'tags', 'shopOrdersV1', 'inboxApptsV1', 'fbScheduleQueueV1'];
-  const MERGE = ['metaCrmV1', 'customerNotes', 'conversationTags', 'templateStatsV1', 'fanpageProfilesV1'];
+  const MERGE = ['metaCrmV1', 'customerNotes', 'conversationTags', 'templateStatsV1', 'fanpageProfilesV1', 'marketingPageTopicsV1', 'aiTopicChoicesV1'];
   const REPLACE = ['inboxSettingsV1', 'fbScheduleSettingsV1', 'marketingTopicLibraryV1', 'marketingContactPhoneV1'];
 
   // Gộp file sao lưu (tiện ích: nút "Xuất dữ liệu sang web", hoặc file sao lưu của chính trang này) vào dữ liệu hiện có.
