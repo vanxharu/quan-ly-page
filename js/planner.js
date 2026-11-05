@@ -21,11 +21,8 @@
   App.tab('planner', {
     mount(el) {
       el.append(
-        h('div', { className: 'card ai-launch-card ai-first-hero' },
-          h('div', {}, h('h3', { className: 'card-title', textContent: 'Lên lịch bài marketing từ Reddit' }),
-            h('p', { className: 'muted', textContent: 'Chọn Page và số bài trong Studio AI; GPT tự tìm ý tưởng Reddit, viết bài mới và tạo ảnh 5:4. Bấm Đưa sang web để nhận bài tại đây, rồi xếp giờ và duyệt.' })),
+        h('div', { className: 'planner-ai-action' },
           h('button', { type: 'button', className: 'btn btn-primary', 'data-ai-sidepanel':'1',textContent: '✦ Mở Studio AI', onclick: e => App.ai.open({ mode: 'planner', trigger: e.currentTarget }) })),
-        h('div', { id:'plAIDrafts' }),
         h('div', { className: 'grid2' },
           h('div', { className: 'card', id: 'plCfg' }),
           h('div', { className: 'card', id: 'plDays' })),
@@ -39,7 +36,6 @@
             h('button', { className: 'btn btn-primary', id: 'plGo', onclick: () => scheduleAll() }, icon('i-send'), 'Lên lịch tất cả bài đã duyệt')),
           h('div', { className: 'log', id: 'plLog' }),
           h('div', { id: 'plList', className: 'section-gap' })));
-      App.ai.overview($('plAIDrafts'),'planner');
     },
     async refresh() {
       if(!$('plCfg'))return; // Có thể nhận bài AI trước lần mở tab Lịch đăng.
