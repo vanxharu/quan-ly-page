@@ -2,7 +2,7 @@
 (() => {
   const pending=new Map();let dialog=null,current=null,busy=false,session=null,targets=[],choices={},connectorVersion=null,connectorReady=false;
   const send=(type,payload)=>new Promise((resolve,reject)=>{
-    const id=uid('ai');const timeout=setTimeout(()=>{pending.delete(id);reject(Error('Cần tiện ích 1.0.7 để tạo từng bài và lưu chờ duyệt. Cập nhật tiện ích rồi tải lại trang.'));},4000);
+    const id=uid('ai');const timeout=setTimeout(()=>{pending.delete(id);reject(Error('Cần tiện ích 1.0.8 để tạo từng bài và lưu chờ duyệt. Cập nhật tiện ích rồi tải lại trang.'));},4000);
     pending.set(id,{resolve,reject,timeout});window.postMessage({source:'META_ASSISTANT_AI_V106',type,id,payload},location.origin);
   });
   const safePosts=posts=>(Array.isArray(posts)?posts:[]).slice(0,6).filter(p=>p&&typeof p.key==='string').map(p=>({
@@ -35,6 +35,7 @@
   window.addEventListener('message',async e=>{
     const m=e.data;if(e.source!==window||e.origin!==location.origin||m?.source!=='META_AI_CONNECTOR_V106')return;
     if(m.type==='REPLY'&&pending.has(m.id)){const p=pending.get(m.id);clearTimeout(p.timeout);pending.delete(m.id);m.ok?p.resolve(m):p.reject(Error(m.error||'Tiện ích chưa sẵn sàng.'));return;}
+    if(!session)session=await DB.get('aiDraftSessionV1',null);
     if(!session||m.id!==session.id)return;
     if(m.type==='PROGRESS'){session.progress=String(m.text||'').slice(0,500);const text=session.progress;let percent=session.percent||5;
       if(/soạn nội dung/i.test(text))percent=Math.max(percent,20);
@@ -53,10 +54,10 @@
   const status=(text,tone='info')=>{const el=$('aiStatus');if(el){el.textContent=text||'';el.dataset.tone=tone;}};
   function renderProgress(label,percent,active){const box=$('aiProgressBox');if(!box)return;box.hidden=!label;box.dataset.active=String(!!active);const bar=$('aiProgress');if(bar)bar.value=Math.max(0,Math.min(100,Number(percent)||0));const title=$('aiProgressLabel');if(title)title.textContent=label||'';const value=$('aiProgressValue');if(value)value.textContent=`${Math.max(0,Math.min(100,Number(percent)||0))}%`;}
   function connection(connected){
-    connectorReady=connected===true&&/^\d+\.\d+\.\d+$/.test(connectorVersion||'')&&connectorVersion.split('.').map(Number).some((n,i,a)=>n>[1,0,7][i]&&a.slice(0,i).every((v,j)=>v===[1,0,7][j]))||connected===true&&connectorVersion==='1.0.7';
+    connectorReady=connected===true&&/^\d+\.\d+\.\d+$/.test(connectorVersion||'')&&connectorVersion.split('.').map(Number).some((n,i,a)=>n>[1,0,8][i]&&a.slice(0,i).every((v,j)=>v===[1,0,8][j]))||connected===true&&connectorVersion==='1.0.8';
     const outdated=connected===true&&!connectorReady;
     const el=$('aiConnection');el.dataset.state=connected===null?'checking':outdated?'outdated':connected?'connected':'disconnected';
-    $('aiConnectionText').textContent=connected===null?'Đang kiểm tra tiện ích…':outdated?`Tiện ích ${connectorVersion} cần cập nhật để xử lý prompt cũ còn trong ô ChatGPT`:connected?'Tiện ích đã kết nối':'Chưa kết nối tiện ích';
+    $('aiConnectionText').textContent=connected===null?'Đang kiểm tra tiện ích…':outdated?`Tiện ích ${connectorVersion} cần cập nhật để nhận ảnh và tiếp tục bài kế tiếp`:connected?'Tiện ích đã kết nối':'Chưa kết nối tiện ích';
     $('aiInstall').hidden=connected===true&&!outdated;
     if(connected===true&&!outdated)$('aiInstall').open=false;
     else if(connected===false||outdated)$('aiInstall').open=true;
@@ -84,7 +85,7 @@
     dialog.append(h('div',{className:'ai-dialog-head'},h('div',{},h('h2',{id:'aiDialogTitle',textContent:'AI soạn bài & tạo ảnh'}),h('p',{className:'muted',textContent:'Nhập chủ đề → ChatGPT tạo bài trong tab riêng → nhận bản nháp tại đây.'})),h('button',{type:'button',className:'icon-btn','aria-label':'Đóng trợ lý',textContent:'×',onclick:()=>dialog.close()})),
       h('div',{id:'aiConnection',className:'ai-connection',role:'status'},h('span',{id:'aiConnectionText',textContent:'Đang kiểm tra tiện ích…'}),h('button',{type:'button',className:'btn btn-ghost',textContent:'Kiểm tra lại',onclick:checkConnection})),
       h('details',{id:'aiInstall',className:'ai-install'},h('summary',{textContent:'Cập nhật / kết nối tiện ích ChatGPT'}),h('p',{textContent:'Tải và giải nén bản mới. Trong Chrome, mở chrome://extensions, chọn Tải lại trên tiện ích cũ sau khi thay các tệp trong thư mục, hoặc chọn Tải tiện ích đã giải nén nếu dùng thư mục mới. Sau đó tải lại trang này.'}),
-        h('a',{className:'btn btn-ghost',href:'chatgpt-connector.zip?v=1.0.7',download:'meta-assistant-chatgpt-connector.zip',textContent:'Tải tiện ích kết nối'}),h('p',{className:'hint',textContent:'Tiện ích cần truy cập ChatGPT, ảnh ChatGPT và trang Meta Assistant này. Không dùng quyền gỡ lỗi. Giữ tab ChatGPT mở khi tạo bài.'})),
+        h('a',{className:'btn btn-ghost',href:'chatgpt-connector.zip?v=1.0.8',download:'meta-assistant-chatgpt-connector.zip',textContent:'Tải tiện ích kết nối'}),h('p',{className:'hint',textContent:'Tiện ích cần truy cập ChatGPT, ảnh ChatGPT và trang Meta Assistant này. Không dùng quyền gỡ lỗi. Giữ tab ChatGPT mở khi tạo bài.'})),
       h('label',{className:'row section-gap'},h('input',{id:'aiTopicMode',type:'checkbox',checked:true,onchange:drawTargets}),'Dùng chủ đề đã lưu cho từng Page'),
       h('div',{id:'aiPageTargets',className:'ai-page-targets',role:'group','aria-label':'Chọn Page và chủ đề'}),
       h('div',{className:'form-grid'},
@@ -120,7 +121,7 @@
     }catch(e){busy=false;connection(false);status(e.message,'error');}finally{button.disabled=false;} updateButtons();
   }
   async function generate(){
-    if(busy)return;if(!connectorReady){status('Cập nhật tiện ích lên 1.0.7 rồi tải lại trang trước khi tạo bài.','warning');return;}const brief=$('aiBrief').value.trim(),useTopics=$('aiTopicMode').checked;
+    if(busy)return;if(!connectorReady){status('Cập nhật tiện ích lên 1.0.8 rồi tải lại trang trước khi tạo bài.','warning');return;}const brief=$('aiBrief').value.trim(),useTopics=$('aiTopicMode').checked;
     if(!useTopics&&!brief){status('Nhập chủ đề và thông tin thực tế cho bài viết.','warning');$('aiBrief').focus();return;}
     const selectedTargets=targets.filter(t=>t.checked);if(!selectedTargets.length)return status('Chọn ít nhất một Page trong danh sách bên trên.','warning');
     const count=current.mode==='planner'?Math.max(1,Math.min(3,Number($('aiCount').value)||1)):1;
