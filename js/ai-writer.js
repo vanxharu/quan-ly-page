@@ -34,9 +34,9 @@
   const status=(text,tone='info')=>{const el=$('aiStatus');if(el){el.textContent=text||'';el.dataset.tone=tone;}};
   function renderProgress(label,percent,active){const box=$('aiProgressBox');if(!box)return;box.hidden=!label;box.dataset.active=String(!!active);const bar=$('aiProgress');if(bar)bar.value=Math.max(0,Math.min(100,Number(percent)||0));const title=$('aiProgressLabel');if(title)title.textContent=label||'';const value=$('aiProgressValue');if(value)value.textContent=`${Math.max(0,Math.min(100,Number(percent)||0))}%`;}
   function connection(connected){
-    const outdated=connected===true&&connectorVersion&&connectorVersion<'1.0.3';
+    const outdated=connected===true&&connectorVersion&&connectorVersion<'1.0.4';
     const el=$('aiConnection');el.dataset.state=connected===null?'checking':outdated?'outdated':connected?'connected':'disconnected';
-    $('aiConnectionText').textContent=connected===null?'Đang kiểm tra tiện ích…':outdated?`Tiện ích ${connectorVersion} cần cập nhật để tạo ảnh dọc có chữ và số liên hệ`:connected?'Tiện ích đã kết nối':'Chưa kết nối tiện ích';
+    $('aiConnectionText').textContent=connected===null?'Đang kiểm tra tiện ích…':outdated?`Tiện ích ${connectorVersion} cần cập nhật để tạo ảnh chất lượng cao và bài có hashtag`:connected?'Tiện ích đã kết nối':'Chưa kết nối tiện ích';
     $('aiInstall').hidden=connected===true&&!outdated;
     if(connected===true&&!outdated)$('aiInstall').open=false;
     else if(connected===false||outdated)$('aiInstall').open=true;
@@ -64,14 +64,14 @@
     dialog.append(h('div',{className:'ai-dialog-head'},h('div',{},h('h2',{id:'aiDialogTitle',textContent:'AI soạn bài & tạo ảnh'}),h('p',{className:'muted',textContent:'Nhập chủ đề → ChatGPT tạo bài trong tab riêng → nhận bản nháp tại đây.'})),h('button',{type:'button',className:'icon-btn','aria-label':'Đóng trợ lý',textContent:'×',onclick:()=>dialog.close()})),
       h('div',{id:'aiConnection',className:'ai-connection',role:'status'},h('span',{id:'aiConnectionText',textContent:'Đang kiểm tra tiện ích…'}),h('button',{type:'button',className:'btn btn-ghost',textContent:'Kiểm tra lại',onclick:checkConnection})),
       h('details',{id:'aiInstall',className:'ai-install'},h('summary',{textContent:'Cập nhật / kết nối tiện ích ChatGPT'}),h('p',{textContent:'Tải và giải nén bản mới. Trong Chrome, mở chrome://extensions, chọn Tải lại trên tiện ích cũ sau khi thay các tệp trong thư mục, hoặc chọn Tải tiện ích đã giải nén nếu dùng thư mục mới. Sau đó tải lại trang này.'}),
-        h('a',{className:'btn btn-ghost',href:'chatgpt-connector.zip?v=1.0.3',download:'meta-assistant-chatgpt-connector.zip',textContent:'Tải tiện ích kết nối'}),h('p',{className:'hint',textContent:'Tiện ích cần truy cập ChatGPT, ảnh ChatGPT và trang Meta Assistant này. Không dùng quyền gỡ lỗi. Giữ tab ChatGPT mở khi tạo bài.'})),
+        h('a',{className:'btn btn-ghost',href:'chatgpt-connector.zip?v=1.0.4',download:'meta-assistant-chatgpt-connector.zip',textContent:'Tải tiện ích kết nối'}),h('p',{className:'hint',textContent:'Tiện ích cần truy cập ChatGPT, ảnh ChatGPT và trang Meta Assistant này. Không dùng quyền gỡ lỗi. Giữ tab ChatGPT mở khi tạo bài.'})),
       h('label',{className:'row section-gap'},h('input',{id:'aiTopicMode',type:'checkbox',checked:true,onchange:drawTargets}),'Dùng chủ đề đã lưu cho từng Page'),
       h('div',{id:'aiPageTargets',className:'ai-page-targets',role:'group','aria-label':'Chọn Page và chủ đề'}),
       h('div',{className:'form-grid'},
         h('label',{className:'field wide'},h('span',{id:'aiBriefLabel',textContent:'Yêu cầu bổ sung (tuỳ chọn)'}),h('textarea',{id:'aiBrief',rows:2,maxLength:1500})),
         h('label',{className:'field'},'Giọng văn',h('select',{id:'aiTone'},...['Theo hồ sơ từng Page','Thân thiện, tự nhiên','Chuyên nghiệp','Ngắn gọn, rõ ràng','Gần gũi, kể chuyện'].map(t=>h('option',{value:t,textContent:t})))),
         h('label',{className:'field',id:'aiCountField'},'Số bài cho mỗi Page',h('input',{id:'aiCount',type:'number',min:1,max:3,value:1,oninput:updateScope}))),
-      h('div',{className:'row section-gap'},h('label',{className:'row',style:'gap:7px'},h('input',{id:'aiImages',type:'checkbox',checked:true}),'Tạo thêm ảnh minh hoạ'),h('span',{className:'hint',textContent:'Ảnh dọc 4:5 cho điện thoại · Chữ dưới 25% · Liên hệ: 0899779488.'})),
+      h('div',{className:'row section-gap'},h('label',{className:'row',style:'gap:7px'},h('input',{id:'aiImages',type:'checkbox',checked:true}),'Tạo thêm ảnh minh hoạ'),h('span',{className:'hint',textContent:'Ảnh dọc 4:5 sắc nét · Rà soát chữ tiếng Việt · Chữ dưới 25% · 0899779488.'})),
       h('div',{id:'aiScope',className:'hint section-gap'}),
       h('div',{className:'row section-gap'},h('button',{id:'aiGenerate',type:'button',className:'btn btn-primary','data-ai-generate':'1',textContent:'Tạo bằng ChatGPT',onclick:generate}),h('button',{id:'aiCancel',type:'button',hidden:true,className:'btn btn-ghost',textContent:'Dừng nhận kết quả',onclick:async()=>{try{await send('CANCEL');}catch(e){status(e.message);}}})),
       h('div',{id:'aiProgressBox',className:'ai-progress-box section-gap',hidden:true},h('div',{className:'ai-progress-head'},h('span',{id:'aiProgressLabel',textContent:'Đang chuẩn bị…'}),h('strong',{id:'aiProgressValue',textContent:'0%'})),h('div',{className:'ai-progress-track'},h('progress',{id:'aiProgress',max:100,value:0, 'aria-label':'Tiến độ tạo bài'}),h('span',{className:'ai-progress-sweep','aria-hidden':'true'})),h('p',{className:'hint',textContent:'Chờ đến khi ChatGPT hoàn tất, không giới hạn thời gian. Từng bài được tự lưu ngay; ảnh được bổ sung khi tạo xong.'})),
