@@ -63,6 +63,7 @@
   document.querySelector('main').prepend(intro);
   function sync() {
     const current = App.current();
+    intro.hidden = !App.pages.length || current === 'planner';
     const entry = Object.values(App.NAV).find(([, tabs]) => tabs.some(([id]) => id === current));
     if (!entry) return;
     const tab = entry[1].find(([id]) => id === current);
