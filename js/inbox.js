@@ -21,16 +21,46 @@
       lastAt: new Date(last?.created_time || c.updated_time).getTime(), key: App.crmKey(page.id, other.name) };
   };
 
-  async function fetchConvs(page, limit = 50, next) {
-    const res = await api(next || `/${page.id}/conversations`, next ? {} : { platform: 'messenger', limit,
-      fields: 'id,updated_time,snippet,unread_count,participants,messages.limit(1){from,created_time}' }, 'GET', page.access_token);
-    // Chỉ lưu dữ liệu hội thoại, không lưu token Page hay URL phân trang vào bản lưu dự phòng.
-    if (!next && limit === 50) await DB.set(`inboxConversationCacheV1:${page.id}`, { at: Date.now(), data: res.data || [] }).catch(() => {});
-    const list = (res.data || []).map(c => normalizeConversation(page, c));
-    list.next = res.paging?.next || '';
-    return list;
+  const CONV_FIELDS = 'id,updated_time,snippet,unread_count,participants,messages.limit(1){from,created_time}';
+  const cacheKey = page => `inboxConversationCacheV1:${page.id}`;
+  const fetchedKey = page => `inboxFetchedV1:${page.id}`;
+  const REFRESH_LIMIT = 25, FIRST_LIMIT = 50, CACHE_MAX = 150, DIRTY_GAP = 10e3;
+  const dirty = new Set();
+  const toList = (page, data, after = '') => { const list = (data || []).map(c => normalizeConversation(page, c)); list.after = after; return list; };
+  // Gọi Facebook lấy hội thoại. `after` là con trỏ phân trang (không chứa token), dùng cho "Tải thêm".
+  async function fetchConvs(page, limit = FIRST_LIMIT, after = '', { low = false } = {}) {
+    const res = await api(`/${page.id}/conversations`, { platform: 'messenger', limit, fields: CONV_FIELDS, ...(after ? { after } : {}) }, 'GET', page.access_token, { low });
+    const data = res.data || [], cursor = res.paging?.next ? res.paging?.cursors?.after || '' : '';
+    // Bản lưu dùng chung mọi tab: gộp theo ID, chỉ dữ liệu hội thoại (không token, không URL phân trang).
+    const cache = await DB.get(cacheKey(page), {}).catch(() => ({}));
+    const merged = [...new Map([...data, ...(Array.isArray(cache.data) ? cache.data : [])].map(c => [c.id, c])).values()]
+      .sort((a, b) => new Date(b.updated_time) - new Date(a.updated_time)).slice(0, CACHE_MAX);
+    await DB.set(cacheKey(page), { at: Date.now(), data: merged, after: after ? cache.after || '' : cursor }).catch(() => {});
+    return toList(page, data, cursor);
   }
-  App.inbox = { fetchConvs };
+  // Lấy hội thoại của một Page qua bản lưu chung: tab nào vừa gọi Facebook thì tab khác, Hộp thư và báo tin mới
+  // dùng lại kết quả, không gọi trùng. Page có webhook báo tin mới (dirty) được tải lại ngay.
+  async function convsFor(page, { maxAge = 60e3, force = false, low = true } = {}) {
+    const now = Date.now(), last = Number(local.get(fetchedKey(page))) || 0;
+    const cache = await DB.get(cacheKey(page), {}).catch(() => ({}));
+    const hasCache = Array.isArray(cache.data) && cache.at;
+    const wantFresh = force || !hasCache || now - last >= maxAge || (dirty.has(page.id) && now - last >= DIRTY_GAP);
+    const blocked = (App.graphTraffic?.blockedUntil?.(page.id) || 0) > now;
+    if (hasCache && (!wantFresh || blocked)) return Object.assign(toList(page, cache.data, cache.after || ''), { cached: true, blockedUntil: blocked ? App.graphTraffic.blockedUntil(page.id) : 0 });
+    // Giữ chỗ trước khi gọi để tab khác cùng lúc không gọi trùng.
+    local.set(fetchedKey(page), String(now));
+    try {
+      await fetchConvs(page, hasCache ? REFRESH_LIMIT : FIRST_LIMIT, '', { low: low && hasCache });
+      dirty.delete(page.id);
+    } catch (e) {
+      if (!e.rateLimited && e.code !== 'BACKGROUND_PAUSED') local.set(fetchedKey(page), String(last));
+      if (!hasCache) throw e;
+      if (e.code !== 'BACKGROUND_PAUSED') throw Object.assign(e, { cache: toList(page, cache.data, cache.after || '') });
+    }
+    const fresh = await DB.get(cacheKey(page), {}).catch(() => ({}));
+    return toList(page, fresh.data, fresh.after || '');
+  }
+  App.inbox = { fetchConvs, convsFor };
   // Mở hội thoại của một khách (từ Khách hàng, Tổng quan…): thêm Page đó vào danh sách đang chọn nếu chưa có.
   App.openConversation = (pageId, name) => {
     S.pending = name;
@@ -46,7 +76,7 @@
         h('div', { className: 'card' },
           h('div', { className: 'card-head inbox-search-row' },
             h('input', { type: 'search', id: 'ibSearch', 'aria-label': 'Tìm hội thoại', placeholder: 'Tìm khách hoặc nội dung tin…', oninput: () => drawList() }),
-            h('button', { className: 'icon-btn', title: 'Tải lại hội thoại', 'aria-label': 'Tải lại hội thoại', onclick: () => load() }, icon('i-sync'))),
+            h('button', { className: 'icon-btn', title: 'Tải lại hội thoại', 'aria-label': 'Tải lại hội thoại', onclick: () => load(false, { force: true }) }, icon('i-sync'))),
           h('div', { className: 'row', style: 'margin:10px 0;gap:6px' },
             h('div', { className: 'chips', id: 'ibFilter' }, ...[['all', 'Tất cả'], ['unread', 'Chưa đọc'], ['unanswered', 'Chưa trả lời'], ['today', 'Hôm nay']].map(([f, t]) =>
               h('button', { className: 'chip', dataset: { f }, textContent: t, 'aria-pressed': String(f === S.filter), onclick: () => { S.filter = f; drawList(); } }))),
@@ -78,7 +108,9 @@
   });
   App.onPageChange.push(() => { saveDraft(); S.conv = null; S.more.clear(); S.extra.clear(); resetThread(); });
 
-  async function load(silent) {
+  // Khoảng làm mới danh sách khi đang xem Hộp thư; Page đã nối webhook máy chủ thì thưa hơn (tin mới được báo ngay).
+  const listInterval = page => App.server?.livePages?.has?.(String(page.id)) ? 5 * 60e3 : App.selected().length > 5 ? 120e3 : 60e3;
+  async function load(silent, { force = false } = {}) {
     const pages = App.selected();
     if (!pages.length) { S.convs = []; $('ibList').replaceChildren(empty('Chưa tick Page nào.')); return; }
     const scope = pages.map(p => p.id).join();
@@ -88,17 +120,19 @@
     try {
     if (!silent) $('ibList').replaceChildren(empty(`Đang tải hội thoại của ${pages.length} Page…`));
     const errors = [];
-    const lists = await pool(pages, 3, p => fetchConvs(p).catch(async e => {
+    const lists = await pool(pages, 3, p => convsFor(p, { maxAge: force ? 0 : silent ? listInterval(p) : 30e3, force, low: silent }).catch(async e => {
       errors.push(`${p.name}: ${e.message}${e.code ? ` (mã ${e.code}${e.sub ? '/' + e.sub : ''})` : ''}`);
+      if (e.cache) return e.cache;
       const previous = S.convs.filter(c => c.page.id === p.id);
       if (previous.length) return previous;
-      const cache = await DB.get(`inboxConversationCacheV1:${p.id}`, {}).catch(() => ({}));
-      return Date.now() - cache.at < 7 * 864e5 && Array.isArray(cache.data) ? cache.data.map(c => normalizeConversation(p, c)) : [];
+      const cache = await DB.get(cacheKey(p), {}).catch(() => ({}));
+      return Date.now() - cache.at < 7 * 864e5 && Array.isArray(cache.data) ? toList(p, cache.data) : [];
     }));
     if (run !== S.loading) return;
+    lists.forEach((list, i) => { if (list.blockedUntil > Date.now()) errors.push(`${pages[i].name}: Meta đang giới hạn Page này, đang hiện danh sách đã lưu. Tự tải lại sau ${new Date(list.blockedUntil).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}.`); });
     S.failures = errors.length === pages.length ? (S.failures || 0) + 1 : 0;
     S.retryAt = S.failures ? Date.now() + Math.min(300e3, 30e3 * 2 ** (S.failures - 1)) : 0;
-    lists.forEach((list, i) => { if (!S.more.has(pages[i].id) && typeof list.next === 'string') S.more.set(pages[i].id, { page: pages[i], next: list.next }); });
+    lists.forEach((list, i) => { if (!S.more.has(pages[i].id) && typeof list.after === 'string') S.more.set(pages[i].id, { page: pages[i], after: list.after }); });
     S.convs = [...new Map([...S.extra.values(), ...lists.flat()].map(c => [c.id, c])).values()].sort((a, b) => new Date(b.updated_time) - new Date(a.updated_time));
     S.crm = await App.crm.all();
     const labels = await App.crm.allLabels();
@@ -118,13 +152,13 @@
     const scope = App.selected().map(p => p.id).join();
     S.moreBusy = true; $('ibMore').disabled = true; $('ibMore').textContent = 'Đang tải…';
     try {
-      const batches = await pool([...S.more.values()].filter(x => x.next), 3, async ({ page, next }) => {
-        try { return { page, list: await fetchConvs(page, 50, next) }; }
+      const batches = await pool([...S.more.values()].filter(x => x.after), 3, async ({ page, after }) => {
+        try { return { page, list: await fetchConvs(page, 50, after) }; }
         catch (e) { toast(`${page.name}: ${e.message}`, 5000); return null; }
       });
       if (scope !== App.selected().map(p => p.id).join()) return;
       for (const result of batches.filter(Boolean)) {
-        S.more.set(result.page.id, { page: result.page, next: result.list.next });
+        S.more.set(result.page.id, { page: result.page, after: result.list.after });
         for (const c of result.list) S.extra.set(c.id, c);
       }
       S.convs = [...new Map([...S.extra.values(), ...S.convs].map(c => [c.id, c])).values()].sort((a, b) => new Date(b.updated_time) - new Date(a.updated_time));
@@ -236,7 +270,7 @@
       (!lab || (S.crm?.[c.key]?.labels || []).includes(lab)) &&
       (!q || norm(`${c.other.name} ${c.snippet} ${(S.crm?.[c.key]?.labels || []).join(' ')}`).includes(q)));
     const multi = App.selected().length > 1;
-    $('ibMore').hidden = ![...S.more.values()].some(x => x.next);
+    $('ibMore').hidden = ![...S.more.values()].some(x => x.after);
     const errors = S.errors?.length ? [h('details', { className: 'status err' },
       h('summary', { textContent: `${S.errors.length} Page chưa tải được tin mới.${S.convs.length ? ' Đang giữ danh sách đã tải.' : ''} Bấm xem chi tiết.` }),
       ...S.errors.map(e => h('div', { style: 'margin-top:8px', textContent: e })))] : [];
@@ -395,40 +429,65 @@
   }
 
   // ── Báo tin mới khi trang đang mở (Cài đặt › Hộp thư) ─────
-  const seen = new Map(); let first = true;
-  async function poll() {
-    if (Date.now() < Math.max(S.retryAt || 0,App.graphTraffic?.until?.()||0)) return;
-    const st = await settings();
+  // Một bộ hẹn giờ duy nhất cho cả danh sách và báo tin mới. Hội thoại đang mở chỉ đọc lại khi danh sách báo có tin mới
+  // (updated_time đổi), không đọc lại định kỳ. Mọi tab dùng chung bản lưu nên mở nhiều tab không nhân số lần gọi.
+  const NOTIFIED = 'inboxNotifiedV1';
+  const seen = new Map(); let first = true, lastPoll = 0, ticking = false;
+  const pollEvery = (st, pages) => {
+    const base = Math.max(2, Number(st.pollMinutes) || 2) * 60e3;
+    const live = App.server?.livePages;
+    return pages.length && live?.size && pages.every(p => live.has(String(p.id))) ? Math.max(base, 10 * 60e3) : base;
+  };
+  async function poll(st, only) {
+    if (Date.now() < (S.retryAt || 0)) return;
+    st ||= await settings();
     if (!st.webNotify) return;
-    const pages = App.pages.filter(p => !st.mutedPages.includes(p.id));
+    const pages = (only || App.pages).filter(p => !st.mutedPages.includes(p.id) && (App.graphTraffic?.blockedUntil?.(p.id) || 0) <= Date.now());
+    let notified = {}; try { notified = JSON.parse(local.get(NOTIFIED) || '{}'); } catch {}
     let unread = 0;
-    await pool(pages, 4, async p => {
-      const convs = await fetchConvs(p, 20).catch(() => []);
+    await pool(pages, 3, async p => {
+      const convs = await convsFor(p, { maxAge: Math.max(30e3, pollEvery(st, App.pages) - 10e3), low: true }).catch(e => e.cache || []);
       for (const c of convs) {
         unread += c.unread_count ? 1 : 0;
         const prev = seen.get(c.id);
-        if (!first && c.unread_count && c.fromCustomer && prev !== c.updated_time && InboxRules.notifyAllowed(st, p.id)) App.notify(`💬 ${c.other.name || 'Khách'} · ${p.name}`, c.snippet || 'Tin nhắn mới');
+        // notified dùng chung các tab: một tin chỉ báo một lần dù mở nhiều tab.
+        if (!first && c.unread_count && c.fromCustomer && prev !== c.updated_time && notified[c.id] !== c.updated_time && InboxRules.notifyAllowed(st, p.id)) {
+          notified[c.id] = c.updated_time;
+          App.notify(`💬 ${c.other.name || 'Khách'} · ${p.name}`, c.snippet || 'Tin nhắn mới');
+        }
         seen.set(c.id, c.updated_time);
       }
     });
-    first = false;
-    document.title = unread ? `(${unread}) Meta Assistant` : 'Meta Assistant';
-    if (App.current() === 'inbox' && !document.hidden) load();
+    const ids = Object.keys(notified); if (ids.length > 500) for (const id of ids.slice(0, ids.length - 500)) delete notified[id];
+    local.set(NOTIFIED, JSON.stringify(notified));
+    if (!only) { first = false; document.title = unread ? `(${unread}) Meta Assistant` : 'Meta Assistant'; }
   }
-  // Ưu tiên hội thoại đang đọc; hạn chế quét lại hàng chục Page khi Facebook đang lỗi.
-  setInterval(async () => {
-    if (!App.pages.length || App.current() !== 'inbox' || document.hidden || Date.now() < Math.max(S.retryAt || 0,App.graphTraffic?.until?.()||0)) return;
-    queuePics(S.conv ? [S.conv, ...S.convs] : S.convs);
-    const listInterval = App.selected().length > 5 ? 60e3 : 30e3;
-    if (Date.now() - (S.lastListAt || 0) >= listInterval) return load(true);
-    if (S.conv && S.draftReady && !S.reading && !S.listBusy) {
-      S.reading = true;
-      try { await openConv(S.conv, { silent: true }); } finally { S.reading = false; }
-    }
-  }, 8e3);
-  App.onLogin.push(async () => {
-    poll();
-    const loop = async () => { const st = await settings(); setTimeout(async () => { await poll(); loop(); }, Math.max(1, Number(st.pollMinutes) || 2) * 60e3); };
-    loop();
-  });
+  async function tick() {
+    if (!App.pages.length || ticking) return;
+    ticking = true;
+    try {
+      const st = await settings();
+      if (App.current() === 'inbox' && !document.hidden && Date.now() >= Math.max(S.retryAt || 0, App.graphTraffic?.until?.() || 0)) {
+        queuePics(S.conv ? [S.conv, ...S.convs] : S.convs);
+        const pages = App.selected();
+        if (pages.length && Date.now() - (S.lastListAt || 0) >= Math.min(...pages.map(listInterval))) await load(true);
+      }
+      if (Date.now() - lastPoll >= pollEvery(st, App.pages) && Date.now() >= (App.graphTraffic?.until?.() || 0)) { lastPoll = Date.now(); await poll(st); }
+    } finally { ticking = false; }
+  }
+  // Máy chủ (webhook) báo Page có tin mới: tải lại đúng Page đó, không đợi chu kỳ.
+  let changedTimer = 0; const changedPages = new Set();
+  App.inbox.changed = pageId => {
+    if (!pageId) return;
+    dirty.add(String(pageId)); changedPages.add(String(pageId));
+    clearTimeout(changedTimer);
+    changedTimer = setTimeout(async () => {
+      const ids = [...changedPages]; changedPages.clear();
+      if (App.current() === 'inbox' && !document.hidden && ids.some(id => App.isSelected(id))) await load(true);
+      await poll(null, ids.map(id => App.pageById(id)).filter(Boolean));
+    }, 800);
+  };
+  setInterval(() => { tick().catch(() => {}); }, 15e3);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) tick().catch(() => {}); });
+  App.onLogin.push(async () => { lastPoll = Date.now(); await poll().catch(() => {}); });
 })();

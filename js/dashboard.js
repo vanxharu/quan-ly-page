@@ -17,7 +17,8 @@
           const t = p.access_token, r = { page: p };
           const [info, convs, sched, last] = await Promise.all([
             api(`/${p.id}`, { fields: 'followers_count,fan_count' }, 'GET', t).catch(e => ({ error: e.message })),
-            api(`/${p.id}/conversations`, { platform: 'messenger', fields: 'unread_count', limit: 50 }, 'GET', t).catch(() => ({ data: [] })),
+            // Dùng chung bản lưu hội thoại với Hộp thư, không gọi Facebook lần nữa nếu vừa tải.
+            App.inbox.convsFor(p, { maxAge: 5 * 60e3 }).then(data => ({ data }), e => ({ data: e.cache || [] })),
             api(`/${p.id}/scheduled_posts`, { fields: 'id', limit: 100 }, 'GET', t).catch(() => ({ data: [] })),
             api(`/${p.id}/posts`, { fields: 'created_time', limit: 1 }, 'GET', t).catch(() => ({ data: [] }))]);
           r.error = info.error; r.followers = info.followers_count ?? info.fan_count ?? 0;

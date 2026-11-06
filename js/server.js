@@ -4,7 +4,7 @@
   const URL = 'https://kpzkokyndacmzuvyaxsc.supabase.co';
   const KEY = 'sb_publishable_MWXmQ59hooGPVZEtGaqkIA_XOvzsxlZ'; // khoá công khai, bảng đã bật RLS
   const sb = window.supabase?.createClient(URL, KEY);
-  const S = App.server = { sb, user: null, ready: false };
+  const S = App.server = { sb, user: null, ready: false, livePages: new Set() };
   S.call = async (action, body = {}) => {
     const { data, error } = await sb.functions.invoke('fb-admin', { body: { action, ...body } });
     if (error) {
@@ -31,18 +31,29 @@
     sb.auth.onAuthStateChange((_e, session) => { S.user = session?.user || null; drawCard(); subscribe(); });
   }
 
-  // Hộp thư tải lại khi máy chủ ghi tin mới (đỡ phải chờ chu kỳ 2 phút).
+  // Webhook: máy chủ ghi tin mới → Hộp thư tải lại đúng Page đó ngay. Page đã nối webhook (livePages) được quét thưa
+  // hơn nhiều, nên tiết kiệm hạn mức Meta. Đọc danh sách Page từ Supabase, không gọi Facebook.
+  async function loadLivePages() {
+    try { const rows = await S.q(sb.from('pages').select('id')); S.livePages = new Set((rows || []).map(r => String(r.id))); }
+    catch { S.livePages = new Set(); }
+  }
   function subscribe() {
     if (!S.user) {
       clearTimeout(timer);
+      S.livePages = new Set();
       if (channel) { sb.removeChannel(channel); channel = null; }
       return;
     }
     if (channel) return;
     channel = sb.channel('inbox').on('postgres_changes', { event: '*', schema: 'public', table: 'conversations' }, payload => {
+      const pageId = payload.new?.page_id || payload.old?.page_id;
+      if (App.inbox?.changed) return App.inbox.changed(pageId);
       clearTimeout(timer);
-      timer = setTimeout(() => { if (App.current() === 'inbox' && App.isSelected(payload.new?.page_id)) App.tabs.inbox.refresh(); }, 800);
-    }).subscribe();
+      timer = setTimeout(() => { if (App.current() === 'inbox' && App.isSelected(pageId)) App.tabs.inbox.refresh(); }, 800);
+    }).subscribe(status => {
+      // Chỉ quét thưa khi kênh realtime thật sự hoạt động; mất kết nối thì quay lại chu kỳ thường.
+      if (status === 'SUBSCRIBED') loadLivePages(); else if (['CHANNEL_ERROR', 'TIMED_OUT', 'CLOSED'].includes(status)) S.livePages = new Set();
+    });
   }
 
   // ── Thẻ "Máy chủ bot" trong Cài đặt ───────────────────────
@@ -84,6 +95,7 @@
           const bad = r.pages.filter(p => !p.ok);
           toast(`Đã kết nối ${r.pages.length - bad.length}/${r.pages.length} Page.` + (bad.length ? ` Lỗi: ${bad[0].name}: ${bad[0].error}` : ''), bad.length ? 10000 : 3000);
         } catch (e) { toast(e.message, 6000); }
+        if (channel) loadLivePages();
         drawCard();
       } });
       status.replaceChildren(

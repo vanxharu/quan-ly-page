@@ -124,45 +124,89 @@ App.selected = () => App.pages.filter(p => selected.has(p.id));
 App.isSelected = id => selected.has(String(id));
 App.page = () => App.selected()[0] || App.pages[0];
 App.pageById = id => App.pages.find(p => p.id === String(id));
-// Hạn mức thuộc ứng dụng, không thuộc riêng một avatar. Giữ trạng thái qua F5/tab mới.
+// Hạn mức Meta có hai tầng: cả ứng dụng (mã 4/17/613, x-app-usage) và từng Page (mã 32/800xx, x-business-use-case-usage).
+// Page bị chặn chỉ khoá đúng Page đó; Page khác, đăng nhập và đăng bài vẫn chạy. Giữ trạng thái qua F5/tab mới.
 App.graphTraffic = (() => {
   const key = () => 'graphTrafficV1:' + ($('appId')?.value?.trim() || App.DEFAULT_APP_ID);
   const read = () => { try { return JSON.parse(local.get(key()) || '{}'); } catch { return {}; } };
   const save = value => local.set(key(), JSON.stringify(value));
-  const rateCodes = new Set([4, 17, 32, 613, 80001, 80002, 80004, 80006]);
+  const appCodes = new Set([4, 17, 613]);
+  const pageCodes = new Set([32, 80001, 80002, 80004, 80005, 80006, 80008, 80014]);
+  const rateCodes = new Set([...appCodes, ...pageCodes]);
+  const SLOW_PERCENT = 75, PAUSE = 15 * 60e3;
+  const clock = at => new Date(at).toLocaleTimeString('vi-VN', {hour:'2-digit',minute:'2-digit'});
+  const message = at => 'Meta đang giới hạn yêu cầu của ứng dụng. Web đã tạm dừng gọi Facebook; bạn có thể thử lại sau ' + clock(at) + '. Thời điểm Meta mở lại có thể lâu hơn; không cần đăng nhập liên tục.';
+  const pageMessage = (id, at) => 'Meta đang giới hạn Page ' + (App.pageById?.(id)?.name || id) + '. Tạm dừng gọi Facebook cho Page này đến ' + clock(at) + '; các Page khác vẫn dùng bình thường.';
+  const pageOf = token => { const p = token && (App.pages || []).find(x => x.access_token === token); return p ? String(p.id) : ''; };
+  const pages = s => (s.pages && typeof s.pages === 'object') ? s.pages : (s.pages = {});
+  const percent = u => Math.max(...['call_count','total_cputime','total_time'].map(k => Number(u?.[k]) || 0));
   const until = () => Number(read().until) || 0;
-  const message = at => 'Meta đang giới hạn yêu cầu của ứng dụng. Web đã tạm dừng gọi Facebook; bạn có thể thử lại sau ' + new Date(at).toLocaleTimeString('vi-VN', {hour:'2-digit',minute:'2-digit'}) + '. Thời điểm Meta mở lại có thể lâu hơn; không cần đăng nhập liên tục.';
+  const pageUntil = id => id ? Number(read().pages?.[id]?.until) || 0 : 0;
+  // Mức dùng cao: giãn việc chạy nền (quét hộp thư, avatar) để dành hạn mức cho thao tác người dùng.
+  const slowUntil = id => { const s = read(); return Math.max(Number(s.slowUntil) || 0, id ? Number(s.pages?.[id]?.slowUntil) || 0 : 0); };
   return {
-    until,
-    avatarUntil() { const s=read(), now=Date.now(), calls=(Array.isArray(s.avatarCalls)?s.avatarCalls:[]).filter(at=>Number.isFinite(at)&&at>now-3600e3);return Math.max(Number(s.until)||0,Number(s.avatarUntil)||0,calls.length>=40?calls[0]+3600e3:0); },
-    before(background = false) {
-      const now=Date.now(), s=read();
+    until, pageUntil, slowUntil, pageOf,
+    blockedUntil(id) { return Math.max(until(), pageUntil(id)); },
+    avatarUntil(id) { const s=read(), now=Date.now(), calls=(Array.isArray(s.avatarCalls)?s.avatarCalls:[]).filter(at=>Number.isFinite(at)&&at>now-3600e3);return Math.max(Number(s.until)||0,Number(s.avatarUntil)||0,calls.length>=40?calls[0]+3600e3:0,pageUntil(id),id?slowUntil(id):0); },
+    before(options = {}) {
+      if (typeof options !== 'object') options = { background: options === true };
+      const now=Date.now(), s=read(), id=options.pageId ? String(options.pageId) : '';
       if(Number(s.until)>now)throw Object.assign(Error(message(s.until)),{code:Number(s.code)||4,retryAt:s.until,rateLimited:true});
-      if(!background)return;
+      const p = id && s.pages?.[id];
+      if(p && Number(p.until)>now)throw Object.assign(Error(pageMessage(id,p.until)),{code:Number(p.code)||80001,retryAt:p.until,rateLimited:true,pageId:id});
+      if(options.low){const at=slowUntil(id);if(at>now)throw Object.assign(Error('Đang giãn quét nền vì Page gần chạm hạn mức Meta.'),{code:'BACKGROUND_PAUSED',retryAt:at});}
+      if(!options.background)return;
       const calls=(Array.isArray(s.avatarCalls)?s.avatarCalls:[]).filter(at=>Number.isFinite(at)&&at>now-3600e3);
-      const retryAt=Math.max(Number(s.avatarUntil)||0,calls.length>=40?calls[0]+3600e3:0);
+      const retryAt=Math.max(Number(s.avatarUntil)||0,calls.length>=40?calls[0]+3600e3:0,id?slowUntil(id):0);
       if(retryAt>now)throw Object.assign(Error('Đang tạm nghỉ tải avatar để dành hạn mức cho đăng nhập, tin nhắn và đăng bài.'),{code:'AVATAR_BUDGET',retryAt});
       calls.push(now);save({...s,avatarCalls:calls});
     },
-    observe(res, error) {
-      const now=Date.now(), s=read(), code=Number(error?.code);
+    observe(res, error, pageId = '') {
+      const now=Date.now(), s=read(), code=Number(error?.code), id=pageId ? String(pageId) : '';
+      let changed = false, regainAt = 0;
+      // x-business-use-case-usage: {ID Page/doanh nghiệp: [{type, call_count, total_time, total_cputime, estimated_time_to_regain_access}]}
+      try {
+        const buc = JSON.parse(res.headers?.get?.('x-business-use-case-usage') || '{}');
+        for (const [owner, rows] of Object.entries(buc || {})) for (const row of Array.isArray(rows) ? rows : []) {
+          const target = /^\d+$/.test(owner) ? owner : id;
+          if (!target) continue;
+          const st = pages(s)[target] ||= {}, wait = Number(row?.estimated_time_to_regain_access) || 0;
+          if (wait > 0) { st.until = Math.max(Number(st.until) || 0, now + wait * 60e3); if (target === id) regainAt = Math.max(regainAt, st.until); changed = true; }
+          if (percent(row) >= SLOW_PERCENT) { st.slowUntil = Math.max(Number(st.slowUntil) || 0, now + PAUSE); changed = true; }
+        }
+      } catch {}
       if(rateCodes.has(code)||res.status===429){
         const raw=res.headers?.get?.('retry-after'), seconds=Number(raw), date=Date.parse(raw||'');
         const retry=raw?(Number.isFinite(seconds)?now+Math.max(0,seconds)*1000:date):0;
-        s.until=Math.max(Number(s.until)||0,now+15*60e3,Number.isFinite(retry)?retry:0);s.code=rateCodes.has(code)?code:4;save(s);
+        const safeRetry=Number.isFinite(retry)?retry:0;
+        if (pageCodes.has(code) && id) {
+          const st = pages(s)[id] ||= {};
+          st.until = Math.max(Number(st.until) || 0, regainAt || now + PAUSE, safeRetry); st.code = code; st.slowUntil = Math.max(Number(st.slowUntil) || 0, st.until + PAUSE);
+          save(s);
+          return Object.assign(Error(pageMessage(id, st.until)), { code, retryAt: st.until, rateLimited: true, pageId: id });
+        }
+        s.until=Math.max(Number(s.until)||0,now+PAUSE,safeRetry);s.code=rateCodes.has(code)?code:4;save(s);
         return Object.assign(Error(message(s.until)),{code:s.code,retryAt:s.until,rateLimited:true});
       }
       // Chỉ lưu mức sử dụng; không lưu header thô, token hoặc URL yêu cầu.
-      for(const header of ['x-app-usage','x-page-usage'])try{
-        const usage=JSON.parse(res.headers?.get?.(header)||'{}');
-        if(['call_count','total_cputime','total_time'].some(k=>Number(usage[k])>=80)){s.avatarUntil=Math.max(Number(s.avatarUntil)||0,now+15*60e3);save(s);}
-      }catch{}
+      try { const usage = JSON.parse(res.headers?.get?.('x-app-usage') || '{}');
+        if (percent(usage) >= 80) { s.avatarUntil = Math.max(Number(s.avatarUntil) || 0, now + PAUSE); changed = true; }
+        if (percent(usage) >= SLOW_PERCENT) { s.slowUntil = Math.max(Number(s.slowUntil) || 0, now + PAUSE); changed = true; }
+      } catch {}
+      try { const usage = JSON.parse(res.headers?.get?.('x-page-usage') || '{}');
+        if (percent(usage) >= 80) { s.avatarUntil = Math.max(Number(s.avatarUntil) || 0, now + PAUSE); changed = true; }
+        if (id && percent(usage) >= SLOW_PERCENT) { const st = pages(s)[id] ||= {}; st.slowUntil = Math.max(Number(st.slowUntil) || 0, now + PAUSE); changed = true; }
+      } catch {}
+      // Bỏ bản ghi Page đã hết hạn để localStorage không phình.
+      for (const [pid, st] of Object.entries(s.pages || {})) if (Math.max(Number(st.until) || 0, Number(st.slowUntil) || 0) < now) { delete s.pages[pid]; changed = true; }
+      if (changed) save(s);
       return null;
     }
   };
 })();
 async function api(path, params = {}, method = 'GET', token = App.page()?.access_token, options = {}) {
-  App.graphTraffic.before(options.background === true);
+  const pageId = options.pageId ? String(options.pageId) : App.graphTraffic.pageOf(token);
+  App.graphTraffic.before({ background: options.background === true, low: options.low === true, pageId });
   const url = new URL(path.startsWith('http') ? path : App.GRAPH + path);
   let body;
   const enc = v => typeof v === 'object' ? JSON.stringify(v) : String(v);
@@ -171,7 +215,7 @@ async function api(path, params = {}, method = 'GET', token = App.page()?.access
   else { body = new URLSearchParams(); for (const [k, v] of Object.entries(params)) body.set(k, enc(v)); body.set('access_token', token); }
   const res = await fetch(url, { method, body, ...(options.signal?{signal:options.signal}:{}) });
   const json = await res.json().catch(() => ({ error: { message: `HTTP ${res.status}` } }));
-  const limited=App.graphTraffic.observe(res,json.error);
+  const limited=App.graphTraffic.observe(res,json.error,pageId);
   if(limited)throw limited;
   if (json.error) throw Object.assign(new Error(json.error.error_user_msg || json.error.message), { code: json.error.code, sub: json.error.error_subcode });
   return json;
@@ -494,7 +538,7 @@ async function automaticCustomerEvidence(page,id,force=false){
   const result={at:Date.now(),signature,conversationId:ctx?.conversationId||'',links:new Set(),ids:new Set(ctx?.senderIds||[]),avatar:''};
   if(ctx?.profileLink)result.links.add(ctx.profileLink);
   // Dùng bằng chứng đã có, không tiếp tục dò Graph khi đang phải nghỉ tải ảnh.
-  if((App.graphTraffic?.avatarUntil?.()||0)>Date.now())return result;
+  if((App.graphTraffic?.avatarUntil?.(page.id)||0)>Date.now())return result;
   const mayTryFields=error=>!error.rateLimited&&error.code!=='AVATAR_BUDGET'&&Number(error.code)!==3&&!(Number(error.code)===100&&Number(error.sub??error.error_subcode)===33);
   const acceptProfile=profile=>{if(!/^\d{5,30}$/.test(String(profile?.id||'')))return;result.ids.add(String(profile.id));const link=facebookCustomerLink(profile.link);if(link)result.links.add(link);if(profile.picture?.data?.is_silhouette===false)result.avatar=profile.picture.data.url;};
   try{acceptProfile(await avatarRequest(page,id,'/'+encodeURIComponent(id),{fields:'id,link,picture.width(128).height(128)'},'GET'));}
@@ -539,7 +583,7 @@ App.customerPics = async (page, psids, { force = false, onResult, onIdentity } =
   const writes=[],publicTasks=[],publicWaiters=[];let publicActive=0;
   const save = (id,url,profile) => {
     const key=page.id+':'+id;changes[key]={url,at:Date.now()};emit(id,url);
-    const retryAt=App.graphTraffic?.avatarUntil?.()||0;if(!url&&retryAt>Date.now())changes[key].retryAt=retryAt;
+    const retryAt=App.graphTraffic?.avatarUntil?.(page.id)||0;if(!url&&retryAt>Date.now())changes[key].retryAt=retryAt;
     if(url)customerIdentityStatus.delete(key);
     if(profile){identityChanges[key]=profile;onIdentity?.(id,profile);writes.push(rememberCustomerIdentities({[key]:profile}));}
     const snapshot={...changes[key]};const write=avatarWrites.catch(()=>{}).then(async()=>{const latest=await DB.get('avatarCacheV7',{});await DB.set('avatarCacheV7',{...latest,[key]:snapshot});});avatarWrites=write;writes.push(write);
