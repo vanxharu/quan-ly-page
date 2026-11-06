@@ -358,7 +358,7 @@ const customerContexts = new Map(), customerEvidence = new Map(), dirtyCustomerE
 const avatarDiagnostics = new Map(), avatarReportTimers = new Map();
 function recordAvatarDiagnostic(page,id,hasPhoto,error,stage=''){
   const key=page.id+':'+id,row=avatarDiagnostics.get(key)||{pageId:String(page.id),id:String(id),hasPhoto:false,errors:[]};
-  if(typeof hasPhoto==='boolean')row.hasPhoto=hasPhoto;
+  if(typeof hasPhoto==='boolean')row.hasPhoto=hasPhoto;if(stage)row.stage=stage;row.updatedAt=Date.now();
   const text=value=>{let result=String(value||'');if(page.access_token)result=result.split(page.access_token).join('[ẩn]');return result.replace(/https?:\/\/\S+/gi,'[link]').replace(/(?:access_token|authorization|cookie|token)\s*[:=]\s*[^\s,;]+/gi,'[ẩn]').replace(/EA[A-Za-z0-9_-]{20,}/g,'[ẩn]').slice(0,120);};
   if(error){const item={stage:text(stage),code:text(error.code),subcode:text(error.error_subcode??error.sub),message:text(error.message||'Không có phản hồi ảnh.')};if(!row.errors.some(e=>JSON.stringify(e)===JSON.stringify(item)))row.errors.push(item);row.errors=row.errors.slice(-8);}
   avatarDiagnostics.set(key,row);if(avatarDiagnostics.size>2000)avatarDiagnostics.delete(avatarDiagnostics.keys().next().value);
@@ -369,8 +369,11 @@ function recordAvatarDiagnostic(page,id,hasPhoto,error,stage=''){
     App.reportCustomerAvatarDiagnostics(String(page.id),items).catch(()=>{});
   },1500));
 }
+App.customerAvatarDiagnostic = () => ({capturedAt:new Date().toISOString(),sourceVersion:'avatar-diagnostic3',transport:App.avatarDiagnosticTransport||{ok:false,error:'Chưa gửi báo lỗi qua tiện ích.'},items:[...avatarDiagnostics.values()].map(row=>({...row,errors:row.errors.map(e=>({...e}))}))});
+App.flushCustomerAvatarDiagnostics=()=>{for(const row of avatarDiagnostics.values())recordAvatarDiagnostic({id:row.pageId},row.id,row.hasPhoto);};
 App.noteCustomerAvatarImageError=(page,id)=>recordAvatarDiagnostic(page,String(id),false,Error('Ảnh đã có URL nhưng trình duyệt tải thất bại.'),'image_load');
 async function avatarRequest(page,id,path,params={},method='GET'){
+  recordAvatarDiagnostic(page,id,null,null,params.fields||'picture');
   try{return await api(path,params,method,page.access_token);}
   catch(error){recordAvatarDiagnostic(page,id,null,error,params.fields||'picture');throw error;}
 }

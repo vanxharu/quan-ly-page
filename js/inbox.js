@@ -50,7 +50,8 @@
           h('div', { className: 'row', style: 'margin:10px 0;gap:6px' },
             h('div', { className: 'chips', id: 'ibFilter' }, ...[['all', 'Tất cả'], ['unread', 'Chưa đọc'], ['unanswered', 'Chưa trả lời'], ['today', 'Hôm nay']].map(([f, t]) =>
               h('button', { className: 'chip', dataset: { f }, textContent: t, 'aria-pressed': String(f === S.filter), onclick: () => { S.filter = f; drawList(); } }))),
-            h('select', { id: 'ibLabel', style: 'width:auto;padding:4px 8px;font-size:12px', onchange: () => drawList() })),
+            h('select', { id: 'ibLabel', style: 'width:auto;padding:4px 8px;font-size:12px', onchange: () => drawList() }),
+            h('button',{type:'button',className:'btn btn-ghost btn-sm',textContent:'Báo lỗi ảnh',title:'Tải báo lỗi ảnh khách trên phiên hiện tại',onclick:downloadAvatarDiagnostic})),
           h('div', { className: 'list', id: 'ibList' }),
           h('button', { type: 'button', className: 'btn btn-ghost btn-sm', id: 'ibMore', hidden: true, textContent: 'Tải thêm hội thoại', onclick: loadMore })),
         h('div', { className: 'card' },
@@ -129,6 +130,15 @@
       S.convs = [...new Map([...S.extra.values(), ...S.convs].map(c => [c.id, c])).values()].sort((a, b) => new Date(b.updated_time) - new Date(a.updated_time));
       queuePics(S.convs); await drawList();
     } finally { S.moreBusy = false; $('ibMore').disabled = false; $('ibMore').textContent = 'Tải thêm hội thoại'; }
+  }
+  function downloadAvatarDiagnostic(){
+    const report=App.customerAvatarDiagnostic?.()||{capturedAt:new Date().toISOString(),items:[]};
+    const redact=value=>{let text=String(value||'');for(const page of App.pages||[])if(page.access_token)text=text.split(page.access_token).join('[ẩn]');return text.replace(/https?:\/\/\S+/gi,'[link]').replace(/(?:access_token|authorization|cookie|token)\s*[:=]\s*[^\s,;]+/gi,'[ẩn]').replace(/EA[A-Za-z0-9_-]{20,}/g,'[ẩn]').slice(0,300);};
+    if(report.transport?.error)report.transport={...report.transport,error:redact(report.transport.error)};
+    report.visibleCustomers=S.convs.filter(c=>c.other?.id).slice(0,150).map(c=>({pageId:String(c.page.id),id:String(c.other.id),hasPhoto:S.pics.has(pictureKey(c)),identityError:redact(App.customerIdentityStatus?.get(pictureKey(c)))}));
+    const url=URL.createObjectURL(new Blob([JSON.stringify(report,null,2)],{type:'application/json'}));
+    const link=h('a',{href:url,download:'meta-assistant-avatar-diagnostic.json'});document.body.append(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);
+    toast('Đã tải báo lỗi ảnh khách.');
   }
   const pictureKey = c => c.page.id + ':' + c.other.id;
   const failedPictures = new Set(), pictureLoads = new Map(), pictureChecked = new Map();

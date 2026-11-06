@@ -8,7 +8,10 @@
     const id=uid('ai');const timeout=setTimeout(()=>{pending.delete(id);reject(Error(type==='CUSTOMER_PROFILE'?'Cần cập nhật tiện ích và bộ kết nối Windows để xác minh UID.':'Cần tiện ích 2.4.6 để tạo từng bài và lưu chờ duyệt. Cập nhật tiện ích rồi tải lại trang.'));},waitMs);
     pending.set(id,{resolve,reject,timeout});window.postMessage({source:'META_ASSISTANT_AI_V106',type,id,payload},location.origin);
   });
-  App.reportCustomerAvatarDiagnostics = (pageId,items) => send('CUSTOMER_AVATAR_REPORT',{pageId,items},10000);
+  App.reportCustomerAvatarDiagnostics = async (pageId,items) => {
+    try{const result=await send('CUSTOMER_AVATAR_REPORT',{pageId,items},10000);App.avatarDiagnosticTransport={ok:true,at:Date.now()};return result;}
+    catch(error){App.avatarDiagnosticTransport={ok:false,at:Date.now(),error:String(error.message||'Không gửi được báo lỗi.')};throw error;}
+  };
   App.lookupKnownCustomerProfiles = async ids => (await send('CUSTOMER_PROFILES',{ids},15000)).profiles||[];
   App.lookupCustomerProfile = async (profile,force=false) => (await send('CUSTOMER_PROFILE',{profile,force},90000)).profile;
   const safePosts=posts=>(Array.isArray(posts)?posts:[]).slice(0,6).filter(p=>p&&typeof p.key==='string').map(p=>({
@@ -64,7 +67,7 @@
       const p=pending.get(m.id);clearTimeout(p.timeout);pending.delete(m.id);m.ok?p.resolve(m):p.reject(Error(m.error||'Tiện ích chưa sẵn sàng.'));return;
     }
     if(m.type==='THEME_CHANGED'){setDark(m.theme==='dark');return;}
-    if(m.type==='BRIDGE_READY'){bridgeOffline=false;bridgeNoticeShown=false;window.dispatchEvent(new Event('customer-avatars-ready'));queueCatalog();importPanel().catch(()=>{});return;}
+    if(m.type==='BRIDGE_READY'){bridgeOffline=false;bridgeNoticeShown=false;App.flushCustomerAvatarDiagnostics?.();window.dispatchEvent(new Event('customer-avatars-ready'));queueCatalog();importPanel().catch(()=>{});return;}
     if(m.type==='PANEL_IMPORT_READY')await importPanel();
   });
   function overview(host,mode){
