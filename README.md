@@ -32,3 +32,6 @@ Cập nhật 2.4.3 phân biệt phiên bản tệp đã cài, bộ nền đang c
 
 
 KẾT NỐI 2.4.5: khi cập nhật/nạp lại tiện ích, bộ nền kiểm tra cầu nối của các tab Meta Assistant. Tab mất cầu nối hoặc còn bản cầu nối cũ được tải lại tự động để nạp kết nối mới; tab đang kết nối và tab GPT được giữ. Có giới hạn chống tải lại liên tục, giữ nháp đã lưu trong web/tiện ích. Web tạm dừng yêu cầu khi kết nối mất, chỉ báo một lần và tự tiếp tục nhận bài/ảnh khi cầu nối mới sẵn sàng.
+
+
+Avatar hộp thư: giữ bằng chứng ID người gửi từ lịch sử đầy đủ khi làm mới danh sách chỉ có một tin cuối; bằng chứng mới bỏ thời gian chờ của ảnh lỗi và được thử lại sau yêu cầu đang chạy. Tách đọc trường ảnh/link và người tham gia/người gửi khi một trường không được cấp quyền. Thử ảnh từ ID người gửi trong đúng hội thoại trước trang công khai; không tìm hay ghép khách theo tên. Chỉ sửa web, dùng với tiện ích 2.4.5 hiện có.

@@ -15,7 +15,7 @@
   const settings = async () => InboxRules.withDefaults(await DB.get(InboxRules.SETTINGS_KEY));
   const normalizeConversation = (page, c) => {
     const other = c.participants?.data?.find(u => String(u.id) !== String(page.id)) || {};
-    App.noteCustomerConversation?.(page,c,other);
+    if(App.noteCustomerConversation?.(page,c,other))refreshPictureEvidence({page,other});
     const last = c.messages?.data?.[0];
     return { ...c, page, other, fromCustomer: last ? last.from?.id !== page.id : true,
       lastAt: new Date(last?.created_time || c.updated_time).getTime(), key: App.crmKey(page.id, other.name) };
@@ -174,6 +174,13 @@
     }
     await Promise.all([pool(tasks, 3, task => task()), ...waiting]);
   }
+  function refreshPictureEvidence(c) {
+    const key=pictureKey(c);if(S.pics.has(key))return;
+    pictureChecked.delete(key);
+    // Dữ liệu mới đến khi lượt cũ còn chạy: thử lại ngay sau lượt đó, không mất tín hiệu.
+    const pending=pictureLoads.get(key);
+    if(pending)pending.finally(()=>{if(S.pics.has(key))return;pictureChecked.delete(key);queuePics([c]);});
+  }
   function retryPicture(c, url) {
     const key = pictureKey(c) + ':' + url;
     if (!url || failedPictures.has(key)) return;
@@ -279,7 +286,7 @@
       if (!res) return;
       if (S.conv !== c) return;
       const msgs = (res.messages?.data || []).reverse();
-      App.noteCustomerConversation?.(c.page,{...c,messages:{data:msgs}},c.other);
+      if(App.noteCustomerConversation?.(c.page,{...c,messages:{data:msgs}},c.other))refreshPictureEvidence(c);
       queuePics([c]);
       const thread = $('ibThread'), oldTop = thread.scrollTop;
       const atBottom = thread.scrollHeight - thread.clientHeight - oldTop < 70;

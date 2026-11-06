@@ -354,7 +354,7 @@ async function rememberCustomerIdentities(changes){
   const write=identityWrites.catch(()=>{}).then(async()=>DB.set('customerIdentitiesV1',{...await DB.get('customerIdentitiesV1',{}),...changes}));identityWrites=write;await write;
 }
 App.customerIdentity = async (page,id) => (await DB.get('customerIdentitiesV1',{}))[page.id+':'+id];
-const customerContexts = new Map(), customerEvidence = new Map();
+const customerContexts = new Map(), customerEvidence = new Map(), dirtyCustomerEvidence = new Set();
 function facebookCustomerLink(value){
   try{const u=new URL(value);if(u.protocol!=='https:'||!['www.facebook.com','facebook.com','m.facebook.com'].includes(u.hostname)||u.username||u.password)return '';
     const p=u.pathname.replace(/^\/+|\/+$/g,'');
@@ -367,7 +367,11 @@ App.noteCustomerConversation = (page,c,other) => {
   if(!other?.id)return;const participants=(c.participants?.data||[]).filter(p=>String(p.id)!==String(page.id));
   if(participants.length!==1||String(participants[0].id)!==String(other.id))return;
   const ids=[...new Set((c.messages?.data||[]).map(m=>String(m.from?.id||'')).filter(id=>/^\d{5,30}$/.test(id)&&id!==String(page.id)))];
-  customerContexts.set(page.id+':'+other.id,{conversationId:String(c.id||''),profileLink:facebookCustomerLink(other.link||other.profile_url),senderIds:ids.length===1?ids:[]});
+  const key=page.id+':'+other.id,previous=customerContexts.get(key),conversationId=String(c.id||previous?.conversationId||'');
+  const same=previous&&previous.conversationId===conversationId;
+  const next={conversationId,profileLink:facebookCustomerLink(other.link||other.profile_url)||(same?previous.profileLink:''),senderIds:ids.length===1?ids:(!ids.length&&same?previous.senderIds:[])};
+  if(JSON.stringify(previous)===JSON.stringify(next))return false;
+  customerContexts.set(key,next);customerEvidence.delete(key);dirtyCustomerEvidence.add(key);return true;
 };
 async function automaticCustomerEvidence(page,id,force=false){
   const key=page.id+':'+id,ctx=customerContexts.get(key),cached=customerEvidence.get(key);
@@ -375,11 +379,16 @@ async function automaticCustomerEvidence(page,id,force=false){
   if(!force&&cached&&Date.now()-cached.at<600e3&&cached.signature===signature)return cached;
   const result={at:Date.now(),signature,conversationId:ctx?.conversationId||'',links:new Set(),ids:new Set(ctx?.senderIds||[]),avatar:''};
   if(ctx?.profileLink)result.links.add(ctx.profileLink);
-  try{const profile=await api('/'+encodeURIComponent(id),{fields:'id,link,picture.width(128).height(128)'},'GET',page.access_token);
-    if(/^\d{5,30}$/.test(String(profile.id||''))){result.ids.add(String(profile.id));const link=facebookCustomerLink(profile.link);if(link)result.links.add(link);if(profile.picture?.data?.is_silhouette===false)result.avatar=profile.picture.data.url;}
-  }catch(error){reportAvatarError(error);}
+  const acceptProfile=profile=>{if(!/^\d{5,30}$/.test(String(profile?.id||'')))return;result.ids.add(String(profile.id));const link=facebookCustomerLink(profile.link);if(link)result.links.add(link);if(profile.picture?.data?.is_silhouette===false)result.avatar=profile.picture.data.url;};
+  try{acceptProfile(await api('/'+encodeURIComponent(id),{fields:'id,link,picture.width(128).height(128)'},'GET',page.access_token));}
+  catch(error){reportAvatarError(error);
+    // Một trường không được cấp quyền không được làm mất trường ảnh/link vẫn đọc được.
+    for(const fields of ['id,picture.width(128).height(128)','id,link'])try{acceptProfile(await api('/'+encodeURIComponent(id),{fields},'GET',page.access_token));}catch(e){reportAvatarError(e);}
+  }
   if(ctx?.conversationId)try{
-    const thread=await api('/'+encodeURIComponent(ctx.conversationId),{fields:'id,participants,senders,link'},'GET',page.access_token);
+    let thread;
+    try{thread=await api('/'+encodeURIComponent(ctx.conversationId),{fields:'id,participants,senders,link'},'GET',page.access_token);}
+    catch(error){reportAvatarError(error);thread=await api('/'+encodeURIComponent(ctx.conversationId),{fields:'id,participants'},'GET',page.access_token);try{const extra=await api('/'+encodeURIComponent(ctx.conversationId),{fields:'id,senders'},'GET',page.access_token);if(!extra.id||String(extra.id)===ctx.conversationId)thread={...thread,senders:extra.senders};}catch(e){reportAvatarError(e);}}
     const others=(thread.participants?.data||[]).filter(p=>String(p.id)!==String(page.id));
     if(others.length===1&&(!thread.id||String(thread.id)===ctx.conversationId)){
       if(/^\d{5,30}$/.test(String(others[0].id)))result.ids.add(String(others[0].id));
@@ -399,7 +408,8 @@ App.customerPics = async (page, psids, { force = false, onResult, onIdentity } =
   for (const id of new Set(psids.filter(Boolean).map(String).filter(id => /^\d+$/.test(id)))) {
     const c = cache[page.id + ':' + id];
     if(identities[page.id+':'+id])onIdentity?.(id,identities[page.id+':'+id]);
-    if (!force && c && Date.now() - c.at < (c.url ? PIC_TTL : 60e3)) emit(id, safeURL(c.url)); else need.push(id);
+    const evidenceChanged=dirtyCustomerEvidence.delete(page.id+':'+id);
+    if (!force && c && (c.url||!evidenceChanged) && Date.now() - c.at < (c.url ? PIC_TTL : 60e3)) emit(id, safeURL(c.url)); else need.push(id);
   }
   const knownTargets=[...new Set([...need,...[...out].filter(([,url])=>!url).map(([id])=>id)])];
   if(knownTargets.length&&typeof App.lookupKnownCustomerProfiles==='function')try{
@@ -435,13 +445,19 @@ App.customerPics = async (page, psids, { force = false, onResult, onIdentity } =
     } catch (error) { reportAvatarError(error); }
   }
   await pool(need.filter(id=>!out.get(id)),4,async id=>{
-    try{const profile=await api('/'+encodeURIComponent(id),{fields:'first_name,last_name,profile_pic'},'GET',page.access_token);const url=safeURL(profile.profile_pic);if(url){changes[page.id+':'+id]={url,at:Date.now()};emit(id,url);}}catch(error){reportAvatarError(error);}
+    try{const profile=await api('/'+encodeURIComponent(id),{fields:'profile_pic'},'GET',page.access_token);const url=safeURL(profile.profile_pic);if(url){changes[page.id+':'+id]={url,at:Date.now()};emit(id,url);}}catch(error){reportAvatarError(error);}
   });
   if(typeof App.lookupCustomerProfile==='function')await pool(need.filter(id=>!out.get(id)),2,async id=>{
     const key=page.id+':'+id;
     try {
       const saved=identities[key],evidence=await automaticCustomerEvidence(page,id,force);
-      const graphPhoto=safeURL(evidence.avatar);if(graphPhoto){changes[key]={url:graphPhoto,at:Date.now()};emit(id,graphPhoto);return;}
+      const graphPhoto=safeURL(evidence.avatar);if(graphPhoto){changes[key]={url:graphPhoto,at:Date.now()};customerIdentityStatus.delete(key);emit(id,graphPhoto);return;}
+      // Thử ID người gửi mà Facebook trả cho chính hội thoại này, không tìm theo tên.
+      for(const senderId of evidence.ids){if(senderId===id||senderId===String(page.id))continue;let photo='';
+        try{const picture=await api(App.customerAvatarLink(senderId),{},'GET',page.access_token);if(picture.data?.is_silhouette===false)photo=safeURL(picture.data.url);}catch(error){reportAvatarError(error);}
+        if(!photo)try{const profile=await api('/'+encodeURIComponent(senderId),{fields:'profile_pic'},'GET',page.access_token);if(!profile.id||String(profile.id)===senderId)photo=safeURL(profile.profile_pic);}catch(error){reportAvatarError(error);}
+        if(photo){changes[key]={url:photo,at:Date.now()};customerIdentityStatus.delete(key);emit(id,photo);return;}
+      }
       const candidates=saved?[{target:saved.profileUrl,linked:true}]:[...evidence.links].map(target=>({target,linked:true})).concat([...new Set([id,...evidence.ids])].map(target=>({target,linked:false})));
       let profile,lastError;
       for(const candidate of candidates){try{const found=publicIdentity(await App.lookupCustomerProfile(candidate.target,force));
