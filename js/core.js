@@ -124,7 +124,45 @@ App.selected = () => App.pages.filter(p => selected.has(p.id));
 App.isSelected = id => selected.has(String(id));
 App.page = () => App.selected()[0] || App.pages[0];
 App.pageById = id => App.pages.find(p => p.id === String(id));
+// Hạn mức thuộc ứng dụng, không thuộc riêng một avatar. Giữ trạng thái qua F5/tab mới.
+App.graphTraffic = (() => {
+  const key = () => 'graphTrafficV1:' + ($('appId')?.value?.trim() || App.DEFAULT_APP_ID);
+  const read = () => { try { return JSON.parse(local.get(key()) || '{}'); } catch { return {}; } };
+  const save = value => local.set(key(), JSON.stringify(value));
+  const rateCodes = new Set([4, 17, 32, 613, 80001, 80002, 80004, 80006]);
+  const until = () => Number(read().until) || 0;
+  const message = at => 'Meta đang giới hạn yêu cầu của ứng dụng. Web đã tạm dừng gọi Facebook; bạn có thể thử lại sau ' + new Date(at).toLocaleTimeString('vi-VN', {hour:'2-digit',minute:'2-digit'}) + '. Thời điểm Meta mở lại có thể lâu hơn; không cần đăng nhập liên tục.';
+  return {
+    until,
+    avatarUntil() { const s=read(), now=Date.now(), calls=(Array.isArray(s.avatarCalls)?s.avatarCalls:[]).filter(at=>Number.isFinite(at)&&at>now-3600e3);return Math.max(Number(s.until)||0,Number(s.avatarUntil)||0,calls.length>=40?calls[0]+3600e3:0); },
+    before(background = false) {
+      const now=Date.now(), s=read();
+      if(Number(s.until)>now)throw Object.assign(Error(message(s.until)),{code:Number(s.code)||4,retryAt:s.until,rateLimited:true});
+      if(!background)return;
+      const calls=(Array.isArray(s.avatarCalls)?s.avatarCalls:[]).filter(at=>Number.isFinite(at)&&at>now-3600e3);
+      const retryAt=Math.max(Number(s.avatarUntil)||0,calls.length>=40?calls[0]+3600e3:0);
+      if(retryAt>now)throw Object.assign(Error('Đang tạm nghỉ tải avatar để dành hạn mức cho đăng nhập, tin nhắn và đăng bài.'),{code:'AVATAR_BUDGET',retryAt});
+      calls.push(now);save({...s,avatarCalls:calls});
+    },
+    observe(res, error) {
+      const now=Date.now(), s=read(), code=Number(error?.code);
+      if(rateCodes.has(code)||res.status===429){
+        const raw=res.headers?.get?.('retry-after'), seconds=Number(raw), date=Date.parse(raw||'');
+        const retry=raw?(Number.isFinite(seconds)?now+Math.max(0,seconds)*1000:date):0;
+        s.until=Math.max(Number(s.until)||0,now+15*60e3,Number.isFinite(retry)?retry:0);s.code=rateCodes.has(code)?code:4;save(s);
+        return Object.assign(Error(message(s.until)),{code:s.code,retryAt:s.until,rateLimited:true});
+      }
+      // Chỉ lưu mức sử dụng; không lưu header thô, token hoặc URL yêu cầu.
+      for(const header of ['x-app-usage','x-page-usage'])try{
+        const usage=JSON.parse(res.headers?.get?.(header)||'{}');
+        if(['call_count','total_cputime','total_time'].some(k=>Number(usage[k])>=80)){s.avatarUntil=Math.max(Number(s.avatarUntil)||0,now+15*60e3);save(s);}
+      }catch{}
+      return null;
+    }
+  };
+})();
 async function api(path, params = {}, method = 'GET', token = App.page()?.access_token, options = {}) {
+  App.graphTraffic.before(options.background === true);
   const url = new URL(path.startsWith('http') ? path : App.GRAPH + path);
   let body;
   const enc = v => typeof v === 'object' ? JSON.stringify(v) : String(v);
@@ -133,6 +171,8 @@ async function api(path, params = {}, method = 'GET', token = App.page()?.access
   else { body = new URLSearchParams(); for (const [k, v] of Object.entries(params)) body.set(k, enc(v)); body.set('access_token', token); }
   const res = await fetch(url, { method, body, ...(options.signal?{signal:options.signal}:{}) });
   const json = await res.json().catch(() => ({ error: { message: `HTTP ${res.status}` } }));
+  const limited=App.graphTraffic.observe(res,json.error);
+  if(limited)throw limited;
   if (json.error) throw Object.assign(new Error(json.error.error_user_msg || json.error.message), { code: json.error.code, sub: json.error.error_subcode });
   return json;
 }
@@ -229,11 +269,23 @@ setDark(local.get('darkMode') ? local.get('darkMode') === '1' : matchMedia('(pre
 $('btnDark').onclick = () => setDark(!document.body.classList.contains('dark-mode'));
 
 // ── Đăng nhập ──────────────────────────────────────────────
+let loginInFlight = null, loginPrompt = false, loginCooldownTimer;
+function syncLoginCooldown() {
+  clearTimeout(loginCooldownTimer);
+  const blocked = App.graphTraffic.until() > Date.now();
+  $('fbLogin').disabled = blocked || !!loginInFlight || loginPrompt || !window.FB;
+  $('useToken').disabled = blocked || !!loginInFlight || loginPrompt;
+  if(blocked){
+    try{App.graphTraffic.before();}catch(error){$('loginStatus').textContent=error.message;}
+    loginCooldownTimer=setTimeout(syncLoginCooldown,1000);
+  }
+}
 function loadSdk(appId) {
   if (!/^\d+$/.test(appId)) return;
   window.fbAsyncInit = () => {
     FB.init({ appId, version: App.VERSION });
-    $('fbLogin').disabled = false;
+    syncLoginCooldown();
+    if(App.graphTraffic.until()>Date.now())return;
     $('loginStatus').textContent = 'Phiên đăng nhập được ghi nhớ trên trình duyệt này. Bấm Đăng xuất để xoá phiên.';
     // Tự vào bằng phiên Facebook sẵn có (SDK cấp token mới), trừ khi người dùng vừa bấm Đăng xuất.
     if (local.get('autoLogin') !== '0' && !App.pages.length) {
@@ -244,7 +296,7 @@ function loadSdk(appId) {
         else $('loginStatus').textContent = 'Bấm nút để đăng nhập.';
       }, true);
       // Ưu tiên token đã lưu (Facebook Login for Business thường không báo "connected" sau khi tải lại trang).
-      if (saved) start(saved).then(ok => { if (!ok) viaSdk(); }); else viaSdk();
+      if (saved) start(saved).then(ok => { if (!ok && [102,190].includes(Number(start.lastError?.code))) viaSdk(); }); else viaSdk();
     }
   };
   if (window.FB) return window.fbAsyncInit();
@@ -255,19 +307,44 @@ $('appId').value = local.get('appId') || App.DEFAULT_APP_ID;
 loadSdk($('appId').value);
 $('saveApp').onclick = () => { local.set('appId', $('appId').value.trim()); loadSdk($('appId').value.trim()); };
 $('fbLogin').onclick = () => {
+  if(loginInFlight||loginPrompt||App.graphTraffic.until()>Date.now()){syncLoginCooldown();return;}
   local.set('autoLogin', '1');
-  FB.login(r => r.authResponse ? start(r.authResponse.accessToken) : ($('loginStatus').textContent = 'Đăng nhập bị huỷ.'), { config_id: App.CONFIG_ID });
+  loginPrompt=true;syncLoginCooldown();
+  const finish=r=>{
+    loginPrompt=false;
+    if(r.authResponse)start(r.authResponse.accessToken);
+    else{
+      const error=r.error||{};const limited=App.graphTraffic.observe({status:200},error);
+      $('loginStatus').textContent=limited?.message||error.message||'Đăng nhập bị huỷ.';
+    }
+    syncLoginCooldown();
+  };
+  try{FB.login(finish,{config_id:App.CONFIG_ID});}catch(error){finish({error});}
 };
 $('useToken').onclick = () => start($('token').value.trim());
 // Chỉ thoát khỏi trang, không gọi FB.logout (sẽ đăng xuất luôn facebook.com).
 $('btnLogout').onclick = () => { local.set('autoLogin', '0'); local.set('fbTok', ''); location.reload(); };
 
-async function start(userToken) {
+function start(userToken) {
+  if(loginInFlight)return loginInFlight;
+  if(App.pages.length)return Promise.resolve(true);
+  start.lastError=null;
+  loginInFlight=startSession(userToken).finally(()=>{loginInFlight=null;syncLoginCooldown();});
+  syncLoginCooldown();
+  return loginInFlight;
+}
+async function startSession(userToken) {
   $('loginStatus').textContent = 'Đang tải danh sách Page…';
   try {
     App.pages = await apiPaged('/me/accounts', { fields: 'id,name,access_token,picture.width(64){url}', limit: 100 }, userToken, 3);
     if (!App.pages.length) throw new Error('Tài khoản không quản lý Page nào, hoặc chưa cấp quyền pages_show_list.');
-  } catch (e) { $('loginStatus').textContent = `Lỗi: ${e.message}`; local.set('fbTok', ''); return false; }
+  } catch (e) {
+    start.lastError=e;$('loginStatus').textContent = `Lỗi: ${e.message}`;
+    // Hết hạn mức không làm token mất hiệu lực. Chỉ xoá phiên khi Meta báo token sai/hết hạn.
+    if([102,190].includes(Number(e.code)))local.set('fbTok','');
+    else if(e.rateLimited)local.set('fbTok',userToken);
+    return false;
+  }
   local.set('fbTok', userToken);
   $('token').value = '';
   App.userToken = userToken; // dùng để kết nối Page với máy chủ bot
@@ -341,6 +418,7 @@ App.avatar = (name, url, size = 36, onError) => {
 };
 // Ảnh khách Messenger: lấy bằng link picture của đúng ID khách và Page; không đưa token vào img.src.
 const PIC_TTL = 3 * 864e5;
+const MISSING_PIC_TTL = 6 * 3600e3;
 const avatarWarnings = new Set();
 function reportAvatarError(error) {
   const detail = JSON.stringify({ code: error.code, subcode: error.error_subcode ?? error.sub, message: String(error.message || 'Phản hồi ảnh không hợp lệ.').replace(/access_token=[^&\s]+/g, 'access_token=[ẩn]') });
@@ -387,7 +465,7 @@ async function avatarRequest(page,id,path,params={},method='GET'){
   recordAvatarDiagnostic(page,id,null,null,params.fields||'picture');
   const controller=typeof AbortController==='function'?new AbortController():null;
   const timer=controller?setTimeout(()=>controller.abort(),12000):null;
-  try{return await api(path,params,method,page.access_token,controller?{signal:controller.signal}:{});}
+  try{return await api(path,params,method,page.access_token,{background:true,...(controller?{signal:controller.signal}:{})});}
   catch(error){if(controller?.signal.aborted)error=Object.assign(Error('Facebook chưa phản hồi ảnh sau 12 giây; đang thử nguồn khác.'),{code:'AVATAR_TIMEOUT'});recordAvatarDiagnostic(page,id,null,error,params.fields||'picture');throw error;}
   finally{if(timer!==null)clearTimeout(timer);}
 }
@@ -415,16 +493,19 @@ async function automaticCustomerEvidence(page,id,force=false){
   if(!force&&cached&&Date.now()-cached.at<600e3&&cached.signature===signature)return cached;
   const result={at:Date.now(),signature,conversationId:ctx?.conversationId||'',links:new Set(),ids:new Set(ctx?.senderIds||[]),avatar:''};
   if(ctx?.profileLink)result.links.add(ctx.profileLink);
+  // Dùng bằng chứng đã có, không tiếp tục dò Graph khi đang phải nghỉ tải ảnh.
+  if((App.graphTraffic?.avatarUntil?.()||0)>Date.now())return result;
+  const mayTryFields=error=>!error.rateLimited&&error.code!=='AVATAR_BUDGET'&&Number(error.code)!==3&&!(Number(error.code)===100&&Number(error.sub??error.error_subcode)===33);
   const acceptProfile=profile=>{if(!/^\d{5,30}$/.test(String(profile?.id||'')))return;result.ids.add(String(profile.id));const link=facebookCustomerLink(profile.link);if(link)result.links.add(link);if(profile.picture?.data?.is_silhouette===false)result.avatar=profile.picture.data.url;};
   try{acceptProfile(await avatarRequest(page,id,'/'+encodeURIComponent(id),{fields:'id,link,picture.width(128).height(128)'},'GET'));}
   catch(error){reportAvatarError(error);
     // Một trường không được cấp quyền không được làm mất trường ảnh/link vẫn đọc được.
-    for(const fields of ['id,picture.width(128).height(128)','id,link'])try{acceptProfile(await avatarRequest(page,id,'/'+encodeURIComponent(id),{fields},'GET'));}catch(e){reportAvatarError(e);}
+    if(mayTryFields(error))for(const fields of ['id,picture.width(128).height(128)','id,link'])try{acceptProfile(await avatarRequest(page,id,'/'+encodeURIComponent(id),{fields},'GET'));}catch(e){reportAvatarError(e);if(!mayTryFields(e))break;}
   }
   if(ctx?.conversationId)try{
     let thread;
     try{thread=await avatarRequest(page,id,'/'+encodeURIComponent(ctx.conversationId),{fields:'id,participants,senders,link'},'GET');}
-    catch(error){reportAvatarError(error);thread=await avatarRequest(page,id,'/'+encodeURIComponent(ctx.conversationId),{fields:'id,participants'},'GET');try{const extra=await avatarRequest(page,id,'/'+encodeURIComponent(ctx.conversationId),{fields:'id,senders'},'GET');if(!extra.id||String(extra.id)===ctx.conversationId)thread={...thread,senders:extra.senders};}catch(e){reportAvatarError(e);}}
+    catch(error){reportAvatarError(error);if(!mayTryFields(error))throw error;thread=await avatarRequest(page,id,'/'+encodeURIComponent(ctx.conversationId),{fields:'id,participants'},'GET');try{const extra=await avatarRequest(page,id,'/'+encodeURIComponent(ctx.conversationId),{fields:'id,senders'},'GET');if(!extra.id||String(extra.id)===ctx.conversationId)thread={...thread,senders:extra.senders};}catch(e){reportAvatarError(e);}}
     const others=(thread.participants?.data||[]).filter(p=>String(p.id)!==String(page.id));
     if(others.length===1&&(!thread.id||String(thread.id)===ctx.conversationId)){
       if(/^\d{5,30}$/.test(String(others[0].id)))result.ids.add(String(others[0].id));
@@ -445,7 +526,8 @@ App.customerPics = async (page, psids, { force = false, onResult, onIdentity } =
     const c = cache[page.id + ':' + id];
     if(identities[page.id+':'+id])onIdentity?.(id,identities[page.id+':'+id]);
     const evidenceChanged=dirtyCustomerEvidence.delete(page.id+':'+id);
-    if (!force && c && (c.url||!evidenceChanged) && Date.now() - c.at < (c.url ? PIC_TTL : 60e3)) emit(id, safeURL(c.url)); else need.push(id);
+    const fresh=c&&(c.url?Date.now()-c.at<PIC_TTL:c.retryAt?Date.now()<c.retryAt:Date.now()-c.at<MISSING_PIC_TTL);
+    if (!force && fresh && (c.url||!evidenceChanged)) emit(id, safeURL(c.url)); else need.push(id);
   }
   const knownTargets=[...new Set([...need,...[...out].filter(([,url])=>!url).map(([id])=>id)])];
   if(knownTargets.length&&typeof App.lookupKnownCustomerProfiles==='function')try{
@@ -457,6 +539,7 @@ App.customerPics = async (page, psids, { force = false, onResult, onIdentity } =
   const writes=[],publicTasks=[],publicWaiters=[];let publicActive=0;
   const save = (id,url,profile) => {
     const key=page.id+':'+id;changes[key]={url,at:Date.now()};emit(id,url);
+    const retryAt=App.graphTraffic?.avatarUntil?.()||0;if(!url&&retryAt>Date.now())changes[key].retryAt=retryAt;
     if(url)customerIdentityStatus.delete(key);
     if(profile){identityChanges[key]=profile;onIdentity?.(id,profile);writes.push(rememberCustomerIdentities({[key]:profile}));}
     const snapshot={...changes[key]};const write=avatarWrites.catch(()=>{}).then(async()=>{const latest=await DB.get('avatarCacheV7',{});await DB.set('avatarCacheV7',{...latest,[key]:snapshot});});avatarWrites=write;writes.push(write);

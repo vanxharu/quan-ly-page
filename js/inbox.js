@@ -397,7 +397,7 @@
   // ── Báo tin mới khi trang đang mở (Cài đặt › Hộp thư) ─────
   const seen = new Map(); let first = true;
   async function poll() {
-    if (Date.now() < (S.retryAt || 0)) return;
+    if (Date.now() < Math.max(S.retryAt || 0,App.graphTraffic?.until?.()||0)) return;
     const st = await settings();
     if (!st.webNotify) return;
     const pages = App.pages.filter(p => !st.mutedPages.includes(p.id));
@@ -417,7 +417,7 @@
   }
   // Ưu tiên hội thoại đang đọc; hạn chế quét lại hàng chục Page khi Facebook đang lỗi.
   setInterval(async () => {
-    if (!App.pages.length || App.current() !== 'inbox' || document.hidden || Date.now() < (S.retryAt || 0)) return;
+    if (!App.pages.length || App.current() !== 'inbox' || document.hidden || Date.now() < Math.max(S.retryAt || 0,App.graphTraffic?.until?.()||0)) return;
     queuePics(S.conv ? [S.conv, ...S.convs] : S.convs);
     const listInterval = App.selected().length > 5 ? 60e3 : 30e3;
     if (Date.now() - (S.lastListAt || 0) >= listInterval) return load(true);
