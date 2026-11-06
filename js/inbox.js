@@ -183,7 +183,7 @@
       picturePaintTimer = null;
       if (!$('ibList')) return;
       drawList().catch(() => {});
-      if (S.conv) { drawHead(S.conv); refreshThreadAvatars(S.conv); }
+      if (S.conv) { drawHead(S.conv); refreshThreadAvatars(S.conv); if (typeof drawSeen === 'function') drawSeen(S.conv); }
     }, 50);
   }
   const queuePics = convs => { loadPics(convs).catch(() => {}); };
@@ -336,7 +336,7 @@
       const thread = $('ibThread'), oldTop = thread.scrollTop;
       const atBottom = thread.scrollHeight - thread.clientHeight - oldTop < 70;
       const me = m => m.from?.id === c.page.id;
-      $('ibThread').replaceChildren(...msgs.map((m, i) => h('div', { className: 'msgrow' + (me(m) ? ' me' : '') },
+      $('ibThread').replaceChildren(...msgs.map((m, i) => h('div', { className: 'msgrow' + (me(m) ? ' me' : ''), dataset: { at: String(new Date(m.created_time).getTime() || 0), me: me(m) ? '1' : '' } },
         // Ảnh chỉ hiện ở tin cuối của mỗi chuỗi tin liên tiếp cùng người gửi.
         msgs[i + 1] && me(msgs[i + 1]) === me(m) ? h('span', { style: 'width:24px;flex:none' })
           : me(m) ? App.avatar(c.page.name, App.pageAvatarUrl(c.page), 24) : messageAvatar(c),
@@ -345,6 +345,8 @@
         ...(m.attachments?.data || []).map(a => a.image_data?.url ? h('img', { src: a.image_data.url, alt: '', style: 'display:block;max-width:220px;border-radius:10px;margin-top:4px' })
           : h('a', { href: a.file_url || '#', target: '_blank', rel: 'noopener', textContent: `📎 ${a.name || 'Tệp đính kèm'}` })),
         !m.message && !m.attachments?.data?.length ? '(nhãn dán / tin đặc biệt)' : null))));
+      drawSeen(c);
+      loadSeen(c);
       thread.scrollTop = !silent || atBottom ? thread.scrollHeight : oldTop;
       c.unread_count = 0;
       S.messages = msgs.map(m => ({ isCustomer: m.from?.id !== c.page.id, text: m.message || '' }));
@@ -363,6 +365,47 @@
       drawList();
     });
   }
+
+  // ── Khách đã xem ──────────────────────────────────────────
+  // Facebook chỉ báo "đã xem" qua webhook message_reads; máy chủ lưu mốc read_watermark vào Supabase.
+  // Web đọc mốc đó (không gọi Facebook) và đặt avatar khách dưới tin cuối cùng của Page mà khách đã xem.
+  const seenKey = c => c.page.id + ':' + c.other.id;
+  const reads = new Map(), realtimeRows = new Map();
+  async function loadSeen(c) {
+    const sb = App.server?.sb;
+    if (!sb || !App.server.user || !c.other.id) return;
+    try {
+      const { data, error } = await sb.from('conversations').select('read_watermark').eq('page_id', String(c.page.id)).eq('psid', String(c.other.id)).maybeSingle();
+      if (error) return;
+      const at = data?.read_watermark ? new Date(data.read_watermark).getTime() : 0;
+      if (at && at !== reads.get(seenKey(c))) { reads.set(seenKey(c), at); if (S.conv && seenKey(S.conv) === seenKey(c)) drawSeen(c); }
+    } catch {}
+  }
+  function drawSeen(c) {
+    const thread = $('ibThread');
+    if (!thread?.querySelectorAll) return;
+    thread.querySelectorAll('.seen-row').forEach(el => el.remove());
+    const at = reads.get(seenKey(c)) || 0;
+    if (!at) return;
+    const rows = [...thread.querySelectorAll('.msgrow[data-at]')];
+    // Tin cuối của Page có thời điểm ≤ mốc đã xem; bỏ qua nếu khách đã nhắn lại sau đó (Messenger cũng không hiện).
+    let target = -1;
+    rows.forEach((row, i) => { if (row.dataset.me && Number(row.dataset.at) <= at) target = i; });
+    if (target < 0 || rows.slice(target + 1).some(row => !row.dataset.me)) return;
+    const url = S.pics.get(pictureKey(c)) || '';
+    const avatar = App.avatar(c.other.name, url, 16, () => retryPicture(c, url));
+    rows[target].after(h('div', { className: 'seen-row', title: 'Đã xem lúc ' + fmtTime(new Date(at).toISOString()) }, avatar));
+  }
+  // Máy chủ báo hội thoại thay đổi. Chỉ đổi mốc đã xem → cập nhật avatar, không tải lại danh sách từ Facebook.
+  App.inbox.realtime = row => {
+    if (!row?.page_id || !row?.psid) return;
+    const key = row.page_id + ':' + row.psid, prev = realtimeRows.get(key);
+    realtimeRows.set(key, { last_at: row.last_at, read: row.read_watermark });
+    const at = row.read_watermark ? new Date(row.read_watermark).getTime() : 0;
+    if (at && at > (reads.get(key) || 0)) { reads.set(key, at); if (S.conv && seenKey(S.conv) === key) drawSeen(S.conv); }
+    if (prev && prev.last_at === row.last_at && prev.read !== row.read_watermark) return;
+    App.inbox.changed(row.page_id);
+  };
 
   // ── Soạn tin & mẫu ────────────────────────────────────────
   function togglePicker(force) {

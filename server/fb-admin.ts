@@ -7,7 +7,7 @@
 
 const GRAPH = 'https://graph.facebook.com/v25.0';
 const APP_ID = '1062977306762250';
-const FIELDS = 'messages,messaging_postbacks,message_echoes,feed';
+const FIELDS = 'messages,messaging_postbacks,message_echoes,message_reads,feed';
 const env = k => (globalThis.Deno ? Deno.env.get(k) : process.env[k]) || '';
 const CORS = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type', 'Access-Control-Allow-Methods': 'POST, OPTIONS' };
 const json = (data, status = 200) => new Response(JSON.stringify(data), { status, headers: { ...CORS, 'Content-Type': 'application/json' } });

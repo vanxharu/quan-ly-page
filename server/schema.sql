@@ -44,6 +44,8 @@ create table if not exists conversations (
   assigned_to uuid,
   primary key (page_id, psid)
 );
+-- Mốc "khách đã xem" từ webhook message_reads: mọi tin Page gửi trước thời điểm này khách đã đọc.
+alter table conversations add column if not exists read_watermark timestamptz;
 create table if not exists messages (
   id bigint generated always as identity primary key,
   page_id text not null,

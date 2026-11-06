@@ -83,6 +83,17 @@ async function runStep(ctx, flowId, stepId, data = {}, hops = 0) {
 
 // ── Tin nhắn ───────────────────────────────────────────────
 async function onMessaging(pageId, token, settings, ev) {
+  // Khách đã xem tin của Page (message_reads): chỉ lưu mốc thời gian, không chạy bot.
+  if (ev.read?.watermark) {
+    const psid = String(ev.sender?.id || ''), at = new Date(Number(ev.read.watermark));
+    if (!psid || psid === pageId || Number.isNaN(at.getTime())) return;
+    const iso = at.toISOString();
+    // Chỉ tiến mốc lên, không lùi khi Facebook gửi sự kiện cũ muộn.
+    const updated = await db(`conversations?page_id=eq.${pageId}&psid=eq.${psid}&or=(read_watermark.is.null,read_watermark.lt.%22${encodeURIComponent(iso)}%22)`, { method: 'PATCH', prefer: 'return=representation', body: { read_watermark: iso } });
+    if (!updated?.length && !(await one(`conversations?page_id=eq.${pageId}&psid=eq.${psid}&select=psid`)))
+      await db('conversations', { method: 'POST', prefer: 'resolution=ignore-duplicates', body: { page_id: pageId, psid, read_watermark: iso } });
+    return;
+  }
   if (ev.message?.is_echo) {
     const psid = ev.recipient.id;
     if (ev.message.metadata === BOT_TAG) return;
@@ -96,6 +107,12 @@ async function onMessaging(pageId, token, settings, ev) {
   const payload = ev.message?.quick_reply?.payload || ev.postback?.payload || '';
   const shown = ev.postback?.title || text || (ev.message?.attachments ? '[tệp đính kèm]' : '');
   let conv = await one(`conversations?page_id=eq.${pageId}&psid=eq.${psid}&select=*`);
+  if (conv && !conv.name) {
+    // Hội thoại tạo trước từ sự kiện "đã xem": bổ sung tên/ảnh khi khách nhắn lần đầu.
+    const prof = await fb(`/${psid}?fields=name,first_name,last_name,profile_pic`, token, null).catch(() => ({}));
+    const name = prof.name || [prof.first_name, prof.last_name].filter(Boolean).join(' ');
+    if (name || prof.profile_pic) { conv = { ...conv, name, pic: prof.profile_pic || conv.pic || '' }; await db(`conversations?page_id=eq.${pageId}&psid=eq.${psid}`, { method: 'PATCH', body: { name, pic: conv.pic } }).catch(() => {}); }
+  }
   if (!conv) {
     const prof = await fb(`/${psid}?fields=name,first_name,last_name,profile_pic`, token, null).catch(() => ({}));
     conv = { page_id: pageId, psid, name: prof.name || [prof.first_name, prof.last_name].filter(Boolean).join(' '), pic: prof.profile_pic || '', unread: 0 };

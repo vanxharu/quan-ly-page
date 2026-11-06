@@ -47,6 +47,7 @@
     if (channel) return;
     channel = sb.channel('inbox').on('postgres_changes', { event: '*', schema: 'public', table: 'conversations' }, payload => {
       const pageId = payload.new?.page_id || payload.old?.page_id;
+      if (App.inbox?.realtime && payload.new?.psid) return App.inbox.realtime(payload.new);
       if (App.inbox?.changed) return App.inbox.changed(pageId);
       clearTimeout(timer);
       timer = setTimeout(() => { if (App.current() === 'inbox' && App.isSelected(pageId)) App.tabs.inbox.refresh(); }, 800);
