@@ -144,10 +144,25 @@ App.graphTraffic = (() => {
   const pageUntil = id => id ? Number(read().pages?.[id]?.until) || 0 : 0;
   // Mức dùng cao: giãn việc chạy nền (quét hộp thư, avatar) để dành hạn mức cho thao tác người dùng.
   const slowUntil = id => { const s = read(); return Math.max(Number(s.slowUntil) || 0, id ? Number(s.pages?.[id]?.slowUntil) || 0 : 0); };
+  // Meta trả 100/33 cho hồ sơ khách khi ứng dụng chưa có Business Asset User Profile Access (hoặc chưa Live).
+  // Từ 3 khách khác nhau của cùng Page bị từ chối mà không có khách nào thành công → ngừng hỏi ảnh Page đó 6 giờ.
+  const DENY_IDS = 3, DENY_PAUSE = 6 * 3600e3;
+  const profileDeniedUntil = id => id ? Number(read().profileDenied?.[id]?.until) || 0 : 0;
+  const deniedMessage = at => 'Meta chưa cấp quyền đọc hồ sơ khách (Business Asset User Profile Access) cho ứng dụng; tạm ngừng hỏi ảnh khách của Page này đến ' + clock(at) + '.';
   return {
-    until, pageUntil, slowUntil, pageOf,
+    until, pageUntil, slowUntil, pageOf, profileDeniedUntil,
+    noteProfileDenied(pageId, customerId) {
+      if (!pageId || !customerId) return;
+      const s = read(), now = Date.now(), all = (s.profileDenied && typeof s.profileDenied === 'object') ? s.profileDenied : (s.profileDenied = {});
+      const row = all[pageId] ||= { ids: [] };
+      if (Number(row.until) > now) return;
+      row.ids = [...new Set([...(Array.isArray(row.ids) ? row.ids : []), String(customerId)])].slice(-10);
+      if (row.ids.length >= DENY_IDS) { row.until = now + DENY_PAUSE; row.ids = []; }
+      save(s);
+    },
+    noteProfileOk(pageId) { const s = read(); if (s.profileDenied?.[pageId]) { delete s.profileDenied[pageId]; save(s); } },
     blockedUntil(id) { return Math.max(until(), pageUntil(id)); },
-    avatarUntil(id) { const s=read(), now=Date.now(), calls=(Array.isArray(s.avatarCalls)?s.avatarCalls:[]).filter(at=>Number.isFinite(at)&&at>now-3600e3);return Math.max(Number(s.until)||0,Number(s.avatarUntil)||0,calls.length>=40?calls[0]+3600e3:0,pageUntil(id),id?slowUntil(id):0); },
+    avatarUntil(id) { const s=read(), now=Date.now(), calls=(Array.isArray(s.avatarCalls)?s.avatarCalls:[]).filter(at=>Number.isFinite(at)&&at>now-3600e3);return Math.max(Number(s.until)||0,Number(s.avatarUntil)||0,calls.length>=40?calls[0]+3600e3:0,pageUntil(id),id?slowUntil(id):0,profileDeniedUntil(id)); },
     before(options = {}) {
       if (typeof options !== 'object') options = { background: options === true };
       const now=Date.now(), s=read(), id=options.pageId ? String(options.pageId) : '';
@@ -156,6 +171,8 @@ App.graphTraffic = (() => {
       if(p && Number(p.until)>now)throw Object.assign(Error(pageMessage(id,p.until)),{code:Number(p.code)||80001,retryAt:p.until,rateLimited:true,pageId:id});
       if(options.low){const at=slowUntil(id);if(at>now)throw Object.assign(Error('Đang giãn quét nền vì Page gần chạm hạn mức Meta.'),{code:'BACKGROUND_PAUSED',retryAt:at});}
       if(!options.background)return;
+      const denied = profileDeniedUntil(id);
+      if(denied>now)throw Object.assign(Error(deniedMessage(denied)),{code:'AVATAR_PERMISSION',retryAt:denied});
       const calls=(Array.isArray(s.avatarCalls)?s.avatarCalls:[]).filter(at=>Number.isFinite(at)&&at>now-3600e3);
       const retryAt=Math.max(Number(s.avatarUntil)||0,calls.length>=40?calls[0]+3600e3:0,id?slowUntil(id):0);
       if(retryAt>now)throw Object.assign(Error('Đang tạm nghỉ tải avatar để dành hạn mức cho đăng nhập, tin nhắn và đăng bài.'),{code:'AVATAR_BUDGET',retryAt});
@@ -509,8 +526,10 @@ async function avatarRequest(page,id,path,params={},method='GET'){
   recordAvatarDiagnostic(page,id,null,null,params.fields||'picture');
   const controller=typeof AbortController==='function'?new AbortController():null;
   const timer=controller?setTimeout(()=>controller.abort(),12000):null;
-  try{return await api(path,params,method,page.access_token,{background:true,...(controller?{signal:controller.signal}:{})});}
-  catch(error){if(controller?.signal.aborted)error=Object.assign(Error('Facebook chưa phản hồi ảnh sau 12 giây; đang thử nguồn khác.'),{code:'AVATAR_TIMEOUT'});recordAvatarDiagnostic(page,id,null,error,params.fields||'picture');throw error;}
+  const profileCall=/picture|profile_pic/.test(String(params.fields||''))||/\/picture(\?|$)/.test(String(path));
+  try{const result=await api(path,params,method,page.access_token,{background:true,pageId:String(page.id),...(controller?{signal:controller.signal}:{})});if(profileCall&&(result?.profile_pic||result?.picture?.data?.url||result?.data?.url))App.graphTraffic?.noteProfileOk?.(String(page.id));return result;}
+  catch(error){if(profileCall&&Number(error.code)===100&&Number(error.sub??error.error_subcode)===33)App.graphTraffic?.noteProfileDenied?.(String(page.id),String(id));
+    if(controller?.signal.aborted)error=Object.assign(Error('Facebook chưa phản hồi ảnh sau 12 giây; đang thử nguồn khác.'),{code:'AVATAR_TIMEOUT'});recordAvatarDiagnostic(page,id,null,error,params.fields||'picture');throw error;}
   finally{if(timer!==null)clearTimeout(timer);}
 }
 function facebookCustomerLink(value){
@@ -539,7 +558,7 @@ async function automaticCustomerEvidence(page,id,force=false){
   if(ctx?.profileLink)result.links.add(ctx.profileLink);
   // Dùng bằng chứng đã có, không tiếp tục dò Graph khi đang phải nghỉ tải ảnh.
   if((App.graphTraffic?.avatarUntil?.(page.id)||0)>Date.now())return result;
-  const mayTryFields=error=>!error.rateLimited&&error.code!=='AVATAR_BUDGET'&&Number(error.code)!==3&&!(Number(error.code)===100&&Number(error.sub??error.error_subcode)===33);
+  const mayTryFields=error=>!error.rateLimited&&error.code!=='AVATAR_BUDGET'&&error.code!=='AVATAR_PERMISSION'&&Number(error.code)!==3&&!(Number(error.code)===100&&Number(error.sub??error.error_subcode)===33);
   const acceptProfile=profile=>{if(!/^\d{5,30}$/.test(String(profile?.id||'')))return;result.ids.add(String(profile.id));const link=facebookCustomerLink(profile.link);if(link)result.links.add(link);if(profile.picture?.data?.is_silhouette===false)result.avatar=profile.picture.data.url;};
   try{acceptProfile(await avatarRequest(page,id,'/'+encodeURIComponent(id),{fields:'id,link,picture.width(128).height(128)'},'GET'));}
   catch(error){reportAvatarError(error);
