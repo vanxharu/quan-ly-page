@@ -1,5 +1,5 @@
 $ErrorActionPreference='Stop'
-$source=Get-Content -LiteralPath (Join-Path $PSScriptRoot 'Updater.cs') -Raw -Encoding UTF8
+$source=(Get-Content -LiteralPath (Join-Path $PSScriptRoot 'Updater.cs') -Raw -Encoding UTF8)+"`n"+(Get-Content -LiteralPath (Join-Path $PSScriptRoot 'PublicProfile.cs') -Raw -Encoding UTF8)
 $tests=@'
 namespace UpdaterTests {
   public class FailingEngine : MetaAssistantUpdater.Engine {
@@ -19,11 +19,15 @@ namespace UpdaterTests {
       Reject(()=>engine.Apply(Zip(Manifest("2.3.0",true,"Meta Assistant Test"),null),target,false),"downgrade blocked");Reject(()=>engine.Apply(Zip(Manifest("2.5.0",true,"Meta Assistant Other"),null),target,false),"identity mismatch blocked");Reject(()=>engine.Apply(Zip(Manifest("2.5.0",true,"Meta Assistant Test"),"../escape.js"),target,false),"ZIP traversal blocked");Check(!System.IO.File.Exists(System.IO.Path.Combine(root,"escape.js")),"no escaped file");
       var before=System.IO.File.ReadAllText(manifest);Reject(()=>new FailingEngine(System.IO.Path.Combine(root,"rollback")).Apply(Zip(Manifest("2.5.0",true,"Meta Assistant Test"),"new-file.js"),target,false),"injected copy failure");Check(System.IO.File.ReadAllText(js)=="new-js"&&System.IO.File.ReadAllText(manifest)==before&&!System.IO.File.Exists(System.IO.Path.Combine(target,"new-file.js")),"rollback restores existing and removes newly copied file");
       var expanded=Manifest("2.5.0",true,"Meta Assistant Test").Replace("\"storage\"","\"storage\",\"debugger\"");Reject(()=>engine.Apply(Zip(expanded,null),target,false),"new permissions blocked");
+      var html="<meta property='al:android:url' content='fb://profile/100000000123456'><meta property='al:ios:url' content='fb://profile/100000000123456'><meta property='og:title' content='Test &amp; Customer'><meta property='og:url' content='https://www.facebook.com/test.customer/'><meta property='og:image' content='https://scontent.test.fbcdn.net/avatar.jpg?x=1&amp;y=2'>";
+      var identity=MetaAssistantUpdater.PublicProfile.Parse(html,"https://www.facebook.com/test.customer");Check((string)identity["uid"]=="100000000123456"&&(string)identity["name"]=="Test & Customer","public UID comes from profile metadata");
+      Reject(()=>MetaAssistantUpdater.PublicProfile.Normalize("https://evil.example/customer"),"external URL rejected");Reject(()=>MetaAssistantUpdater.PublicProfile.Normalize("https://www.facebook.com/login"),"login route rejected");
+      Reject(()=>MetaAssistantUpdater.PublicProfile.Parse("<html>Login</html>","https://www.facebook.com/test.customer"),"missing UID rejected");Reject(()=>MetaAssistantUpdater.PublicProfile.Parse(html,"100000000999999"),"PSID to different UID rejected");Reject(()=>MetaAssistantUpdater.PublicProfile.Parse(html.Replace("scontent.test.fbcdn.net","evil.example"),"https://www.facebook.com/test.customer"),"external image rejected");
       return "PASS: "+passed+" updater checks: original folder, backup, permission bootstrap, equal version, downgrade, identity, traversal, partial-write rollback.";
     }
   }
 }
 '@
-Add-Type -TypeDefinition ($source+"`n"+$tests) -ReferencedAssemblies @('System.Web.Extensions','System.IO.Compression','System.IO.Compression.FileSystem','System.Windows.Forms','System.Drawing','System.Core')
+Add-Type -TypeDefinition ($source+"`n"+$tests) -ReferencedAssemblies @('System.Web.Extensions','System.Web','System.IO.Compression','System.IO.Compression.FileSystem','System.Windows.Forms','System.Drawing','System.Core')
 $testRoot=Join-Path (Resolve-Path (Join-Path $PSScriptRoot '..\..\..')) ('ut-'+[guid]::NewGuid().ToString('N').Substring(0,8))
 [UpdaterTests.Suite]::Run($testRoot)

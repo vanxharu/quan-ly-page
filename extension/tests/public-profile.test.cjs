@@ -1,0 +1,12 @@
+const fs=require('fs'),vm=require('vm'),assert=require('assert/strict');
+const core=fs.readFileSync(__dirname+'/../../js/core.js','utf8'),section=core.slice(core.indexOf('const PIC_TTL'),core.indexOf('// Dòng Page nhỏ'));
+const uid='100000000123456',psid='900000000123456',profile={uid,name:'Test Customer',profileUrl:'https://www.facebook.com/test.customer',avatar:'https://scontent.test.fbcdn.net/avatar.jpg'},data={},lookups=[];
+let changed=false;
+const App={GRAPH:'https://graph.facebook.com/v25.0',lookupCustomerProfile:async target=>{lookups.push(target);return {...profile,uid:changed?'100000000999999':uid};}},DB={get:async(k,f)=>structuredClone(data[k]||f),set:async(k,v)=>data[k]=structuredClone(v)};
+const api=async(path,params,method)=>method==='GET'?{data:{is_silhouette:true,url:''}}:params.batch.map(()=>({code:200,body:'{}'}));
+const pool=async(items,n,fn)=>{for(const i of items)await fn(i);};vm.runInNewContext(section,{App,DB,api,pool,URL,console,Date,Map,Set,Promise});
+(async()=>{const page={id:'10',access_token:'not-forwarded'},other={id:'20'};const first=await App.customerPics(page,[uid]);assert.equal(first.get(uid),profile.avatar);assert.equal((await App.customerIdentity(page,uid)).uid,uid);assert.ok(!JSON.stringify(data).includes('not-forwarded'),'public lookup never stores Page token');
+const unverified=await App.customerPics(page,[psid]);assert.equal(unverified.get(psid),'','do not silently convert PSID to an unrelated UID');assert.equal(await App.customerIdentity(page,psid),undefined);
+await App.bindCustomerProfile(page,psid,profile);const bound=await App.customerPics(page,[psid],{force:true});assert.equal(bound.get(psid),profile.avatar);assert.equal(lookups.at(-1),profile.profileUrl);assert.equal(await App.customerIdentity(other,psid),undefined,'bindings isolated by Page and customer ID');
+changed=true;const reassigned=await App.customerPics(page,[psid],{force:true});assert.equal(reassigned.get(psid),'','vanity URL reassignment must not replace verified customer');assert.equal((await App.customerIdentity(page,psid)).uid,uid);assert.ok(App.customerIdentityStatus.get('10:'+psid));
+console.log('PASS: public metadata supplies UID and avatar, distinct PSID retained, explicit per-customer binding, no name matching, Page isolation, changed-UID rejection, no Page token forwarded.');})().catch(e=>{console.error(e);process.exitCode=1});

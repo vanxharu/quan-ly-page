@@ -91,6 +91,7 @@ namespace MetaAssistantUpdater {
     static void Reply(Dictionary<string,object> data){var bytes=Encoding.UTF8.GetBytes(Engine.Json.Serialize(data));var output=Console.OpenStandardOutput();var length=BitConverter.GetBytes(bytes.Length);output.Write(length,0,4);output.Write(bytes,0,bytes.Length);output.Flush();}
     static void Native(string origin){try{var config=Engine.ReadJson(ConfigFile);if(origin!=Engine.Get(config,"origin"))throw new Exception("Tiện ích không được phép cập nhật.");var input=Console.OpenStandardInput();var length=BitConverter.ToInt32(ReadExact(input,4),0);if(length<2||length>65536)throw new Exception("Thông điệp không hợp lệ.");var message=Engine.Json.Deserialize<Dictionary<string,object>>(Encoding.UTF8.GetString(ReadExact(input,length)));var target=Engine.Get(config,"extensionPath");
       if(Engine.Get(message,"action")=="status"){var m=Engine.Installed(target);Reply(new Dictionary<string,object>{{"ok",true},{"version",Engine.Get(m,"version")}});}
+      else if(Engine.Get(message,"action")=="public_profile")Reply(PublicProfile.Read(Engine.Get(message,"profile")));
       else if(Engine.Get(message,"action")=="update")Reply(new Engine(AppDomain.CurrentDomain.BaseDirectory).Apply(Engine.Download(),target,false));else throw new Exception("Lệnh cập nhật không hợp lệ.");
     }catch(Exception e){Reply(new Dictionary<string,object>{{"ok",false},{"error",e.Message}});}}
     [STAThread] public static void Main(string[] args){

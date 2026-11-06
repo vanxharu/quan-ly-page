@@ -1,7 +1,7 @@
 /* Hộp thư (giống inbox-tab.js của tiện ích, nhưng đọc qua Graph API): một hoặc tất cả Page, lọc, thời gian khách chờ,
  * tự gắn nhãn theo lời khách (InboxRules), mẫu tin bằng nút "Mẫu" hoặc gõ "/", ảnh đính kèm, khung CRM, báo tin mới. */
 (() => {
-  const S = { filter: 'all', convs: [], conv: null, tpl: null, image: '', loading: 0, pics: new Map(), sending: false, more: new Map(), extra: new Map() };
+  const S = { filter: 'all', convs: [], conv: null, tpl: null, image: '', loading: 0, pics: new Map(), identities: new Map(), sending: false, more: new Map(), extra: new Map() };
   const draftKey = c => c?.other.id ? `inboxDraft:${c.page.id}|${c.other.id}` : '';
   function saveDraft(c = S.conv) {
     const key = draftKey(c);
@@ -163,7 +163,7 @@
       // Đặt khoá trước khi gọi để danh sách, hội thoại và ảnh lỗi không tải trùng cùng khách.
       let start;
       const pending = new Promise(resolve => { start = resolve; }).then(async () => {
-        const result = await App.customerPics(page, [...ids], { force, onResult: update });
+        const result = await App.customerPics(page, [...ids], { force, onResult: update, onIdentity: (id,profile) => {S.identities.set(page.id+':'+id,profile);paintPictures();} });
         for (const [id, url] of result) update(id, url);
       }).catch(() => { for (const id of ids) pictureChecked.set(page.id + ':' + id, Date.now()); })
         .finally(() => { for (const id of ids) pictureLoads.delete(page.id + ':' + id); });
@@ -201,8 +201,28 @@
     return h('span', { className: 'avwrap' }, App.avatar(c.other.name, S.pics.get(pictureKey(c)), size, () => retryPicture(c, S.pics.get(pictureKey(c)))), pg);
   };
   function drawHead(c) {
+    const identity=S.identities.get(pictureKey(c));
     $('ibTitle').replaceChildren(h('span', { className: 'thread-head' }, custAvatar(c, 32),
-      h('span', { style: 'min-width:0' }, h('div', { className: 'card-title', textContent: c.other.name || 'Khách' }), h('div', { className: 'hint', textContent: c.page.name }))));
+      h('span', { style: 'min-width:0' }, h('div', { className: 'card-title', textContent: c.other.name || 'Khách' }), h('div', { className: 'hint', textContent: c.page.name }),
+        identity?h('a',{className:'hint',href:identity.profileUrl,target:'_blank',rel:'noopener noreferrer',textContent:'UID '+identity.uid}):null),
+      h('button',{type:'button',className:'btn btn-ghost btn-sm',textContent:'Facebook',title:'Liên kết đúng trang cá nhân để xác minh UID và ảnh',onclick:()=>linkCustomer(c)})));
+  }
+  async function linkCustomer(c){
+    const dialog=h('dialog',{className:'ai-dialog'}),field=h('input',{type:'text',placeholder:'https://www.facebook.com/ten-khach',autocomplete:'off','aria-label':'Link Facebook của khách'}),status=h('div',{className:'hint',role:'status'}),preview=h('div',{});
+    status.textContent=App.customerIdentityStatus?.get(pictureKey(c))||'';
+    let verified=null;
+    const save=h('button',{type:'button',className:'btn btn-primary',textContent:'Gắn với khách đang chọn',disabled:true,onclick:async()=>{
+      if(!verified)return;save.disabled=true;
+      try{const profile=await App.bindCustomerProfile(c.page,c.other.id,verified);S.identities.set(pictureKey(c),profile);pictureChecked.delete(pictureKey(c));await loadPics([c],true);dialog.close();}catch(error){status.textContent=error.message;save.disabled=false;}
+    }});
+    field.oninput=()=>{verified=null;save.disabled=true;preview.replaceChildren();};
+    const check=h('button',{type:'button',className:'btn btn-soft',textContent:'Kiểm tra link',onclick:async()=>{
+      const value=field.value.trim();verified=null;save.disabled=true;check.disabled=true;status.textContent='Đang đọc UID và ảnh công khai…';preview.replaceChildren();
+      try{const profile=await App.lookupCustomerProfile(value,true);if(field.value.trim()!==value)return;verified=profile;preview.replaceChildren(App.avatar(profile.name,profile.avatar,64),h('div',{textContent:profile.name+' · UID '+profile.uid}));status.textContent='Kiểm tra đúng người trước khi gắn ảnh vào hội thoại.';save.disabled=false;}catch(error){status.textContent=error.message;}finally{check.disabled=false;}
+    }});
+    dialog.append(h('h2',{textContent:'Facebook của '+(c.other.name||'khách')}),h('p',{textContent:'ID hội thoại: '+c.other.id+'. Nếu Facebook không cho đổi ID này sang UID, liên kết trang cá nhân của đúng khách một lần. Sau đó ảnh được tự tải.'}),field,check,status,preview,h('div',{className:'row'},save,h('button',{type:'button',className:'btn btn-ghost',textContent:'Đóng',onclick:()=>dialog.close()})));
+    document.body.append(dialog);dialog.addEventListener('close',()=>dialog.remove());dialog.showModal();
+    const identity=await App.customerIdentity(c.page,c.other.id);if(identity&&dialog.open)field.value=identity.profileUrl;
   }
   async function drawList() {
     const st = await settings();

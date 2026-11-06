@@ -342,14 +342,27 @@ App.customerAvatarLink = id => {
   link.searchParams.set('redirect', 'false');
   return link.href;
 };
+const customerIdentityStatus = App.customerIdentityStatus = new Map();
+let identityWrites=Promise.resolve();
+function publicIdentity(profile){
+  const uid=String(profile?.uid||''),image=new URL(profile?.avatar),url=new URL(profile?.profileUrl);
+  if(!/^\d{5,30}$/.test(uid)||image.protocol!=='https:'||!image.hostname.endsWith('.fbcdn.net')||image.username||image.password||url.origin!=='https://www.facebook.com'||/(?:[?&])(access_token|token|authorization)=/i.test(image.search))throw Error('UID hoặc ảnh công khai chưa hợp lệ.');
+  return {uid,name:String(profile.name||'').slice(0,200),profileUrl:url.href,avatar:image.href,verifiedAt:Date.now()};
+}
+async function rememberCustomerIdentities(changes){
+  const write=identityWrites.catch(()=>{}).then(async()=>DB.set('customerIdentitiesV1',{...await DB.get('customerIdentitiesV1',{}),...changes}));identityWrites=write;await write;
+}
+App.customerIdentity = async (page,id) => (await DB.get('customerIdentitiesV1',{}))[page.id+':'+id];
+App.bindCustomerProfile = async (page,id,profile) => {const verified=publicIdentity(profile);await rememberCustomerIdentities({[page.id+':'+id]:verified});return verified;};
 let avatarWrites = Promise.resolve();
-App.customerPics = async (page, psids, { force = false, onResult } = {}) => {
-  const cache = await DB.get('avatarCacheV4', {}), changes = {};
+App.customerPics = async (page, psids, { force = false, onResult, onIdentity } = {}) => {
+  const cache = await DB.get('avatarCacheV5', {}), changes = {}, identities=await DB.get('customerIdentitiesV1',{}), identityChanges={};
   const safeURL = value => { try { const u = new URL(value); return u.protocol === 'https:' && !u.username && !u.password && ![...u.searchParams.keys()].some(k => /^(access_token|token|authorization)$/i.test(k)) ? u.href : ''; } catch { return ''; } };
   const out = new Map(), need = [];
   const emit = (id, url) => { out.set(id, url); onResult?.(id, url); };
   for (const id of new Set(psids.filter(Boolean).map(String).filter(id => /^\d+$/.test(id)))) {
     const c = cache[page.id + ':' + id];
+    if(identities[page.id+':'+id])onIdentity?.(id,identities[page.id+':'+id]);
     if (!force && c && Date.now() - c.at < (c.url ? PIC_TTL : 60e3)) emit(id, safeURL(c.url)); else need.push(id);
   }
   const missing = [];
@@ -378,8 +391,17 @@ App.customerPics = async (page, psids, { force = false, onResult } = {}) => {
       });
     } catch (error) { reportAvatarError(error); }
   }
+  if(typeof App.lookupCustomerProfile==='function')await pool(need.filter(id=>!out.get(id)),2,async id=>{
+    const key=page.id+':'+id;
+    try {
+      const saved=identities[key],profile=publicIdentity(await App.lookupCustomerProfile(saved?.profileUrl||id,force));
+      if((!saved&&profile.uid!==id)||(saved&&profile.uid!==saved.uid))throw Error('ID hội thoại khác UID công khai. Cần liên kết Facebook của đúng khách.');
+      identityChanges[key]=profile;changes[key]={url:profile.avatar,at:Date.now()};customerIdentityStatus.delete(key);onIdentity?.(id,profile);emit(id,profile.avatar);
+    } catch(error){customerIdentityStatus.set(key,String(error.message||'Chưa xác minh được UID.'));}
+  });
+  if(Object.keys(identityChanges).length)await rememberCustomerIdentities(identityChanges);
   for (const id of need) if (!out.has(id)) emit(id, '');
-  if (Object.keys(changes).length) { const write = avatarWrites.catch(() => {}).then(async () => { const latest = await DB.get('avatarCacheV4', {}); await DB.set('avatarCacheV4', { ...latest, ...changes }); }); avatarWrites = write; await write; }
+  if (Object.keys(changes).length) { const write = avatarWrites.catch(() => {}).then(async () => { const latest = await DB.get('avatarCacheV5', {}); await DB.set('avatarCacheV5', { ...latest, ...changes }); }); avatarWrites = write; await write; }
   return out;
 };
 // Dòng Page nhỏ: ảnh + tên (dùng trong danh sách bài, bình luận…).

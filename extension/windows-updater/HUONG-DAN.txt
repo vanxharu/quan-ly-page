@@ -8,3 +8,5 @@ Bản sao lưu: %LOCALAPPDATA%\MetaAssistantUpdater\backups.
 Bộ kết nối cài tại %LOCALAPPDATA%\MetaAssistantUpdater; đăng ký HKCU NativeMessagingHosts cho đúng trình duyệt/ID tiện ích đã chọn. Không yêu cầu quyền quản trị.
 
 Mã nguồn: Updater.cs; biên dịch lại bằng Windows PowerShell: .\Build.ps1.
+
+Bản 2.4.1 bổ sung đọc UID/ảnh công khai cho hộp thư qua lệnh public_profile, chỉ dùng facebook.com và ảnh fbcdn.net. Không đọc cookie hoặc token, không tự vượt trang đăng nhập; không dùng tên để gán UID. Mã đọc công khai: PublicProfile.cs; Build.ps1 biên dịch cùng Updater.cs. Nếu đã cài bộ cũ, chạy lại bộ mới để cập nhật phần kết nối Windows, rồi Tải lại tiện ích một lần.
