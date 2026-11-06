@@ -343,13 +343,14 @@ App.customerAvatarLink = id => {
   return link.href;
 };
 let avatarWrites = Promise.resolve();
-App.customerPics = async (page, psids, { force = false } = {}) => {
+App.customerPics = async (page, psids, { force = false, onResult } = {}) => {
   const cache = await DB.get('avatarCacheV4', {}), changes = {};
   const safeURL = value => { try { const u = new URL(value); return u.protocol === 'https:' && !u.username && !u.password && ![...u.searchParams.keys()].some(k => /^(access_token|token|authorization)$/i.test(k)) ? u.href : ''; } catch { return ''; } };
   const out = new Map(), need = [];
+  const emit = (id, url) => { out.set(id, url); onResult?.(id, url); };
   for (const id of new Set(psids.filter(Boolean).map(String).filter(id => /^\d+$/.test(id)))) {
     const c = cache[page.id + ':' + id];
-    if (!force && c && Date.now() - c.at < (c.url ? PIC_TTL : 10 * 60e3)) out.set(id, safeURL(c.url)); else need.push(id);
+    if (!force && c && Date.now() - c.at < (c.url ? PIC_TTL : 60e3)) emit(id, safeURL(c.url)); else need.push(id);
   }
   const missing = [];
   await pool(need, 4, async id => {
@@ -360,7 +361,7 @@ App.customerPics = async (page, psids, { force = false } = {}) => {
       if (picture.data?.is_silhouette === false) url = safeURL(picture.data.url);
     } catch (error) { reportAvatarError(error); }
     if (!url) missing.push(id);
-    changes[page.id + ':' + id] = { url, at: Date.now() }; out.set(id, url);
+    changes[page.id + ':' + id] = { url, at: Date.now() }; if (url) emit(id, url);
   });
   // Một số ID Messenger chỉ hỗ trợ profile_pic. Giữ làm dự phòng khi link không trả ảnh thật.
   for (let i = 0; i < missing.length; i += 50) {
@@ -371,12 +372,13 @@ App.customerPics = async (page, psids, { force = false } = {}) => {
         try {
           const profile = JSON.parse(res[k]?.body || '{}');
           const url = res[k]?.code === 200 ? safeURL(profile.profile_pic) : '';
-          if (url) { changes[page.id + ':' + id] = { url, at: Date.now() }; out.set(id, url); }
+          if (url) { changes[page.id + ':' + id] = { url, at: Date.now() }; emit(id, url); }
           else if (profile.error) reportAvatarError(profile.error);
         } catch (error) { reportAvatarError(error); }
       });
     } catch (error) { reportAvatarError(error); }
   }
+  for (const id of need) if (!out.has(id)) emit(id, '');
   if (Object.keys(changes).length) { const write = avatarWrites.catch(() => {}).then(async () => { const latest = await DB.get('avatarCacheV4', {}); await DB.set('avatarCacheV4', { ...latest, ...changes }); }); avatarWrites = write; await write; }
   return out;
 };

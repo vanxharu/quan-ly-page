@@ -106,7 +106,7 @@
     // Hội thoại đang mở có tin mới → đọc lại luôn.
     const fresh = S.conv && S.convs.find(c => c.id === S.conv.id);
     if (fresh && fresh.updated_time !== S.conv.updated_time) { fresh.unread_count = 0; openConv(fresh, { silent: true }); }
-    loadPics(S.convs);
+    queuePics(S.convs);
     if (S.pending) { $('ibSearch').value = S.pending; const hit = S.convs.find(c => norm(c.other.name) === norm(S.pending)); S.pending = ''; if (hit) openConv(hit); }
     drawList();
     } finally { if (run === S.loading) S.listBusy = false; }
@@ -126,24 +126,57 @@
         for (const c of result.list) S.extra.set(c.id, c);
       }
       S.convs = [...new Map([...S.extra.values(), ...S.convs].map(c => [c.id, c])).values()].sort((a, b) => new Date(b.updated_time) - new Date(a.updated_time));
-      loadPics(S.convs); await drawList();
+      queuePics(S.convs); await drawList();
     } finally { S.moreBusy = false; $('ibMore').disabled = false; $('ibMore').textContent = 'Tải thêm hội thoại'; }
   }
-  const pictureKey = c => c.page.id + ":" + c.other.id;
-  const failedPictures = new Set();
-  async function loadPics(convs, force = false) {
-    const byPage = new Map();
-    for (const c of convs) if (c.other.id && (force || !S.pics.has(pictureKey(c)))) (byPage.get(c.page) || byPage.set(c.page, []).get(c.page)).push(c.other.id);
-    await pool([...byPage], 3, async ([page, ids]) => { for (const [id, url] of await App.customerPics(page, ids, { force })) { const key = page.id + ":" + id; if (url) S.pics.set(key, url); else S.pics.delete(key); } });
-    if (byPage.size) {
-      drawList();
+  const pictureKey = c => c.page.id + ':' + c.other.id;
+  const failedPictures = new Set(), pictureLoads = new Map(), pictureChecked = new Map();
+  let picturePaintTimer;
+  function paintPictures() {
+    if (picturePaintTimer) return;
+    picturePaintTimer = setTimeout(() => {
+      picturePaintTimer = null;
+      if (!$('ibList')) return;
+      drawList().catch(() => {});
       if (S.conv) { drawHead(S.conv); refreshThreadAvatars(S.conv); }
+    }, 50);
+  }
+  const queuePics = convs => { loadPics(convs).catch(() => {}); };
+  async function loadPics(convs, force = false) {
+    const byPage = new Map(), waiting = new Set(), tasks = [];
+    for (const c of convs) {
+      if (!c.other.id) continue;
+      const key = pictureKey(c), pending = pictureLoads.get(key);
+      if (pending) { waiting.add(pending); continue; }
+      const ttl = S.pics.has(key) ? 5 * 60e3 : 60e3;
+      if (!force && pictureChecked.has(key) && Date.now() - pictureChecked.get(key) < ttl) continue;
+      if (!byPage.has(c.page.id)) byPage.set(c.page.id, { page: c.page, ids: new Set() });
+      byPage.get(c.page.id).ids.add(c.other.id);
     }
+    for (const { page, ids } of byPage.values()) {
+      const update = (id, url) => {
+        const key = page.id + ':' + id, before = S.pics.get(key) || '';
+        if (url) S.pics.set(key, url); else S.pics.delete(key);
+        pictureChecked.set(key, Date.now());
+        if (before !== url) paintPictures();
+      };
+      // Đặt khoá trước khi gọi để danh sách, hội thoại và ảnh lỗi không tải trùng cùng khách.
+      let start;
+      const pending = new Promise(resolve => { start = resolve; }).then(async () => {
+        const result = await App.customerPics(page, [...ids], { force, onResult: update });
+        for (const [id, url] of result) update(id, url);
+      }).catch(() => { for (const id of ids) pictureChecked.set(page.id + ':' + id, Date.now()); })
+        .finally(() => { for (const id of ids) pictureLoads.delete(page.id + ':' + id); });
+      tasks.push(async () => { start(); await pending; });
+      for (const id of ids) pictureLoads.set(page.id + ':' + id, pending);
+      waiting.add(pending);
+    }
+    await Promise.all([pool(tasks, 3, task => task()), ...waiting]);
   }
   function retryPicture(c, url) {
     const key = pictureKey(c) + ':' + url;
     if (!url || failedPictures.has(key)) return;
-    failedPictures.add(key); S.pics.delete(pictureKey(c));
+    failedPictures.add(key); S.pics.delete(pictureKey(c)); pictureChecked.delete(pictureKey(c));
     loadPics([c], true).catch(() => {});
   }
   // Cập nhật riêng avatar khi ảnh về muộn; giữ nguyên tin nhắn, vị trí cuộn và ô soạn.
@@ -169,7 +202,7 @@
   };
   function drawHead(c) {
     $('ibTitle').replaceChildren(h('span', { className: 'thread-head' }, custAvatar(c, 32),
-      h('span', { style: 'min-width:0' }, h('div', { className: 'card-title', textContent: c.other.name || 'Khách' }), h('div', { className: 'hint', textContent: c.page.name })), h('button', { type: 'button', className: 'btn btn-ghost btn-sm', textContent: 'Tải avatar', title: 'Truy cập link avatar của khách và lấy lại ảnh', onclick: async e => { const b=e.currentTarget; b.disabled=true; try { await loadPics([c], true); if (!S.pics.get(pictureKey(c))) toast('Facebook chưa trả ảnh cho ID khách này. Kiểm tra quyền nhắn tin của Page.'); } catch { toast('Chưa tải được ảnh khách. Thử lại sau.'); } finally { b.disabled=false; } } })));
+      h('span', { style: 'min-width:0' }, h('div', { className: 'card-title', textContent: c.other.name || 'Khách' }), h('div', { className: 'hint', textContent: c.page.name }))));
   }
   async function drawList() {
     const st = await settings();
@@ -214,6 +247,7 @@
     if (switching) saveDraft();
     S.conv = c;
     drawHead(c);
+    queuePics([c]);
     $('ibReload').hidden = false;
     if (switching) {
       S.draftReady = false; S.tpl = null; S.image = '';
@@ -360,6 +394,7 @@
   // Ưu tiên hội thoại đang đọc; hạn chế quét lại hàng chục Page khi Facebook đang lỗi.
   setInterval(async () => {
     if (!App.pages.length || App.current() !== 'inbox' || document.hidden || Date.now() < (S.retryAt || 0)) return;
+    queuePics(S.conv ? [S.conv, ...S.convs] : S.convs);
     const listInterval = App.selected().length > 5 ? 60e3 : 30e3;
     if (Date.now() - (S.lastListAt || 0) >= listInterval) return load(true);
     if (S.conv && S.draftReady && !S.reading && !S.listBusy) {
