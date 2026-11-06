@@ -73,7 +73,7 @@
     }));
   }
   async function load(){
-    state=await call('PANEL_STATUS');drawSettings();versionMismatch=state.version!=='2.4.1';if(versionMismatch)notice('Bộ nền đang chạy bản '+(state.version||'không rõ')+'. Bấm Tải lại tiện ích tại chrome://extensions rồi mở bảng lại; F5 website không cập nhật bộ nền.',true);applyTheme();if(catalogStamp!==state.pageCatalog?.updatedAt){catalogStamp=state.pageCatalog?.updatedAt;}drawPages();
+    state=await call('PANEL_STATUS');drawSettings();versionMismatch=state.version!=='2.4.2';if(versionMismatch)notice('Bộ nền đang chạy bản '+(state.version||'không rõ')+'. Bấm Tải lại tiện ích tại chrome://extensions rồi mở bảng lại; F5 website không cập nhật bộ nền.',true);applyTheme();if(catalogStamp!==state.pageCatalog?.updatedAt){catalogStamp=state.pageCatalog?.updatedAt;}drawPages();
     const job=state.panelJob,active=busy();['gptHome','customPostPrompt','customImagePrompt','useReddit','saveSettings','resetSettings'].forEach(id=>$(id).disabled=!!active);if(job?.transport==='embedded'&&job.status==='running'&&job.frameClaimed){frameAck=true;frameClaimed=true;clearTimeout(runAckTimer);if(pendingRun?.id===job.id)pendingRun=null;$('frameStatus').textContent='Đang theo dõi lượt tạo';}document.querySelectorAll('#pages input,#pages select').forEach(el=>el.disabled=!!active);$('selectAll').disabled=$('clearSelection').disabled=!!active;
     $('gptMode').disabled=!!active;$('reloadFrame').disabled=!!active;$('progressBox').hidden=(!job&&!state.externalRunning)||(!active&&job?.status==='done');$('progressBox').dataset.state=job?.status||'';
     $('progressTitle').textContent=active?'Đang tạo nội dung':job?.status==='error'?'Lượt tạo cần kiểm tra':'Bản nháp đã lưu';const total=job?.input.items.length||1,complete=job?.completedKeys?.length||0;$('progress').value=Math.round(100*complete/total);$('loading').hidden=!active;$('progressCount').textContent=`${complete}/${job?.input.items.length||0}`;
@@ -103,7 +103,7 @@
   $('generate').onclick=async()=>{try{
     const pages=selected(),n=count();if(!pages.length)throw Error('Chọn ít nhất một Page.');if(pages.length*n>6)throw Error('Tối đa 6 bài/lượt. Giảm số Page hoặc số bài.');
     const items=[];for(const page of pages)for(let i=0;i<n;i++)items.push({key:'post-'+crypto.randomUUID(),pageId:page.id,pageName:page.name});
-    if(versionMismatch)throw Error('Cần tải lại toàn bộ tiện ích để nạp bộ nền 2.4.1.');
+    if(versionMismatch)throw Error('Cần tải lại toàn bộ tiện ích để nạp bộ nền 2.4.2.');
     $('generate').disabled=true;const result=await call('PANEL_GENERATE',{payload:{items,images:$('images').checked},transport,panelId});notice('');if(transport==='embedded'){if(!result.runJob)throw Error('Bộ nền chưa trả lệnh cho khung nhúng. Cần tải lại tiện ích.');await mountFrame(result.runJob);}switchView('gpt');await load();
   }catch(e){notice(e.message,true);await load().catch(()=>{});}};
   $('cancel').onclick=async()=>{try{pendingRun=null;const id=state.panelJob?.id;await call('PANEL_CANCEL');if(frameReady&&id)$('gptFrame').contentWindow.postMessage({source:'META_STUDIO_PANEL',type:'FRAME_CANCEL',jobId:id},'https://chatgpt.com');await load();}catch(e){notice(e.message,true);}};
@@ -117,7 +117,7 @@
   $('diagnose').onclick=async()=>{try{
     $('gptFrame').contentWindow?.postMessage({source:'META_STUDIO_PANEL',type:'FRAME_INSPECT'},'https://chatgpt.com');
     await new Promise(resolve=>setTimeout(resolve,400));const current=await call('PANEL_STATUS'),job=current.panelJob;
-    const report={capturedAt:new Date().toISOString(),uiVersion:'2.4.1',workerVersion:current.version,frame:{ready:frameReady,delivered:frameDelivered,acknowledged:frameAck,claimed:frameClaimed,navigationReady:frameNavigationReady,expectedJob:frameJobId,pending:!!pendingRun,lastInspection:lastFrameInfo},job:job?{id:job.id,status:job.status,error:job.error||'',progress:job.progress,transport:job.transport,postsReceived:job.posts?.length||0,imagesReceived:job.posts?.filter(p=>p.imageData).length||0,binding:job.frameBindingInfo||null,diagnostic:job.diagnostic||null}:null};
+    const report={capturedAt:new Date().toISOString(),uiVersion:'2.4.2',workerVersion:current.version,frame:{ready:frameReady,delivered:frameDelivered,acknowledged:frameAck,claimed:frameClaimed,navigationReady:frameNavigationReady,expectedJob:frameJobId,pending:!!pendingRun,lastInspection:lastFrameInfo},job:job?{id:job.id,status:job.status,error:job.error||'',progress:job.progress,transport:job.transport,postsReceived:job.posts?.length||0,imagesReceived:job.posts?.filter(p=>p.imageData).length||0,binding:job.frameBindingInfo||null,diagnostic:job.diagnostic||null}:null};
     const url=URL.createObjectURL(new Blob([JSON.stringify(report,null,2)],{type:'application/json'})),link=node('a',{href:url,download:'meta-assistant-diagnostic.json'});document.body.append(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);notice('Đã tải báo lỗi kết nối khung GPT.');
   }catch(e){notice(e.message,true);}};
   $('updateExtension').onclick=async()=>{

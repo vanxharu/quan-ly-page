@@ -14,7 +14,8 @@
 
   const settings = async () => InboxRules.withDefaults(await DB.get(InboxRules.SETTINGS_KEY));
   const normalizeConversation = (page, c) => {
-    const other = c.participants?.data?.find(u => u.id !== page.id) || {};
+    const other = c.participants?.data?.find(u => String(u.id) !== String(page.id)) || {};
+    App.noteCustomerConversation?.(page,c,other);
     const last = c.messages?.data?.[0];
     return { ...c, page, other, fromCustomer: last ? last.from?.id !== page.id : true,
       lastAt: new Date(last?.created_time || c.updated_time).getTime(), key: App.crmKey(page.id, other.name) };
@@ -204,25 +205,7 @@
     const identity=S.identities.get(pictureKey(c));
     $('ibTitle').replaceChildren(h('span', { className: 'thread-head' }, custAvatar(c, 32),
       h('span', { style: 'min-width:0' }, h('div', { className: 'card-title', textContent: c.other.name || 'Khách' }), h('div', { className: 'hint', textContent: c.page.name }),
-        identity?h('a',{className:'hint',href:identity.profileUrl,target:'_blank',rel:'noopener noreferrer',textContent:'UID '+identity.uid}):null),
-      h('button',{type:'button',className:'btn btn-ghost btn-sm',textContent:'Facebook',title:'Liên kết đúng trang cá nhân để xác minh UID và ảnh',onclick:()=>linkCustomer(c)})));
-  }
-  async function linkCustomer(c){
-    const dialog=h('dialog',{className:'ai-dialog'}),field=h('input',{type:'text',placeholder:'https://www.facebook.com/ten-khach',autocomplete:'off','aria-label':'Link Facebook của khách'}),status=h('div',{className:'hint',role:'status'}),preview=h('div',{});
-    status.textContent=App.customerIdentityStatus?.get(pictureKey(c))||'';
-    let verified=null;
-    const save=h('button',{type:'button',className:'btn btn-primary',textContent:'Gắn với khách đang chọn',disabled:true,onclick:async()=>{
-      if(!verified)return;save.disabled=true;
-      try{const profile=await App.bindCustomerProfile(c.page,c.other.id,verified);S.identities.set(pictureKey(c),profile);pictureChecked.delete(pictureKey(c));await loadPics([c],true);dialog.close();}catch(error){status.textContent=error.message;save.disabled=false;}
-    }});
-    field.oninput=()=>{verified=null;save.disabled=true;preview.replaceChildren();};
-    const check=h('button',{type:'button',className:'btn btn-soft',textContent:'Kiểm tra link',onclick:async()=>{
-      const value=field.value.trim();verified=null;save.disabled=true;check.disabled=true;status.textContent='Đang đọc UID và ảnh công khai…';preview.replaceChildren();
-      try{const profile=await App.lookupCustomerProfile(value,true);if(field.value.trim()!==value)return;verified=profile;preview.replaceChildren(App.avatar(profile.name,profile.avatar,64),h('div',{textContent:profile.name+' · UID '+profile.uid}));status.textContent='Kiểm tra đúng người trước khi gắn ảnh vào hội thoại.';save.disabled=false;}catch(error){status.textContent=error.message;}finally{check.disabled=false;}
-    }});
-    dialog.append(h('h2',{textContent:'Facebook của '+(c.other.name||'khách')}),h('p',{textContent:'ID hội thoại: '+c.other.id+'. Nếu Facebook không cho đổi ID này sang UID, liên kết trang cá nhân của đúng khách một lần. Sau đó ảnh được tự tải.'}),field,check,status,preview,h('div',{className:'row'},save,h('button',{type:'button',className:'btn btn-ghost',textContent:'Đóng',onclick:()=>dialog.close()})));
-    document.body.append(dialog);dialog.addEventListener('close',()=>dialog.remove());dialog.showModal();
-    const identity=await App.customerIdentity(c.page,c.other.id);if(identity&&dialog.open)field.value=identity.profileUrl;
+        identity?h('a',{className:'hint',href:identity.profileUrl,target:'_blank',rel:'noopener noreferrer',textContent:'UID '+identity.uid}):null)));
   }
   async function drawList() {
     const st = await settings();
@@ -295,6 +278,8 @@
       if (!res) return;
       if (S.conv !== c) return;
       const msgs = (res.messages?.data || []).reverse();
+      App.noteCustomerConversation?.(c.page,{...c,messages:{data:msgs}},c.other);
+      queuePics([c]);
       const thread = $('ibThread'), oldTop = thread.scrollTop;
       const atBottom = thread.scrollHeight - thread.clientHeight - oldTop < 70;
       const me = m => m.from?.id === c.page.id;

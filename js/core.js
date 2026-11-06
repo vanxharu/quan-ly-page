@@ -347,16 +347,51 @@ let identityWrites=Promise.resolve();
 function publicIdentity(profile){
   const uid=String(profile?.uid||''),image=new URL(profile?.avatar),url=new URL(profile?.profileUrl);
   if(!/^\d{5,30}$/.test(uid)||image.protocol!=='https:'||!image.hostname.endsWith('.fbcdn.net')||image.username||image.password||url.origin!=='https://www.facebook.com'||/(?:[?&])(access_token|token|authorization)=/i.test(image.search))throw Error('UID hoặc ảnh công khai chưa hợp lệ.');
-  return {uid,name:String(profile.name||'').slice(0,200),profileUrl:url.href,avatar:image.href,verifiedAt:Date.now()};
+  return {uid,name:String(profile.name||'').slice(0,200),profileUrl:url.href,avatar:image.href,...(/^\d{5,30}$/.test(String(profile.sourceId||''))?{sourceId:String(profile.sourceId)}:{}),verifiedAt:Date.now()};
 }
 async function rememberCustomerIdentities(changes){
   const write=identityWrites.catch(()=>{}).then(async()=>DB.set('customerIdentitiesV1',{...await DB.get('customerIdentitiesV1',{}),...changes}));identityWrites=write;await write;
 }
 App.customerIdentity = async (page,id) => (await DB.get('customerIdentitiesV1',{}))[page.id+':'+id];
-App.bindCustomerProfile = async (page,id,profile) => {const verified=publicIdentity(profile);await rememberCustomerIdentities({[page.id+':'+id]:verified});return verified;};
+const customerContexts = new Map(), customerEvidence = new Map();
+function facebookCustomerLink(value){
+  try{const u=new URL(value);if(u.protocol!=='https:'||!['www.facebook.com','facebook.com','m.facebook.com'].includes(u.hostname)||u.username||u.password)return '';
+    const p=u.pathname.replace(/^\/+|\/+$/g,'');
+    if(p==='profile.php'&&/^\d{5,30}$/.test(u.searchParams.get('id')||''))return 'https://www.facebook.com/profile.php?id='+u.searchParams.get('id');
+    if(/^app_scoped_user_id\/\d{5,30}$/.test(p))return 'https://www.facebook.com/'+p+'/';
+    if(/^[a-zA-Z0-9.]{3,100}$/.test(p)&&!['login','checkpoint','help','privacy','settings','photo.php','l.php','home.php','watch','reel','groups','pages','recover','dialog','share'].includes(p.toLowerCase()))return 'https://www.facebook.com/'+p;
+  }catch{}return '';
+}
+App.noteCustomerConversation = (page,c,other) => {
+  if(!other?.id)return;const participants=(c.participants?.data||[]).filter(p=>String(p.id)!==String(page.id));
+  if(participants.length!==1||String(participants[0].id)!==String(other.id))return;
+  const ids=[...new Set((c.messages?.data||[]).map(m=>String(m.from?.id||'')).filter(id=>/^\d{5,30}$/.test(id)&&id!==String(page.id)))];
+  customerContexts.set(page.id+':'+other.id,{conversationId:String(c.id||''),profileLink:facebookCustomerLink(other.link||other.profile_url),senderIds:ids.length===1?ids:[]});
+};
+async function automaticCustomerEvidence(page,id,force=false){
+  const key=page.id+':'+id,ctx=customerContexts.get(key),cached=customerEvidence.get(key);
+  const signature=JSON.stringify(ctx||{});
+  if(!force&&cached&&Date.now()-cached.at<600e3&&cached.signature===signature)return cached;
+  const result={at:Date.now(),signature,conversationId:ctx?.conversationId||'',links:new Set(),ids:new Set(ctx?.senderIds||[]),avatar:''};
+  if(ctx?.profileLink)result.links.add(ctx.profileLink);
+  try{const profile=await api('/'+encodeURIComponent(id),{fields:'id,link,picture.width(128).height(128)'},'GET',page.access_token);
+    if(/^\d{5,30}$/.test(String(profile.id||''))){result.ids.add(String(profile.id));const link=facebookCustomerLink(profile.link);if(link)result.links.add(link);if(profile.picture?.data?.is_silhouette===false)result.avatar=profile.picture.data.url;}
+  }catch(error){reportAvatarError(error);}
+  if(ctx?.conversationId)try{
+    const thread=await api('/'+encodeURIComponent(ctx.conversationId),{fields:'id,participants,senders,link'},'GET',page.access_token);
+    const others=(thread.participants?.data||[]).filter(p=>String(p.id)!==String(page.id));
+    if(others.length===1&&(!thread.id||String(thread.id)===ctx.conversationId)){
+      if(/^\d{5,30}$/.test(String(others[0].id)))result.ids.add(String(others[0].id));
+      const link=facebookCustomerLink(others[0].link);if(link)result.links.add(link);
+      const senders=(thread.senders?.data||[]).filter(p=>String(p.id)!==String(page.id));if(senders.length===1){const sender=senders[0],profileLink=facebookCustomerLink(sender.link);if(profileLink)result.links.add(profileLink);if(/^\d{5,30}$/.test(String(sender.id)))result.ids.add(String(sender.id));}
+      try{const u=new URL(thread.link);if(['facebook.com','www.facebook.com','business.facebook.com'].includes(u.hostname)){const match=u.pathname.match(/^\/messages\/t\/(\d{5,30})\/?$/),selected=u.searchParams.get('selected_item_id');if(match)result.ids.add(match[1]);if(/^\d{5,30}$/.test(selected||''))result.ids.add(selected);}}catch{}
+    }
+  }catch(error){reportAvatarError(error);}
+  customerEvidence.set(key,result);return result;
+}
 let avatarWrites = Promise.resolve();
 App.customerPics = async (page, psids, { force = false, onResult, onIdentity } = {}) => {
-  const cache = await DB.get('avatarCacheV5', {}), changes = {}, identities=await DB.get('customerIdentitiesV1',{}), identityChanges={};
+  const cache = await DB.get('avatarCacheV6', {}), changes = {}, identities=await DB.get('customerIdentitiesV1',{}), identityChanges={};
   const safeURL = value => { try { const u = new URL(value); return u.protocol === 'https:' && !u.username && !u.password && ![...u.searchParams.keys()].some(k => /^(access_token|token|authorization)$/i.test(k)) ? u.href : ''; } catch { return ''; } };
   const out = new Map(), need = [];
   const emit = (id, url) => { out.set(id, url); onResult?.(id, url); };
@@ -391,17 +426,28 @@ App.customerPics = async (page, psids, { force = false, onResult, onIdentity } =
       });
     } catch (error) { reportAvatarError(error); }
   }
+  await pool(need.filter(id=>!out.get(id)),4,async id=>{
+    try{const profile=await api('/'+encodeURIComponent(id),{fields:'first_name,last_name,profile_pic'},'GET',page.access_token);const url=safeURL(profile.profile_pic);if(url){changes[page.id+':'+id]={url,at:Date.now()};emit(id,url);}}catch(error){reportAvatarError(error);}
+  });
   if(typeof App.lookupCustomerProfile==='function')await pool(need.filter(id=>!out.get(id)),2,async id=>{
     const key=page.id+':'+id;
     try {
-      const saved=identities[key],profile=publicIdentity(await App.lookupCustomerProfile(saved?.profileUrl||id,force));
-      if((!saved&&profile.uid!==id)||(saved&&profile.uid!==saved.uid))throw Error('ID hội thoại khác UID công khai. Cần liên kết Facebook của đúng khách.');
+      const saved=identities[key],evidence=await automaticCustomerEvidence(page,id,force);
+      const graphPhoto=safeURL(evidence.avatar);if(graphPhoto){changes[key]={url:graphPhoto,at:Date.now()};emit(id,graphPhoto);return;}
+      const candidates=saved?[{target:saved.profileUrl,linked:true}]:[...evidence.links].map(target=>({target,linked:true})).concat([...new Set([id,...evidence.ids])].map(target=>({target,linked:false})));
+      let profile,lastError;
+      for(const candidate of candidates){try{const found=publicIdentity(await App.lookupCustomerProfile(candidate.target,force));
+        if(saved&&found.uid!==saved.uid)throw Error('UID công khai đã đổi; chưa dùng ảnh khác.');
+        if(!candidate.linked&&found.uid!==String(candidate.target)&&found.sourceId!==String(candidate.target))throw Error('Chưa có bằng chứng Facebook nối ID hội thoại với UID này.');
+        profile=found;break;
+      }catch(error){lastError=error;}}
+      if(!profile)throw lastError||Error('Facebook chưa trả đủ dữ liệu để tự xác minh UID.');
       identityChanges[key]=profile;changes[key]={url:profile.avatar,at:Date.now()};customerIdentityStatus.delete(key);onIdentity?.(id,profile);emit(id,profile.avatar);
     } catch(error){customerIdentityStatus.set(key,String(error.message||'Chưa xác minh được UID.'));}
   });
   if(Object.keys(identityChanges).length)await rememberCustomerIdentities(identityChanges);
   for (const id of need) if (!out.has(id)) emit(id, '');
-  if (Object.keys(changes).length) { const write = avatarWrites.catch(() => {}).then(async () => { const latest = await DB.get('avatarCacheV5', {}); await DB.set('avatarCacheV5', { ...latest, ...changes }); }); avatarWrites = write; await write; }
+  if (Object.keys(changes).length) { const write = avatarWrites.catch(() => {}).then(async () => { const latest = await DB.get('avatarCacheV6', {}); await DB.set('avatarCacheV6', { ...latest, ...changes }); }); avatarWrites = write; await write; }
   return out;
 };
 // Dòng Page nhỏ: ảnh + tên (dùng trong danh sách bài, bình luận…).

@@ -1,4 +1,4 @@
-META ASSISTANT · STUDIO AI 2.4.1
+META ASSISTANT · STUDIO AI 2.4.2
 
 1. Bấm Tải lại tiện ích tại chrome://extensions. Nếu trình duyệt yêu cầu xác nhận quyền mới cho khung nhúng, bạn tự xác nhận.
 2. Tải lại Meta Assistant để đồng bộ avatar Page, lịch sử bài và giao diện sáng/tối.
@@ -21,4 +21,4 @@ CÀI ĐẶT: sửa trang chủ GPT (chatgpt.com hoặc đường dẫn GPT tuỳ
 CẬP NHẬT WINDOWS: tải meta-assistant-updater.zip từ website, giải nén, chạy MetaAssistantUpdater.exe và chọn đúng thư mục đang dùng. Bộ cài sao lưu, cập nhật vào thư mục đó và kết nối với đúng ID tiện ích. Bấm Tải lại tiện ích một lần để nạp quyền mới. Từ lần sau bấm Cập nhật ngay ở đầu Studio AI; tiện ích tự nạp lại, giữ nháp và cài đặt. Không cập nhật giữa lượt GPT.
 LỊCH ĐĂNG: chức năng Đăng Fanpage đã gộp vào Lịch đăng. Bấm Soạn tay để viết/tải ảnh, đăng ngay hoặc lưu vào danh sách duyệt. Bản nháp cũ vẫn được giữ.
 
-AVATAR KHÁCH: tiện ích 2.4.1 kết nối bộ Windows mới để đọc UID và ảnh từ trang Facebook công khai, không dùng cookie/phiên Facebook. Web tự thử link ID khách. Nếu ID Messenger không đổi được sang UID, bấm Facebook ở đầu hội thoại, dán link đúng người, bấm Kiểm tra link rồi Gắn với khách đang chọn. Không tự ghép theo tên trùng. Từ lần sau ảnh tự tải, có UID đã xác minh dưới tên khách. Bộ cũ cần chạy lại MetaAssistantUpdater.exe để cập nhật chức năng đọc hồ sơ công khai.
+AVATAR KHÁCH: web tự đọc ảnh và nhận diện theo dữ liệu Facebook trả về cho từng khách/hội thoại. Không nhập link, không gắn từng khách thủ công. UID đã xác minh hiển thị dưới tên; PSID để nhắn tin được giữ riêng. Các cặp ID và link bạn đã cung cấp được lưu riêng trên máy. Khách chưa được Facebook cấp dữ liệu vẫn giữ chữ viết tắt và được tự thử lại có giới hạn; không ghép theo tên trùng. Bộ kết nối Windows dùng giao thức đọc/ghi tiêu chuẩn, có báo lỗi kết nối gốc để chẩn đoán.
