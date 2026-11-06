@@ -355,6 +355,24 @@ async function rememberCustomerIdentities(changes){
 }
 App.customerIdentity = async (page,id) => (await DB.get('customerIdentitiesV1',{}))[page.id+':'+id];
 const customerContexts = new Map(), customerEvidence = new Map(), dirtyCustomerEvidence = new Set();
+const avatarDiagnostics = new Map(), avatarReportTimers = new Map();
+function recordAvatarDiagnostic(page,id,hasPhoto,error,stage=''){
+  const key=page.id+':'+id,row=avatarDiagnostics.get(key)||{pageId:String(page.id),id:String(id),hasPhoto:false,errors:[]};
+  if(typeof hasPhoto==='boolean')row.hasPhoto=hasPhoto;
+  const text=value=>{let result=String(value||'');if(page.access_token)result=result.split(page.access_token).join('[ẩn]');return result.replace(/https?:\/\/\S+/gi,'[link]').replace(/(?:access_token|authorization|cookie|token)\s*[:=]\s*[^\s,;]+/gi,'[ẩn]').replace(/EA[A-Za-z0-9_-]{20,}/g,'[ẩn]').slice(0,120);};
+  if(error){const item={stage:text(stage),code:text(error.code),subcode:text(error.error_subcode??error.sub),message:text(error.message||'Không có phản hồi ảnh.')};if(!row.errors.some(e=>JSON.stringify(e)===JSON.stringify(item)))row.errors.push(item);row.errors=row.errors.slice(-8);}
+  avatarDiagnostics.set(key,row);if(avatarDiagnostics.size>2000)avatarDiagnostics.delete(avatarDiagnostics.keys().next().value);
+  if(typeof App.reportCustomerAvatarDiagnostics!=='function'||avatarReportTimers.has(page.id))return;
+  avatarReportTimers.set(page.id,setTimeout(()=>{
+    avatarReportTimers.delete(page.id);
+    const items=[...avatarDiagnostics.values()].filter(r=>r.pageId===String(page.id)).slice(0,50).map(r=>({id:r.id,hasPhoto:r.hasPhoto,errors:r.errors.length>1?[r.errors[0],r.errors.at(-1)]:r.errors}));
+    App.reportCustomerAvatarDiagnostics(String(page.id),items).catch(()=>{});
+  },1500));
+}
+async function avatarRequest(page,id,path,params={},method='GET'){
+  try{return await api(path,params,method,page.access_token);}
+  catch(error){recordAvatarDiagnostic(page,id,null,error,params.fields||'picture');throw error;}
+}
 function facebookCustomerLink(value){
   try{const u=new URL(value);if(u.protocol!=='https:'||!['www.facebook.com','facebook.com','m.facebook.com'].includes(u.hostname)||u.username||u.password)return '';
     const p=u.pathname.replace(/^\/+|\/+$/g,'');
@@ -380,15 +398,15 @@ async function automaticCustomerEvidence(page,id,force=false){
   const result={at:Date.now(),signature,conversationId:ctx?.conversationId||'',links:new Set(),ids:new Set(ctx?.senderIds||[]),avatar:''};
   if(ctx?.profileLink)result.links.add(ctx.profileLink);
   const acceptProfile=profile=>{if(!/^\d{5,30}$/.test(String(profile?.id||'')))return;result.ids.add(String(profile.id));const link=facebookCustomerLink(profile.link);if(link)result.links.add(link);if(profile.picture?.data?.is_silhouette===false)result.avatar=profile.picture.data.url;};
-  try{acceptProfile(await api('/'+encodeURIComponent(id),{fields:'id,link,picture.width(128).height(128)'},'GET',page.access_token));}
+  try{acceptProfile(await avatarRequest(page,id,'/'+encodeURIComponent(id),{fields:'id,link,picture.width(128).height(128)'},'GET'));}
   catch(error){reportAvatarError(error);
     // Một trường không được cấp quyền không được làm mất trường ảnh/link vẫn đọc được.
-    for(const fields of ['id,picture.width(128).height(128)','id,link'])try{acceptProfile(await api('/'+encodeURIComponent(id),{fields},'GET',page.access_token));}catch(e){reportAvatarError(e);}
+    for(const fields of ['id,picture.width(128).height(128)','id,link'])try{acceptProfile(await avatarRequest(page,id,'/'+encodeURIComponent(id),{fields},'GET'));}catch(e){reportAvatarError(e);}
   }
   if(ctx?.conversationId)try{
     let thread;
-    try{thread=await api('/'+encodeURIComponent(ctx.conversationId),{fields:'id,participants,senders,link'},'GET',page.access_token);}
-    catch(error){reportAvatarError(error);thread=await api('/'+encodeURIComponent(ctx.conversationId),{fields:'id,participants'},'GET',page.access_token);try{const extra=await api('/'+encodeURIComponent(ctx.conversationId),{fields:'id,senders'},'GET',page.access_token);if(!extra.id||String(extra.id)===ctx.conversationId)thread={...thread,senders:extra.senders};}catch(e){reportAvatarError(e);}}
+    try{thread=await avatarRequest(page,id,'/'+encodeURIComponent(ctx.conversationId),{fields:'id,participants,senders,link'},'GET');}
+    catch(error){reportAvatarError(error);thread=await avatarRequest(page,id,'/'+encodeURIComponent(ctx.conversationId),{fields:'id,participants'},'GET');try{const extra=await avatarRequest(page,id,'/'+encodeURIComponent(ctx.conversationId),{fields:'id,senders'},'GET');if(!extra.id||String(extra.id)===ctx.conversationId)thread={...thread,senders:extra.senders};}catch(e){reportAvatarError(e);}}
     const others=(thread.participants?.data||[]).filter(p=>String(p.id)!==String(page.id));
     if(others.length===1&&(!thread.id||String(thread.id)===ctx.conversationId)){
       if(/^\d{5,30}$/.test(String(others[0].id)))result.ids.add(String(others[0].id));
@@ -404,7 +422,7 @@ App.customerPics = async (page, psids, { force = false, onResult, onIdentity } =
   const cache = await DB.get('avatarCacheV7', {}), changes = {}, identities=await DB.get('customerIdentitiesV1',{}), identityChanges={};
   const safeURL = value => { if(typeof value==='string'&&value.length<=200000&&/^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(value))return value;try { const u = new URL(value); return u.protocol === 'https:' && !u.username && !u.password && ![...u.searchParams.keys()].some(k => /^(access_token|token|authorization)$/i.test(k)) ? u.href : ''; } catch { return ''; } };
   const out = new Map(), need = [];
-  const emit = (id, url) => { out.set(id, url); onResult?.(id, url); };
+  const emit = (id, url) => { out.set(id, url); recordAvatarDiagnostic(page,id,!!url);onResult?.(id, url); };
   for (const id of new Set(psids.filter(Boolean).map(String).filter(id => /^\d+$/.test(id)))) {
     const c = cache[page.id + ':' + id];
     if(identities[page.id+':'+id])onIdentity?.(id,identities[page.id+':'+id]);
@@ -423,7 +441,7 @@ App.customerPics = async (page, psids, { force = false, onResult, onIdentity } =
     let url = '';
     try {
       // Truy cập trực tiếp link avatar. redirect=false trả URL CDN để hiển thị mà không lộ token.
-      const picture = await api(App.customerAvatarLink(id), {}, 'GET', page.access_token);
+      const picture = await avatarRequest(page,id,App.customerAvatarLink(id));
       if (picture.data?.is_silhouette === false) url = safeURL(picture.data.url);
     } catch (error) { reportAvatarError(error); }
     if (!url) missing.push(id);
@@ -439,13 +457,13 @@ App.customerPics = async (page, psids, { force = false, onResult, onIdentity } =
           const profile = JSON.parse(res[k]?.body || '{}');
           const url = res[k]?.code === 200 ? safeURL(profile.profile_pic) : '';
           if (url) { changes[page.id + ':' + id] = { url, at: Date.now() }; emit(id, url); }
-          else if (profile.error) reportAvatarError(profile.error);
+          else if (profile.error) {recordAvatarDiagnostic(page,id,null,profile.error,'profile_pic');reportAvatarError(profile.error);}
         } catch (error) { reportAvatarError(error); }
       });
     } catch (error) { reportAvatarError(error); }
   }
   await pool(need.filter(id=>!out.get(id)),4,async id=>{
-    try{const profile=await api('/'+encodeURIComponent(id),{fields:'profile_pic'},'GET',page.access_token);const url=safeURL(profile.profile_pic);if(url){changes[page.id+':'+id]={url,at:Date.now()};emit(id,url);}}catch(error){reportAvatarError(error);}
+    try{const profile=await avatarRequest(page,id,'/'+encodeURIComponent(id),{fields:'profile_pic'},'GET');const url=safeURL(profile.profile_pic);if(url){changes[page.id+':'+id]={url,at:Date.now()};emit(id,url);}}catch(error){reportAvatarError(error);}
   });
   if(typeof App.lookupCustomerProfile==='function')await pool(need.filter(id=>!out.get(id)),2,async id=>{
     const key=page.id+':'+id;
@@ -454,8 +472,8 @@ App.customerPics = async (page, psids, { force = false, onResult, onIdentity } =
       const graphPhoto=safeURL(evidence.avatar);if(graphPhoto){changes[key]={url:graphPhoto,at:Date.now()};customerIdentityStatus.delete(key);emit(id,graphPhoto);return;}
       // Thử ID người gửi mà Facebook trả cho chính hội thoại này, không tìm theo tên.
       for(const senderId of evidence.ids){if(senderId===id||senderId===String(page.id))continue;let photo='';
-        try{const picture=await api(App.customerAvatarLink(senderId),{},'GET',page.access_token);if(picture.data?.is_silhouette===false)photo=safeURL(picture.data.url);}catch(error){reportAvatarError(error);}
-        if(!photo)try{const profile=await api('/'+encodeURIComponent(senderId),{fields:'profile_pic'},'GET',page.access_token);if(!profile.id||String(profile.id)===senderId)photo=safeURL(profile.profile_pic);}catch(error){reportAvatarError(error);}
+        try{const picture=await avatarRequest(page,id,App.customerAvatarLink(senderId),{},'GET');if(picture.data?.is_silhouette===false)photo=safeURL(picture.data.url);}catch(error){reportAvatarError(error);}
+        if(!photo)try{const profile=await avatarRequest(page,id,'/'+encodeURIComponent(senderId),{fields:'profile_pic'},'GET');if(!profile.id||String(profile.id)===senderId)photo=safeURL(profile.profile_pic);}catch(error){reportAvatarError(error);}
         if(photo){changes[key]={url:photo,at:Date.now()};customerIdentityStatus.delete(key);emit(id,photo);return;}
       }
       const candidates=saved?[{target:saved.profileUrl,linked:true}]:[...evidence.links].map(target=>({target,linked:true})).concat([...new Set([id,...evidence.ids])].map(target=>({target,linked:false})));
@@ -464,7 +482,7 @@ App.customerPics = async (page, psids, { force = false, onResult, onIdentity } =
         if(saved&&found.uid!==saved.uid)throw Error('UID công khai đã đổi; chưa dùng ảnh khác.');
         if(!candidate.linked&&found.uid!==String(candidate.target)&&found.sourceId!==String(candidate.target))throw Error('Chưa có bằng chứng Facebook nối ID hội thoại với UID này.');
         profile=found;break;
-      }catch(error){lastError=error;}}
+      }catch(error){lastError=error;recordAvatarDiagnostic(page,id,null,error,'public_profile');}}
       if(!profile)throw lastError||Error('Facebook chưa trả đủ dữ liệu để tự xác minh UID.');
       identityChanges[key]=profile;const image=profile.avatarData||profile.avatar;changes[key]={url:image,at:Date.now()};customerIdentityStatus.delete(key);onIdentity?.(id,profile);emit(id,image);
     } catch(error){customerIdentityStatus.set(key,String(error.message||'Chưa xác minh được UID.'));}

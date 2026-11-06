@@ -1,5 +1,5 @@
 $ErrorActionPreference='Stop'
-$source=(Get-Content -LiteralPath (Join-Path $PSScriptRoot 'Updater.cs') -Raw -Encoding UTF8)+"`n"+(Get-Content -LiteralPath (Join-Path $PSScriptRoot 'PublicProfile.cs') -Raw -Encoding UTF8)+"`n"+(Get-Content -LiteralPath (Join-Path $PSScriptRoot 'CustomerAvatarCache.cs') -Raw -Encoding UTF8)
+$source=(Get-Content -LiteralPath (Join-Path $PSScriptRoot 'Updater.cs') -Raw -Encoding UTF8)+"`n"+(Get-Content -LiteralPath (Join-Path $PSScriptRoot 'PublicProfile.cs') -Raw -Encoding UTF8)+"`n"+(Get-Content -LiteralPath (Join-Path $PSScriptRoot 'CustomerAvatarCache.cs') -Raw -Encoding UTF8)+"`n"+(Get-Content -LiteralPath (Join-Path $PSScriptRoot 'AvatarDiagnostics.cs') -Raw -Encoding UTF8)
 $tests=@'
 namespace UpdaterTests {
   public class FailingEngine : MetaAssistantUpdater.Engine {
