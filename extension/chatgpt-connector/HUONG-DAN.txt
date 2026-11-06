@@ -1,4 +1,4 @@
-META ASSISTANT · STUDIO AI 2.4.6
+META ASSISTANT · STUDIO AI 2.5.0
 
 1. Bấm Tải lại tiện ích tại chrome://extensions. Nếu trình duyệt yêu cầu xác nhận quyền mới cho khung nhúng, bạn tự xác nhận.
 2. Tải lại Meta Assistant để đồng bộ avatar Page, lịch sử bài và giao diện sáng/tối.
@@ -23,12 +23,17 @@ LỊCH ĐĂNG: chức năng Đăng Fanpage đã gộp vào Lịch đăng. Bấm 
 
 AVATAR KHÁCH: web tự đọc ảnh và nhận diện theo dữ liệu Facebook trả về cho từng khách/hội thoại. Không nhập link, không gắn từng khách thủ công. UID đã xác minh hiển thị dưới tên; PSID để nhắn tin được giữ riêng. Các cặp ID và link bạn đã cung cấp được lưu riêng trên máy. Khách chưa được Facebook cấp dữ liệu vẫn giữ chữ viết tắt và được tự thử lại có giới hạn; không ghép theo tên trùng. Bộ kết nối Windows dùng giao thức đọc/ghi tiêu chuẩn, có báo lỗi kết nối gốc để chẩn đoán.
 
-CẬP NHẬT 2.4.6: nút Cập nhật kiểm tra tệp, bộ nền và giao diện đang chạy. Dù tệp đã mới, tiện ích vẫn tự nạp lại nếu bộ nền/giao diện cũ. Chỉ báo mới nhất khi các phiên bản khớp. Phần sửa nháp và prompt được lưu trước; lỗi GPT của lượt trước nằm tại ChatGPT/Bản nháp. Không giải nén lại vào thư mục khác.
+CẬP NHẬT 2.5.0: nút Cập nhật kiểm tra tệp, bộ nền và giao diện đang chạy. Dù tệp đã mới, tiện ích vẫn tự nạp lại nếu bộ nền/giao diện cũ. Chỉ báo mới nhất khi các phiên bản khớp. Phần sửa nháp và prompt được lưu trước; lỗi GPT của lượt trước nằm tại ChatGPT/Bản nháp. Không giải nén lại vào thư mục khác.
 
-AVATAR 2.4.6: ảnh đã xác minh được lưu riêng dưới dạng PNG nhỏ trên máy; web nhận ảnh trực tiếp từ tiện ích, không chờ cả nhóm khách/API bên ngoài. Yêu cầu ảnh tách khỏi hàng đợi tạo bài. Cache riêng không nằm trong ZIP công khai, không dùng tên để gán ảnh. Bộ kết nối mới cần chạy cùng phiên bản để tạo/cập nhật cache ảnh.
-
-
-KẾT NỐI 2.4.6: khi cập nhật/nạp lại tiện ích, bộ nền kiểm tra cầu nối của các tab Meta Assistant. Tab mất cầu nối hoặc còn bản cầu nối cũ được tải lại tự động để nạp kết nối mới; tab đang kết nối và tab GPT được giữ. Có giới hạn chống tải lại liên tục, giữ nháp đã lưu trong web/tiện ích. Web tạm dừng yêu cầu khi kết nối mất, chỉ báo một lần và tự tiếp tục nhận bài/ảnh khi cầu nối mới sẵn sàng.
+AVATAR 2.5.0: ảnh đã xác minh được lưu riêng dưới dạng PNG nhỏ trên máy; web nhận ảnh trực tiếp từ tiện ích, không chờ cả nhóm khách/API bên ngoài. Yêu cầu ảnh tách khỏi hàng đợi tạo bài. Cache riêng không nằm trong ZIP công khai, không dùng tên để gán ảnh. Bộ kết nối mới cần chạy cùng phiên bản để tạo/cập nhật cache ảnh.
 
 
-BÁO LỖI AVATAR 2.4.6: tự ghi phản hồi API theo Page/ID khách vào inbox-avatar-diagnostic.json trong thư mục bộ kết nối Windows. Chỉ gồm ID, có/thiếu ảnh và mã/bước/thông báo lỗi đã làm sạch; không có token, cookie, nội dung hội thoại hoặc ảnh. Tệp riêng ở trên máy, không nằm trong gói công khai. Dùng để tìm nguyên nhân khách còn thiếu ảnh trên phiên thực tế; đây không phải xác nhận đã lấy được mọi avatar.
+KẾT NỐI 2.5.0: khi cập nhật/nạp lại tiện ích, bộ nền kiểm tra cầu nối của các tab Meta Assistant. Tab mất cầu nối hoặc còn bản cầu nối cũ được tải lại tự động để nạp kết nối mới; tab đang kết nối và tab GPT được giữ. Có giới hạn chống tải lại liên tục, giữ nháp đã lưu trong web/tiện ích. Web tạm dừng yêu cầu khi kết nối mất, chỉ báo một lần và tự tiếp tục nhận bài/ảnh khi cầu nối mới sẵn sàng.
+
+
+BÁO LỖI AVATAR 2.5.0: tự ghi phản hồi API theo Page/ID khách vào inbox-avatar-diagnostic.json trong thư mục bộ kết nối Windows. Chỉ gồm ID, có/thiếu ảnh và mã/bước/thông báo lỗi đã làm sạch; không có token, cookie, nội dung hội thoại hoặc ảnh. Tệp riêng ở trên máy, không nằm trong gói công khai. Dùng để tìm nguyên nhân khách còn thiếu ảnh trên phiên thực tế; đây không phải xác nhận đã lấy được mọi avatar.
+
+
+STUDIO 2.5.0: bỏ chặn tổng 6 bài/lượt và 3 bài/Page. Tiếp tục tạo từng bài → ảnh → lưu nháp trước bài kế tiếp. Bản nháp lớn lưu trong IndexedDB; Chrome storage giữ con trỏ nhỏ, ảnh xem theo nhu cầu. Chuyển toàn bộ số bài sang web theo các phần nhỏ có xác nhận lưu, không cắt còn 6 bài. Chỉ dọn bản lưu của lượt cũ sau khi tất cả bài đã được web xác nhận và bắt đầu lượt mới.
+Lên lịch có ảnh: tải ảnh chưa xuất bản, gắn mã ảnh vào bài feed được hẹn giờ. Không chuyển sang bài chỉ có chữ khi tải ảnh lỗi; bài AI cần ảnh bị chặn duyệt/lên lịch nếu chưa nhận ảnh. Nhận lại ảnh có thể sửa nháp lỗi thiếu ảnh mà không đè nội dung người dùng đã sửa. Ảnh xem trước hỗ trợ attachments của Facebook.
+Avatar: dùng profile_pic của PSID trước; từng khách tự chuyển nguồn dự phòng, không đợi cả nhóm. Ảnh nhận được lưu ngay. Yêu cầu ảnh Facebook có ngắt chờ 12 giây để thử nguồn khác; không đổi thời gian chờ GPT. Mã 100/33 trên /picture không được dùng để kết luận mọi khách đều bị chặn. Bộ Windows báo hostVersion và tính năng để phân biệt mã đang chạy với phiên bản tệp tiện ích.

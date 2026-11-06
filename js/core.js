@@ -124,14 +124,14 @@ App.selected = () => App.pages.filter(p => selected.has(p.id));
 App.isSelected = id => selected.has(String(id));
 App.page = () => App.selected()[0] || App.pages[0];
 App.pageById = id => App.pages.find(p => p.id === String(id));
-async function api(path, params = {}, method = 'GET', token = App.page()?.access_token) {
+async function api(path, params = {}, method = 'GET', token = App.page()?.access_token, options = {}) {
   const url = new URL(path.startsWith('http') ? path : App.GRAPH + path);
   let body;
   const enc = v => typeof v === 'object' ? JSON.stringify(v) : String(v);
   if (params instanceof FormData) { body = params; body.append('access_token', token); }
   else if (method === 'GET' || method === 'DELETE') { for (const [k, v] of Object.entries(params)) url.searchParams.set(k, enc(v)); url.searchParams.set('access_token', token); }
   else { body = new URLSearchParams(); for (const [k, v] of Object.entries(params)) body.set(k, enc(v)); body.set('access_token', token); }
-  const res = await fetch(url, { method, body });
+  const res = await fetch(url, { method, body, ...(options.signal?{signal:options.signal}:{}) });
   const json = await res.json().catch(() => ({ error: { message: `HTTP ${res.status}` } }));
   if (json.error) throw Object.assign(new Error(json.error.error_user_msg || json.error.message), { code: json.error.code, sub: json.error.error_subcode });
   return json;
@@ -194,15 +194,26 @@ App.recordTemplateUse = async (tpl, customerKey) => {
 };
 // Đăng (hoặc hẹn) một bài lên Page. when: giây Unix, 0 = đăng ngay.
 App.publish = async (page, text, imageData, when = 0) => {
-  const sched = when ? { published: false, scheduled_publish_time: when } : {};
+  const sched = when ? { published: false, scheduled_publish_time: when, unpublished_content_type:'SCHEDULED' } : {};
   if (imageData) {
-    const form = new FormData();
-    form.append('source', imageData instanceof Blob ? imageData : await (await fetch(imageData)).blob());
-    if (text) form.append('caption', text);
-    for (const [k, v] of Object.entries(sched)) form.append(k, String(v));
-    return api(`/${page.id}/photos`, form, 'POST', page.access_token);
+    const image=imageData instanceof Blob?imageData:await (await fetch(imageData)).blob();
+    if(!image.size||!/^image\//.test(image.type))throw Error('Không đọc được ảnh bài viết. Chưa gửi bài lên Facebook.');
+    const form = new FormData();form.append('source',image,'bai-viet.'+(image.type.split('/')[1]||'jpg'));
+    if(when){
+      form.append('published','false');
+      const upload=await api(`/${page.id}/photos`,form,'POST',page.access_token);
+      if(!upload.id)throw Error('Facebook chưa trả mã ảnh; chưa tạo bài hẹn.');
+      return api(`/${page.id}/feed`,{message:text||'',attached_media:[{media_fbid:String(upload.id)}],...sched},'POST',page.access_token);
+    }
+    if(text)form.append('caption',text);
+    return api(`/${page.id}/photos`,form,'POST',page.access_token);
   }
   return api(`/${page.id}/feed`, { message: text, ...sched }, 'POST', page.access_token);
+};
+App.scheduledPostImage=post=>{
+  if(post.full_picture)return post.full_picture;
+  const find=items=>{for(const item of items||[]){if(item.media?.image?.src)return item.media.image.src;const nested=find(item.subattachments?.data);if(nested)return nested;}return '';};
+  return find(post.attachments?.data);
 };
 
 // ── Sáng / Tối ─────────────────────────────────────────────
@@ -369,13 +380,16 @@ function recordAvatarDiagnostic(page,id,hasPhoto,error,stage=''){
     App.reportCustomerAvatarDiagnostics(String(page.id),items).catch(()=>{});
   },1500));
 }
-App.customerAvatarDiagnostic = () => ({capturedAt:new Date().toISOString(),sourceVersion:'avatar-diagnostic3',transport:App.avatarDiagnosticTransport||{ok:false,error:'Chưa gửi báo lỗi qua tiện ích.'},items:[...avatarDiagnostics.values()].map(row=>({...row,errors:row.errors.map(e=>({...e}))}))});
+App.customerAvatarDiagnostic = () => ({capturedAt:new Date().toISOString(),sourceVersion:'avatar-pipeline250',transport:App.avatarDiagnosticTransport||{ok:false,error:'Chưa gửi báo lỗi qua tiện ích.'},items:[...avatarDiagnostics.values()].map(row=>({...row,errors:row.errors.map(e=>({...e}))}))});
 App.flushCustomerAvatarDiagnostics=()=>{for(const row of avatarDiagnostics.values())recordAvatarDiagnostic({id:row.pageId},row.id,row.hasPhoto);};
 App.noteCustomerAvatarImageError=(page,id)=>recordAvatarDiagnostic(page,String(id),false,Error('Ảnh đã có URL nhưng trình duyệt tải thất bại.'),'image_load');
 async function avatarRequest(page,id,path,params={},method='GET'){
   recordAvatarDiagnostic(page,id,null,null,params.fields||'picture');
-  try{return await api(path,params,method,page.access_token);}
-  catch(error){recordAvatarDiagnostic(page,id,null,error,params.fields||'picture');throw error;}
+  const controller=typeof AbortController==='function'?new AbortController():null;
+  const timer=controller?setTimeout(()=>controller.abort(),12000):null;
+  try{return await api(path,params,method,page.access_token,controller?{signal:controller.signal}:{});}
+  catch(error){if(controller?.signal.aborted)error=Object.assign(Error('Facebook chưa phản hồi ảnh sau 12 giây; đang thử nguồn khác.'),{code:'AVATAR_TIMEOUT'});recordAvatarDiagnostic(page,id,null,error,params.fields||'picture');throw error;}
+  finally{if(timer!==null)clearTimeout(timer);}
 }
 function facebookCustomerLink(value){
   try{const u=new URL(value);if(u.protocol!=='https:'||!['www.facebook.com','facebook.com','m.facebook.com'].includes(u.hostname)||u.username||u.password)return '';
@@ -440,46 +454,27 @@ App.customerPics = async (page, psids, { force = false, onResult, onIdentity } =
       const key=page.id+':'+id;identityChanges[key]=profile;changes[key]={url:profile.avatarData,at:Date.now()};customerIdentityStatus.delete(key);onIdentity?.(id,profile);emit(id,profile.avatarData);
     }
   }catch(error){reportAvatarError(error);}
-  const missing = [];
-  await pool(need.filter(id=>!out.get(id)), 4, async id => {
-    let url = '';
-    try {
-      // Truy cập trực tiếp link avatar. redirect=false trả URL CDN để hiển thị mà không lộ token.
-      const picture = await avatarRequest(page,id,App.customerAvatarLink(id));
-      if (picture.data?.is_silhouette === false) url = safeURL(picture.data.url);
-    } catch (error) { reportAvatarError(error); }
-    if (!url) missing.push(id);
-    changes[page.id + ':' + id] = { url, at: Date.now() }; if (url) emit(id, url);
-  });
-  // Một số ID Messenger chỉ hỗ trợ profile_pic. Giữ làm dự phòng khi link không trả ảnh thật.
-  for (let i = 0; i < missing.length; i += 50) {
-    const chunk = missing.slice(i, i + 50);
-    try {
-      const res = await api('/', { batch: chunk.map(id => ({ method: 'GET', relative_url: `${id}?fields=profile_pic` })), include_headers: false }, 'POST', page.access_token);
-      chunk.forEach((id, k) => {
-        try {
-          const profile = JSON.parse(res[k]?.body || '{}');
-          const url = res[k]?.code === 200 ? safeURL(profile.profile_pic) : '';
-          if (url) { changes[page.id + ':' + id] = { url, at: Date.now() }; emit(id, url); }
-          else if (profile.error) {recordAvatarDiagnostic(page,id,null,profile.error,'profile_pic');reportAvatarError(profile.error);}
-        } catch (error) { reportAvatarError(error); }
-      });
-    } catch (error) { reportAvatarError(error); }
-  }
-  await pool(need.filter(id=>!out.get(id)),4,async id=>{
-    try{const profile=await avatarRequest(page,id,'/'+encodeURIComponent(id),{fields:'profile_pic'},'GET');const url=safeURL(profile.profile_pic);if(url){changes[page.id+':'+id]={url,at:Date.now()};emit(id,url);}}catch(error){reportAvatarError(error);}
-  });
-  if(typeof App.lookupCustomerProfile==='function')await pool(need.filter(id=>!out.get(id)),2,async id=>{
+  const writes=[],publicTasks=[],publicWaiters=[];let publicActive=0;
+  const save = (id,url,profile) => {
+    const key=page.id+':'+id;changes[key]={url,at:Date.now()};emit(id,url);
+    if(url)customerIdentityStatus.delete(key);
+    if(profile){identityChanges[key]=profile;onIdentity?.(id,profile);writes.push(rememberCustomerIdentities({[key]:profile}));}
+    const snapshot={...changes[key]};const write=avatarWrites.catch(()=>{}).then(async()=>{const latest=await DB.get('avatarCacheV7',{});await DB.set('avatarCacheV7',{...latest,[key]:snapshot});});avatarWrites=write;writes.push(write);
+  };
+  // Lưu từng ảnh ngay khi nhận; không đợi các khách/API còn lại.
+  for(const [key,value] of Object.entries(changes)){const id=key.slice(String(page.id).length+1);save(id,value.url,identityChanges[key]);}
+  async function publicFallback(id){
+    if(publicActive<2)publicActive++;else await new Promise(resolve=>publicWaiters.push(resolve));
     const key=page.id+':'+id;
     try {
       const saved=identities[key],evidence=await automaticCustomerEvidence(page,id,force);
-      const graphPhoto=safeURL(evidence.avatar);if(graphPhoto){changes[key]={url:graphPhoto,at:Date.now()};customerIdentityStatus.delete(key);emit(id,graphPhoto);return;}
-      // Thử ID người gửi mà Facebook trả cho chính hội thoại này, không tìm theo tên.
+      const graphPhoto=safeURL(evidence.avatar);if(graphPhoto){save(id,graphPhoto);return;}
       for(const senderId of evidence.ids){if(senderId===id||senderId===String(page.id))continue;let photo='';
-        try{const picture=await avatarRequest(page,id,App.customerAvatarLink(senderId),{},'GET');if(picture.data?.is_silhouette===false)photo=safeURL(picture.data.url);}catch(error){reportAvatarError(error);}
-        if(!photo)try{const profile=await avatarRequest(page,id,'/'+encodeURIComponent(senderId),{fields:'profile_pic'},'GET');if(!profile.id||String(profile.id)===senderId)photo=safeURL(profile.profile_pic);}catch(error){reportAvatarError(error);}
-        if(photo){changes[key]={url:photo,at:Date.now()};customerIdentityStatus.delete(key);emit(id,photo);return;}
+        try{const profile=await avatarRequest(page,id,'/'+encodeURIComponent(senderId),{fields:'profile_pic'});if(!profile.id||String(profile.id)===senderId)photo=safeURL(profile.profile_pic);}catch(error){reportAvatarError(error);}
+        if(!photo)try{const picture=await avatarRequest(page,id,App.customerAvatarLink(senderId));if(picture.data?.is_silhouette===false)photo=safeURL(picture.data.url);}catch(error){reportAvatarError(error);}
+        if(photo){save(id,photo);return;}
       }
+      if(typeof App.lookupCustomerProfile!=='function')throw Error('Facebook chưa trả ảnh qua API.');
       const candidates=saved?[{target:saved.profileUrl,linked:true}]:[...evidence.links].map(target=>({target,linked:true})).concat([...new Set([id,...evidence.ids])].map(target=>({target,linked:false})));
       let profile,lastError;
       for(const candidate of candidates){try{const found=publicIdentity(await App.lookupCustomerProfile(candidate.target,force));
@@ -488,12 +483,18 @@ App.customerPics = async (page, psids, { force = false, onResult, onIdentity } =
         profile=found;break;
       }catch(error){lastError=error;recordAvatarDiagnostic(page,id,null,error,'public_profile');}}
       if(!profile)throw lastError||Error('Facebook chưa trả đủ dữ liệu để tự xác minh UID.');
-      identityChanges[key]=profile;const image=profile.avatarData||profile.avatar;changes[key]={url:image,at:Date.now()};customerIdentityStatus.delete(key);onIdentity?.(id,profile);emit(id,image);
-    } catch(error){customerIdentityStatus.set(key,String(error.message||'Chưa xác minh được UID.'));}
+      save(id,profile.avatarData||profile.avatar,profile);
+    }catch(error){customerIdentityStatus.set(key,String(error.message||'Chưa xác minh được UID.'));save(id,'');}
+    finally{if(publicWaiters.length)publicWaiters.shift()();else publicActive--;}
+  }
+  await pool(need.filter(id=>!out.get(id)),4,async id=>{
+    let url='';
+    // PSID của Messenger dùng User Profile API; /picture chỉ là nguồn dự phòng.
+    try{const profile=await avatarRequest(page,id,'/'+encodeURIComponent(id),{fields:'profile_pic'});if(!profile.id||String(profile.id)===id)url=safeURL(profile.profile_pic);}catch(error){reportAvatarError(error);}
+    if(!url)try{const picture=await avatarRequest(page,id,App.customerAvatarLink(id));if(picture.data?.is_silhouette===false)url=safeURL(picture.data.url);}catch(error){reportAvatarError(error);}
+    if(url)save(id,url);else publicTasks.push(publicFallback(id));
   });
-  if(Object.keys(identityChanges).length)await rememberCustomerIdentities(identityChanges);
-  for (const id of need) if (!out.has(id)) emit(id, '');
-  if (Object.keys(changes).length) { const write = avatarWrites.catch(() => {}).then(async () => { const latest = await DB.get('avatarCacheV7', {}); await DB.set('avatarCacheV7', { ...latest, ...changes }); }); avatarWrites = write; await write; }
+  await Promise.all(publicTasks);await Promise.all(writes);
   return out;
 };
 // Dòng Page nhỏ: ảnh + tên (dùng trong danh sách bài, bình luận…).

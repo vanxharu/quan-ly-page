@@ -2,10 +2,10 @@
 (() => {
   const pending=new Map(),P=MetaAIProtocol;
   let reviewWrites=Promise.resolve(),bridgeOffline=false,bridgeNoticeShown=false;
-  const studioVersionOK=version=>{const v=String(version||'').split('.').map(Number),min=[2,4,6];if(v.length!==3||v.some(n=>!Number.isInteger(n)||n<0))return false;for(let i=0;i<3;i++)if(v[i]!==min[i])return v[i]>min[i];return true;};
+  const studioVersionOK=version=>{const v=String(version||'').split('.').map(Number),min=[2,5,0];if(v.length!==3||v.some(n=>!Number.isInteger(n)||n<0))return false;for(let i=0;i<3;i++)if(v[i]!==min[i])return v[i]>min[i];return true;};
   const send=(type,payload,waitMs=4000)=>new Promise((resolve,reject)=>{
     if(bridgeOffline){const error=Error('Web đang chờ nối lại tiện ích sau cập nhật.');error.code='BRIDGE_DISCONNECTED';reject(error);return;}
-    const id=uid('ai');const timeout=setTimeout(()=>{pending.delete(id);reject(Error(type==='CUSTOMER_PROFILE'?'Cần cập nhật tiện ích và bộ kết nối Windows để xác minh UID.':'Cần tiện ích 2.4.6 để tạo từng bài và lưu chờ duyệt. Cập nhật tiện ích rồi tải lại trang.'));},waitMs);
+    const id=uid('ai');const timeout=setTimeout(()=>{pending.delete(id);reject(Error(type==='CUSTOMER_PROFILE'?'Cần cập nhật tiện ích và bộ kết nối Windows để xác minh UID.':'Cần tiện ích 2.5.0 để tạo từng bài và lưu chờ duyệt. Cập nhật tiện ích rồi tải lại trang.'));},waitMs);
     pending.set(id,{resolve,reject,timeout});window.postMessage({source:'META_ASSISTANT_AI_V106',type,id,payload},location.origin);
   });
   App.reportCustomerAvatarDiagnostics = async (pageId,items) => {
@@ -14,12 +14,11 @@
   };
   App.lookupKnownCustomerProfiles = async ids => (await send('CUSTOMER_PROFILES',{ids},15000)).profiles||[];
   App.lookupCustomerProfile = async (profile,force=false) => (await send('CUSTOMER_PROFILE',{profile,force},90000)).profile;
-  const safePosts=posts=>(Array.isArray(posts)?posts:[]).slice(0,6).filter(p=>p&&typeof p.key==='string').map(p=>({
-    key:p.key.slice(0,80),topicTitle:String(p.topicTitle||'').slice(0,300),pageId:String(p.pageId||'').slice(0,40),pageName:String(p.pageName||'').slice(0,300),
-    text:String(p.text||'').slice(0,18000),imagePrompt:String(p.imagePrompt||'').slice(0,5000),
-    imageData:typeof p.imageData==='string'&&p.imageData.length<=600000&&/^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(p.imageData)?p.imageData:'',
-    imageError:String(p.imageError||'').slice(0,500),sources:P.sources(p.sources)
-  }));
+  function safePosts(posts){return (Array.isArray(posts)?posts:[]).filter(p=>p&&typeof p.key==='string').map(p=>{
+    const imageData=typeof p.imageData==='string'?p.imageData:'';
+    if(imageData&&(imageData.length>600000||!/^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(imageData)))throw Error('Ảnh bài viết không hợp lệ hoặc vượt kích thước cho phép. Chưa nhận bản này để tránh mất ảnh.');
+    return {key:p.key.slice(0,80),topicTitle:String(p.topicTitle||'').slice(0,300),pageId:String(p.pageId||'').slice(0,40),pageName:String(p.pageName||'').slice(0,300),text:String(p.text||'').slice(0,18000),imagePrompt:String(p.imagePrompt||'').slice(0,5000),imageData,imageRequired:p.imageRequired===true,imageError:String(p.imageError||'').slice(0,500),sources:P.sources(p.sources)};
+  });}
   let importBusy=false,catalogTimer;
   function studioAvatar(page){try{const url=new URL(App.pageAvatarUrl(page));if(url.protocol!=='https:'||url.username||url.password)return '';for(const key of ['access_token','token','authorization','auth'])url.searchParams.delete(key);return url.href;}catch{return '';}}
   async function syncCatalog(){
@@ -39,8 +38,8 @@
       reviewWrites=reviewWrites.catch(()=>{}).then(async()=>{
         const queue=await DB.get('fbScheduleQueueV1',[]);
         for(const post of snapshot){const sourceId=transfer.sourceJobId+'|'+post.key;const existing=queue.find(x=>x.aiSourceId===sourceId);
-          if(existing){if(existing.status==='draft'){if(existing.aiOriginalText!==undefined&&existing.text===existing.aiOriginalText)existing.text=post.text;if(existing.aiOriginalImage!==undefined&&existing.imageData===existing.aiOriginalImage)existing.imageData=post.imageData;existing.aiOriginalText=post.text;existing.aiOriginalImage=post.imageData;existing.sources=post.sources;}continue;}
-          queue.push({id:uid('fs'),pageKey:post.pageId,pageName:App.pageById(post.pageId).name,text:post.text,imageData:post.imageData,at:0,status:'draft',createdAt:Date.now(),source:'chatgpt-extension',sources:post.sources,topicTitle:post.topicTitle||'',aiSourceId:sourceId,aiOriginalText:post.text,aiOriginalImage:post.imageData,aiGenerating:false});
+          if(existing){if(['draft','error'].includes(existing.status)){const repairMissingImage=existing.imageRequired&&!existing.imageData&&!!post.imageData;if(existing.aiOriginalText!==undefined&&existing.text===existing.aiOriginalText)existing.text=post.text;if(repairMissingImage||existing.aiOriginalImage!==undefined&&existing.imageData===existing.aiOriginalImage)existing.imageData=post.imageData;if(repairMissingImage){existing.status='draft';existing.error='';}existing.aiOriginalText=post.text;existing.aiOriginalImage=post.imageData;existing.imageRequired=post.imageRequired;existing.imageError=post.imageError;existing.sources=post.sources;}continue;}
+          queue.push({id:uid('fs'),pageKey:post.pageId,pageName:App.pageById(post.pageId).name,text:post.text,imageData:post.imageData,imageRequired:post.imageRequired,imageError:post.imageError,at:0,status:'draft',createdAt:Date.now(),source:'chatgpt-extension',sources:post.sources,topicTitle:post.topicTitle||'',aiSourceId:sourceId,aiOriginalText:post.text,aiOriginalImage:post.imageData,aiGenerating:false});
         }
         await DB.set('fbScheduleQueueV1',queue);
       });await reviewWrites;
@@ -51,7 +50,7 @@
   async function openStudio(){
     syncCatalog().catch(()=>{});
     try{const state=await send('STATUS');if(studioVersionOK(state.version)){toast('Studio AI mở ở bên cạnh. Bạn cũng có thể bấm biểu tượng tiện ích để mở lại.',5000);return;}}catch{}
-    const help=h('dialog',{className:'ai-dialog'});help.append(h('h2',{textContent:'Mở Studio AI bên cạnh'}),h('p',{textContent:'Cập nhật tiện ích lên 2.4.6, bấm Tải lại tại chrome://extensions rồi tải lại trang này. Sau đó bấm biểu tượng tiện ích Meta Assistant để mở bảng tạo bài.'}),h('a',{className:'btn btn-primary',href:'chatgpt-connector.zip?v=2.4.6',download:'meta-assistant-chatgpt-connector.zip',textContent:'Tải tiện ích Studio AI 2.4.6'}),h('button',{className:'btn btn-ghost',textContent:'Đóng',onclick:()=>help.close()}));document.body.append(help);help.addEventListener('close',()=>help.remove());help.showModal();
+    const help=h('dialog',{className:'ai-dialog'});help.append(h('h2',{textContent:'Mở Studio AI bên cạnh'}),h('p',{textContent:'Cập nhật tiện ích lên 2.5.0, bấm Tải lại tại chrome://extensions rồi tải lại trang này. Sau đó bấm biểu tượng tiện ích Meta Assistant để mở bảng tạo bài.'}),h('a',{className:'btn btn-primary',href:'chatgpt-connector.zip?v=2.5.0',download:'meta-assistant-chatgpt-connector.zip',textContent:'Tải tiện ích Studio AI 2.5.0'}),h('button',{className:'btn btn-ghost',textContent:'Đóng',onclick:()=>help.close()}));document.body.append(help);help.addEventListener('close',()=>help.remove());help.showModal();
   }
   window.addEventListener('meta-theme-changed',()=>send('THEME_SYNC',{theme:document.body.classList.contains('dark-mode')?'dark':'light'}).catch(()=>{}));
   App.onLogin.push(()=>{queueCatalog();importPanel().catch(()=>{});});App.onPageChange.push(queueCatalog);

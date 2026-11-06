@@ -4,3 +4,4 @@
 **/customer-identities.json
 extension/windows-updater/test-results/
 **/inbox-avatar-diagnostic.json
+extension/tests/node_modules/

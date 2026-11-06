@@ -14,7 +14,7 @@ const MetaAIProtocol = (() => {
     const seen=new Set();return (Array.isArray(list)?list:[]).filter(x=>x&&typeof x.text==='string'&&x.text.trim()).map(x=>({key:clean(x.key,100),topicTitle:clean(x.topicTitle,300),text:clean(x.text,900),createdAt:Number(x.createdAt)||0})).sort((a,b)=>b.createdAt-a.createdAt).filter(x=>{const key='key:'+x.key,text='text:'+x.text;if(x.key&&seen.has(key)||seen.has(text))return false;if(x.key)seen.add(key);seen.add(text);return true;}).slice(0,8);
   }
   function validate(input) {
-    if(!Array.isArray(input?.items)||!input.items.length||input.items.length>6) throw Error('Mỗi lượt tạo từ 1 đến 6 bài.');
+    if(!Array.isArray(input?.items)||!input.items.length) throw Error('Chọn ít nhất một bài để tạo.');
     const keys=new Set();
     const items=input.items.map(x=>{
       if(!/^[a-zA-Z0-9_-]{1,80}$/.test(x.key)||keys.has(x.key))throw Error('Mã bài không hợp lệ.'); keys.add(x.key);

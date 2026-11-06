@@ -40,7 +40,7 @@ namespace MetaAssistantUpdater {
     public static System.Collections.Generic.Dictionary<string,object> Read(string value) {
       var requested=Normalize(value);var url=requested;System.Net.ServicePointManager.SecurityProtocol|=System.Net.SecurityProtocolType.Tls12;
       for(int redirects=0;redirects<4;redirects++){
-        var req=(System.Net.HttpWebRequest)System.Net.WebRequest.Create(url);req.AllowAutoRedirect=false;req.Timeout=12000;req.ReadWriteTimeout=12000;req.UserAgent="MetaAssistant/2.4.6";
+        var req=(System.Net.HttpWebRequest)System.Net.WebRequest.Create(url);req.AllowAutoRedirect=false;req.Timeout=12000;req.ReadWriteTimeout=12000;req.UserAgent="MetaAssistant/2.5.0";
         using(var response=(System.Net.HttpWebResponse)req.GetResponse()){
           if(new[]{301,302,303,307,308}.Contains((int)response.StatusCode)){var next=new System.Uri(new System.Uri(url),response.Headers["Location"]??"");url=Normalize(next.AbsoluteUri);continue;}
           if(response.StatusCode!=System.Net.HttpStatusCode.OK)throw new System.Exception("Trang Facebook công khai chưa sẵn sàng; không tự đi qua đăng nhập.");

@@ -1,9 +1,10 @@
 {
   "private": true,
   "scripts": {
-    "test": "node studio-background.test.cjs && node embedded-frame.test.cjs && node response-completion.test.cjs && node reddit-workflow.test.cjs && node studio-interface.test.cjs && node web-transfer.test.cjs && node planner-avatar.test.cjs && node planner-composer.test.cjs && node settings.test.cjs && node customer-avatar.test.cjs && node inbox-auto-avatar.test.cjs && node public-profile.test.cjs && node inbox-profile-link.test.cjs && node update-state.test.cjs && node update-interface.test.cjs && node avatar-fast-path.test.cjs && node bridge-reconnect.test.cjs && node avatar-evidence.test.cjs && node avatar-diagnostic.test.cjs && node avatar-report-download.test.cjs"
+    "test": "node studio-background.test.cjs && node embedded-frame.test.cjs && node response-completion.test.cjs && node reddit-workflow.test.cjs && node studio-interface.test.cjs && node web-transfer.test.cjs && node planner-avatar.test.cjs && node planner-composer.test.cjs && node settings.test.cjs && node customer-avatar.test.cjs && node inbox-auto-avatar.test.cjs && node public-profile.test.cjs && node inbox-profile-link.test.cjs && node update-state.test.cjs && node update-interface.test.cjs && node avatar-fast-path.test.cjs && node bridge-reconnect.test.cjs && node avatar-evidence.test.cjs && node avatar-diagnostic.test.cjs && node avatar-report-download.test.cjs && node photo-scheduling.test.cjs && node bulk-generation.test.cjs && node avatar-pipeline.test.cjs"
   },
   "devDependencies": {
-    "linkedom": "0.18.15"
+    "linkedom": "0.18.15",
+    "fake-indexeddb": "6.2.7"
   }
 }

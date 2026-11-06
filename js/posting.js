@@ -104,12 +104,13 @@
     refresh() {
       return guard($('scList'), async () => {
         $('scList').replaceChildren(empty('Đang tải…'));
-        const lists = await pool(App.selected(), 5, page => api(`/${page.id}/scheduled_posts`, { fields: 'id,message,scheduled_publish_time,full_picture', limit: 100 }, 'GET', page.access_token)
+        const lists = await pool(App.selected(), 5, page => api(`/${page.id}/scheduled_posts`, { fields: 'id,message,scheduled_publish_time,full_picture,attachments{media,subattachments{media}}', limit: 100 }, 'GET', page.access_token)
+          .catch(()=>api(`/${page.id}/scheduled_posts`,{fields:'id,message,scheduled_publish_time,full_picture',limit:100},'GET',page.access_token))
           .then(r => r.data.map(x => ({ ...x, page }))).catch(e => [{ error: `${page.name}: ${e.message}` }]));
         const all = lists.flat(), errors = all.filter(x => x.error);
         const res = { data: all.filter(x => !x.error) };
         $('scList').replaceChildren(...errors.map(e => h('div', { className: 'status err', textContent: e.error })), ...(res.data.length ? res.data.sort((a, b) => a.scheduled_publish_time - b.scheduled_publish_time).map(p => h('div', { className: 'item', style: 'cursor:default' },
-          p.full_picture ? h('img', { className: 'thumb', src: p.full_picture, alt: '' }) : null,
+          App.scheduledPostImage(p) ? h('img', { className: 'thumb', src: App.scheduledPostImage(p), alt: '' }) : null,
           h('div', { className: 'body' },
             h('div', { className: 'top' }, h('span', { className: 'status pending', textContent: '⏰ ' + fmtTime(p.scheduled_publish_time) }), App.pageTag(p.page)),
             h('div', { className: 'snippet', style: 'margin-top:6px', textContent: p.message || '(chỉ có ảnh)' })),

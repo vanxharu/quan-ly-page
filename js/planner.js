@@ -106,12 +106,13 @@
               h('span',{'aria-hidden':'true',textContent:'⌄'}))),
           h('input', { type: 'datetime-local', value: toLocalInput(i.at), disabled: locked, onchange: e => patch(i.id, { at: e.target.value ? new Date(e.target.value).getTime() : 0 }).then(refresh) }),
           h('span', { className: 'status ' + tone, textContent: i.aiGenerating?'Đang tạo ảnh…':label }),
+          i.imageRequired&&!i.imageData?h('span',{className:'status err',textContent:'Thiếu ảnh · Chưa thể lên lịch'}):null,
           i.error ? h('span', { className: 'hint', textContent: i.error }) : null),
         i.topicTitle?h('p',{className:'hint',textContent:'Chủ đề: '+i.topicTitle}):null,
         ...MetaAIProtocol.sources(i.sources).map(ref=>h('a',{className:'hint',href:ref.url,target:'_blank',rel:'noopener noreferrer',textContent:'Nguồn Reddit · '+(ref.title||'Xem bài gốc')})),
         h('textarea', { value: i.text || '', disabled: locked, onchange: e => patch(i.id, { text: e.target.value }) })),
       h('div', { className: 'acts' },
-        !i.aiGenerating&&['draft', 'error', 'missed'].includes(i.status) ? h('button', { className: 'btn btn-soft btn-sm', textContent: '✓ Duyệt', onclick: () => patch(i.id, { status: 'approved', error: '' }).then(refresh) }) : null,
+        !i.aiGenerating&&(!i.imageRequired||!!i.imageData)&&['draft', 'error', 'missed'].includes(i.status) ? h('button', { className: 'btn btn-soft btn-sm', textContent: '✓ Duyệt', onclick: () => patch(i.id, { status: 'approved', error: '' }).then(refresh) }) : null,
         i.status === 'approved' ? h('button', { className: 'btn btn-ghost btn-sm', textContent: 'Bỏ duyệt', onclick: () => patch(i.id, { status: 'draft' }).then(refresh) }) : null,
         i.status === 'approved' ? h('button', { className: 'btn btn-primary btn-sm', textContent: 'Lên lịch', onclick: () => scheduleOne(i).then(refresh) }) : null,
         h('button', { className: 'btn btn-danger btn-sm', textContent: 'Xoá', onclick: async () => {
@@ -123,6 +124,7 @@
 
   async function scheduleOne(i) {
     if(i.aiGenerating)return patch(i.id,{status:'draft',error:'Chờ AI tạo và lưu ảnh xong trước khi duyệt.'});
+    if(i.imageRequired&&!i.imageData)return patch(i.id,{status:'error',error:'Bài này cần có ảnh nhưng chưa nhận được ảnh. Bổ sung hoặc chuyển lại bản nháp có ảnh trước khi lên lịch.'});
     const page = pageOf(i);
     if (!page) return patch(i.id, { status: 'error', error: 'Không tìm thấy Page. Chọn lại Page cho bài.' });
     if (!i.at || i.at < Date.now() + 600e3) return patch(i.id, { status: 'error', error: 'Giờ đăng phải sau hiện tại ít nhất 10 phút.' });
@@ -146,7 +148,7 @@
   }
   async function approveAll() {
     const queue = await DB.get(QUEUE, []);
-    await DB.set(QUEUE, queue.map(i => i.status === 'draft' && !i.aiGenerating && inSel(i) ? { ...i, status: 'approved' } : i));
+    await DB.set(QUEUE, queue.map(i => i.status === 'draft' && !i.aiGenerating && (!i.imageRequired||!!i.imageData) && inSel(i) ? { ...i, status: 'approved' } : i));
     refresh();
   }
   async function autoTime() {
