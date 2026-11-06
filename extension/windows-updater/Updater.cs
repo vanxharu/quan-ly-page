@@ -87,12 +87,20 @@ namespace MetaAssistantUpdater {
       var host=Path.Combine(InstallRoot,Engine.HostName+".json");File.WriteAllText(host,Engine.Json.Serialize(new Dictionary<string,object>{{"name",Engine.HostName},{"description","Meta Assistant extension updater"},{"path",exe},{"type","stdio"},{"allowed_origins",new[]{origin}}}),new UTF8Encoding(false));
       using(var key=Registry.CurrentUser.CreateSubKey(RegistryPath(candidate.Browser))){key.SetValue("",host,RegistryValueKind.String);}result["installed"]=true;result["folder"]=candidate.Folder;return result;
     }
+    public static Dictionary<string,object> UpdateResult(Dictionary<string,object> result,string runningVersion,string uiVersion){
+      object raw;bool filesUpdated=result.TryGetValue("updated",out raw)&&raw is bool&&(bool)raw;
+      bool reloadRequired=filesUpdated||String.IsNullOrEmpty(runningVersion)||String.IsNullOrEmpty(uiVersion)||runningVersion!=Engine.Get(result,"version")||uiVersion!=Engine.Get(result,"version");
+      result["filesUpdated"]=filesUpdated;result["reloadRequired"]=reloadRequired;
+      // Older workers only inspect updated. They must still reload when files were already replaced.
+      if(String.IsNullOrEmpty(runningVersion))result["updated"]=reloadRequired;
+      return result;
+    }
     static byte[] ReadExact(Stream stream,int length){var buffer=new byte[length];int offset=0,n;while(offset<length&&(n=stream.Read(buffer,offset,length-offset))>0)offset+=n;if(offset!=length)throw new Exception("Thông điệp chưa đầy đủ.");return buffer;}
     static void Reply(Dictionary<string,object> data){var bytes=Encoding.UTF8.GetBytes(Engine.Json.Serialize(data));var output=Console.OpenStandardOutput();var length=BitConverter.GetBytes(bytes.Length);output.Write(length,0,4);output.Write(bytes,0,bytes.Length);output.Flush();}
     static void Native(string origin){try{var config=Engine.ReadJson(ConfigFile);if(origin!=Engine.Get(config,"origin"))throw new Exception("Tiện ích không được phép cập nhật.");var input=Console.OpenStandardInput();var length=BitConverter.ToInt32(ReadExact(input,4),0);if(length<2||length>65536)throw new Exception("Thông điệp không hợp lệ.");var message=Engine.Json.Deserialize<Dictionary<string,object>>(Encoding.UTF8.GetString(ReadExact(input,length)));var target=Engine.Get(config,"extensionPath");
       if(Engine.Get(message,"action")=="status"){var m=Engine.Installed(target);Reply(new Dictionary<string,object>{{"ok",true},{"version",Engine.Get(m,"version")}});}
       else if(Engine.Get(message,"action")=="public_profile")Reply(PublicProfile.ReadForHost(Engine.Get(message,"profile"),AppDomain.CurrentDomain.BaseDirectory));
-      else if(Engine.Get(message,"action")=="update")Reply(new Engine(AppDomain.CurrentDomain.BaseDirectory).Apply(Engine.Download(),target,false));else throw new Exception("Lệnh cập nhật không hợp lệ.");
+      else if(Engine.Get(message,"action")=="update")Reply(UpdateResult(new Engine(AppDomain.CurrentDomain.BaseDirectory).Apply(Engine.Download(),target,false),Engine.Get(message,"runningVersion"),Engine.Get(message,"uiVersion")));else throw new Exception("Lệnh cập nhật không hợp lệ.");
     }catch(Exception e){Reply(new Dictionary<string,object>{{"ok",false},{"error",e.Message}});}}
     [STAThread] public static void Main(string[] args){
       if(args.Length>0&&args[0].StartsWith("chrome-extension://",StringComparison.Ordinal)){Native(args[0]);return;}

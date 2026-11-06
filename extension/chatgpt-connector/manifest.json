@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Meta Assistant · Kết nối ChatGPT",
-  "version": "2.4.2",
+  "version": "2.4.3",
   "description": "Studio AI: chọn Page có avatar, tạo bài và ảnh bằng GPT nhúng, lưu nháp và chuyển sang web khi bạn chọn.",
   "permissions": [
     "storage",

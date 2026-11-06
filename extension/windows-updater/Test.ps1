@@ -23,6 +23,10 @@ namespace UpdaterTests {
       var identity=MetaAssistantUpdater.PublicProfile.Parse(html,"https://www.facebook.com/test.customer");Check((string)identity["uid"]=="100000000123456"&&(string)identity["name"]=="Test & Customer","public UID comes from profile metadata");
       Reject(()=>MetaAssistantUpdater.PublicProfile.Normalize("https://evil.example/customer"),"external URL rejected");Reject(()=>MetaAssistantUpdater.PublicProfile.Normalize("https://www.facebook.com/login"),"login route rejected");
       Reject(()=>MetaAssistantUpdater.PublicProfile.Parse("<html>Login</html>","https://www.facebook.com/test.customer"),"missing UID rejected");Reject(()=>MetaAssistantUpdater.PublicProfile.Parse(html,"100000000999999"),"PSID to different UID rejected");Reject(()=>MetaAssistantUpdater.PublicProfile.Parse(html.Replace("scontent.test.fbcdn.net","evil.example"),"https://www.facebook.com/test.customer"),"external image rejected");
+      var same=new System.Collections.Generic.Dictionary<string,object>{{"ok",true},{"updated",false},{"version","2.4.3"}};
+      var legacy=MetaAssistantUpdater.Program.UpdateResult(new System.Collections.Generic.Dictionary<string,object>(same),"","");Check((bool)legacy["updated"]&&(bool)legacy["reloadRequired"]&&!(bool)legacy["filesUpdated"],"legacy worker reloads already replaced files");
+      var modern=MetaAssistantUpdater.Program.UpdateResult(new System.Collections.Generic.Dictionary<string,object>(same),"2.4.3","2.4.3");Check(!(bool)modern["reloadRequired"],"all current does not reload");
+      var stale=MetaAssistantUpdater.Program.UpdateResult(new System.Collections.Generic.Dictionary<string,object>(same),"2.4.1","2.4.1");Check((bool)stale["reloadRequired"]&&!(bool)stale["filesUpdated"],"stale runtime reload required without new file copies");
       return "PASS: "+passed+" updater checks: original folder, backup, permission bootstrap, equal version, downgrade, identity, traversal, partial-write rollback.";
     }
   }

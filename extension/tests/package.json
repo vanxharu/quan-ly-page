@@ -1,7 +1,7 @@
 {
   "private": true,
   "scripts": {
-    "test": "node studio-background.test.cjs && node embedded-frame.test.cjs && node response-completion.test.cjs && node reddit-workflow.test.cjs && node studio-interface.test.cjs && node web-transfer.test.cjs && node planner-avatar.test.cjs && node planner-composer.test.cjs && node settings.test.cjs && node customer-avatar.test.cjs && node inbox-auto-avatar.test.cjs && node public-profile.test.cjs && node inbox-profile-link.test.cjs"
+    "test": "node studio-background.test.cjs && node embedded-frame.test.cjs && node response-completion.test.cjs && node reddit-workflow.test.cjs && node studio-interface.test.cjs && node web-transfer.test.cjs && node planner-avatar.test.cjs && node planner-composer.test.cjs && node settings.test.cjs && node customer-avatar.test.cjs && node inbox-auto-avatar.test.cjs && node public-profile.test.cjs && node inbox-profile-link.test.cjs && node update-state.test.cjs && node update-interface.test.cjs"
   },
   "devDependencies": {
     "linkedom": "0.18.15"

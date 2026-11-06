@@ -1,9 +1,9 @@
 importScripts('protocol.js','embed-rules.js');
-const P=MetaAIProtocol;
+const P=MetaAIProtocol,WORKER_VERSION='2.4.3';
 let updatingExtension=false;
-const callUpdater=action=>new Promise((resolve,reject)=>{
+const callUpdater=(action,extra={})=>new Promise((resolve,reject)=>{
   if(typeof chrome.runtime.sendNativeMessage!=='function')return reject(Error('Cần cài bộ cập nhật Windows và Tải lại tiện ích một lần.'));
-  chrome.runtime.sendNativeMessage('com.metaassistant.updater',{action},result=>{
+  chrome.runtime.sendNativeMessage('com.metaassistant.updater',{action,...extra},result=>{
     if(chrome.runtime.lastError)return reject(Error('Chưa kết nối bộ cập nhật Windows. Cài bộ kết nối một lần rồi Tải lại tiện ích.'));
     if(!result?.ok)return reject(Error(result?.error||'Không cập nhật được tiện ích.'));
     resolve(result);
@@ -93,7 +93,11 @@ async function handle(m,sender) {
       const job=await getJob();if(updatingExtension)throw Error('Tiện ích đang cập nhật.');
       if(job&&['opening','running'].includes(job.status))throw Error('Chờ GPT tạo xong hoặc dừng lượt tạo trước khi cập nhật.');
       updatingExtension=true;let reload=false;
-      try{const result=await callUpdater('update');if(result.updated){await chrome.storage.local.set({lastExtensionUpdate:{version:result.version,at:Date.now()}});reload=true;setTimeout(()=>chrome.runtime.reload(),600);}return {ok:true,updated:!!result.updated,version:result.version};}
+      try{const result=await callUpdater('update',{runningVersion:WORKER_VERSION,uiVersion:String(m.uiVersion||'')});
+        const filesUpdated=typeof result.filesUpdated==='boolean'?result.filesUpdated:!!result.updated;
+        const reloadRequired=filesUpdated||result.reloadRequired===true||result.version!==WORKER_VERSION||m.uiVersion!==WORKER_VERSION;
+        if(reloadRequired){await chrome.storage.local.set({lastExtensionUpdate:{version:result.version,fromVersion:WORKER_VERSION,at:Date.now(),state:'pending_reload'}});reload=true;setTimeout(()=>chrome.runtime.reload(),600);}
+        return {ok:true,updated:filesUpdated||reloadRequired,filesUpdated,reloadRequired,version:result.version,runningVersion:WORKER_VERSION};}
       finally{if(!reload)updatingExtension=false;}
     }
     if(m.type==='PANEL_FRAME_ERROR'){const job=await getJob();if(job?.mode==='panel'&&job.transport==='embedded'&&job.id===m.jobId&&['opening','running'].includes(job.status))await finish(job,String(m.error||'Khung GPT chưa nhận lệnh.').slice(0,500));return {ok:true};}
@@ -102,7 +106,7 @@ async function handle(m,sender) {
     if(m.type==='PANEL_OPEN_GPT'){const job=await getJob();if(job?.gptTab){try{await chrome.tabs.update(job.gptTab,{active:true});return {ok:true};}catch{}}await chrome.tabs.create({url:job?.input?.settings?.gptHome||await homeFor(),active:true});return {ok:true};}
     if(m.type==='PANEL_SWITCH_TO_TAB'){const job=await getJob();if(!job||job.mode!=='panel'||job.transport!=='embedded'||job.status!=='opening'||job.posts.length)throw Error('GPT đã bắt đầu lượt này. Bấm Dừng trước khi đổi cách mở để tránh gửi lặp.');const tab=await chrome.tabs.create({url:job?.input?.settings?.gptHome||await homeFor(),active:true});job.transport='tab';job.gptTab=tab.id;job.frameDocumentId=null;await save(job);return {ok:true};}
     if(m.type==='PANEL_THEME'){const theme=m.theme==='dark'?'dark':'light';await chrome.storage.local.set({studioTheme:theme});for(const tab of await chrome.tabs.query({url:'https://vanxharu.github.io/quan-ly-page/*'})){try{await chrome.tabs.sendMessage(tab.id,{channel:'META_AI_EVENT',type:'THEME_CHANGED',theme});}catch{}}return {ok:true};}
-    if(m.type==='PANEL_STATUS'){const local=await chrome.storage.local.get(['panelJob','pageCatalog','pendingTransfer','studioTheme','marketingHistoryV1','studioSettings']);const live=await getJob();if(local.panelJob&&['opening','running'].includes(local.panelJob.status)&&live?.id!==local.panelJob.id){local.panelJob.status='interrupted';local.panelJob.progress='Lượt tạo đã ngắt khi trình duyệt hoặc tiện ích tải lại. Các bản nháp đã xong vẫn được giữ.';await chrome.storage.local.set({panelJob:local.panelJob});}return {ok:true,version:'2.4.2',...local,externalRunning:!!live&&live.mode!=='panel'&&['opening','running'].includes(live.status)};}
+    if(m.type==='PANEL_STATUS'){const local=await chrome.storage.local.get(['panelJob','pageCatalog','pendingTransfer','studioTheme','marketingHistoryV1','studioSettings']);const live=await getJob();if(local.panelJob&&['opening','running'].includes(local.panelJob.status)&&live?.id!==local.panelJob.id){local.panelJob.status='interrupted';local.panelJob.progress='Lượt tạo đã ngắt khi trình duyệt hoặc tiện ích tải lại. Các bản nháp đã xong vẫn được giữ.';await chrome.storage.local.set({panelJob:local.panelJob});}return {ok:true,version:WORKER_VERSION,...local,externalRunning:!!live&&live.mode!=='panel'&&['opening','running'].includes(live.status)};}
     if(m.type==='PANEL_GENERATE')return startPanel(m.payload,m.transport,m.panelId);
     if(m.type==='PANEL_CANCEL'){const job=await getJob();if(job&&['opening','running'].includes(job.status)){job.status='cancelled';job.progress='Đã dừng. Các bài đã tạo được giữ trong tiện ích.';await save(job);}return {ok:true};}
     if(m.type==='PANEL_EDIT'){const live=await getJob();const job=live?.mode==='panel'?live:(await chrome.storage.local.get('panelJob')).panelJob;const post=job?.posts.find(p=>p.key===m.key);if(!post)throw Error('Không tìm thấy bài.');post.text=String(m.text||'').slice(0,18000);if(live?.id===job.id)await save(job);else await chrome.storage.local.set({panelJob:job});return {ok:true};}
@@ -115,7 +119,7 @@ async function handle(m,sender) {
   if(m?.type==='THEME_SYNC'&&fromWeb){await chrome.storage.local.set({studioTheme:m.payload?.theme==='dark'?'dark':'light'});return {ok:true};}
   if(m?.type==='TRANSFER_PULL'&&fromWeb){const transfer=(await chrome.storage.local.get('pendingTransfer')).pendingTransfer;return {ok:true,transfer:transfer?.webTab===sender.tab.id?transfer:null};}
   if(m?.type==='TRANSFER_ACK'&&fromWeb){const transfer=(await chrome.storage.local.get('pendingTransfer')).pendingTransfer;if(!transfer||transfer.id!==m.payload?.id||transfer.webTab!==sender.tab.id)throw Error('Xác nhận chuyển bài không hợp lệ.');const live=await getJob(),job=live?.id===transfer.sourceJobId?live:(await chrome.storage.local.get('panelJob')).panelJob;if(job?.id===transfer.sourceJobId){for(const post of job.posts)if(transfer.posts.some(p=>p.key===post.key))post.transferredAt=Date.now();if(live?.id===job.id)await save(job);else await chrome.storage.local.set({panelJob:job});}await chrome.storage.local.remove('pendingTransfer');return {ok:true};}
-  if(m?.type==='STATUS'&&fromWeb){const job=await getJob();return {ok:true,version:'2.4.2',job:job?.webTab===sender.tab.id?{id:job.id,status:job.status,posts:job.posts||[],error:job.error||'',progress:job.progress||'',reviewKey:job.pendingCommit||'',diagnostic:job.diagnostic||null}:null};}
+  if(m?.type==='STATUS'&&fromWeb){const job=await getJob();return {ok:true,version:WORKER_VERSION,job:job?.webTab===sender.tab.id?{id:job.id,status:job.status,posts:job.posts||[],error:job.error||'',progress:job.progress||'',reviewKey:job.pendingCommit||'',diagnostic:job.diagnostic||null}:null};}
   if(m?.type==='GENERATE'&&fromWeb){
     if(updatingExtension)throw Error('Tiện ích đang cập nhật. Hãy chờ nạp lại xong.');
     const existing=await getJob();
@@ -139,7 +143,7 @@ async function handle(m,sender) {
     if(job.frameClaimed&&!job.frameDocumentId&&sender.documentId){job.frameDocumentId=sender.documentId;job.frameBindingInfo={...job.frameBindingInfo,documentIdAvailableLater:true};await save(job);}
     if(!job.frameClaimed){if(!['START','FRAME_CLAIM'].includes(m.type))return {ok:true,job:null,cancelled:true};job.frameClaimed=true;job.frameDocumentId=sender.documentId||null;job.frameBindingInfo={hasDocumentId:!!sender.documentId,hasTab:!!sender.tab,frameId:Number.isInteger(sender.frameId)?sender.frameId:null};await save(job);}
   }else if(job.gptTab!==sender.tab?.id)return {ok:true,job:null,cancelled:true};
-  if(m.type==='CLAIM'&&m.agentVersion!=='2.4.2'){await finish(job,'Tab ChatGPT đang dùng tiện ích cũ. Cập nhật tiện ích và tải lại cả trang Meta Assistant lẫn tab ChatGPT.');return {ok:false,error:'Phiên bản tiện ích trong tab ChatGPT chưa đồng bộ.'};}
+  if(m.type==='CLAIM'&&m.agentVersion!=='2.4.3'){await finish(job,'Tab ChatGPT đang dùng tiện ích cũ. Cập nhật tiện ích và tải lại cả trang Meta Assistant lẫn tab ChatGPT.');return {ok:false,error:'Phiên bản tiện ích trong tab ChatGPT chưa đồng bộ.'};}
   if(m.type==='CLAIM')return {ok:true,job:{id:job.id,nonce:job.nonce,input:inputFor(job),index:job.currentIndex||0,total:job.input.items.length,status:job.status}};
   if(m.nonce!==job.nonce||m.id!==job.id)throw Error('Lượt tạo không hợp lệ.');
   if(m.type==='FRAME_CLAIM')return {ok:true};
