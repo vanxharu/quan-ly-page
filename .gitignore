@@ -1,0 +1,5 @@
+
+# Private avatar data stays on this machine.
+**/customer-avatar-cache.json
+**/customer-identities.json
+extension/windows-updater/test-results/

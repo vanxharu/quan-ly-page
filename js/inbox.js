@@ -180,6 +180,7 @@
     failedPictures.add(key); S.pics.delete(pictureKey(c)); pictureChecked.delete(pictureKey(c));
     loadPics([c], true).catch(() => {});
   }
+  window.addEventListener('customer-avatars-ready',()=>{for(const c of S.convs)if(!S.pics.has(pictureKey(c)))pictureChecked.delete(pictureKey(c));if(App.current()==='inbox')queuePics(S.convs);});
   // Cập nhật riêng avatar khi ảnh về muộn; giữ nguyên tin nhắn, vị trí cuộn và ô soạn.
   function messageAvatar(c) {
     const url = S.pics.get(pictureKey(c)) || '';

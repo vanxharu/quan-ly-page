@@ -2,11 +2,12 @@
 (() => {
   const pending=new Map(),P=MetaAIProtocol;
   let reviewWrites=Promise.resolve();
-  const studioVersionOK=version=>{const v=String(version||'').split('.').map(Number),min=[2,4,3];if(v.length!==3||v.some(n=>!Number.isInteger(n)||n<0))return false;for(let i=0;i<3;i++)if(v[i]!==min[i])return v[i]>min[i];return true;};
+  const studioVersionOK=version=>{const v=String(version||'').split('.').map(Number),min=[2,4,4];if(v.length!==3||v.some(n=>!Number.isInteger(n)||n<0))return false;for(let i=0;i<3;i++)if(v[i]!==min[i])return v[i]>min[i];return true;};
   const send=(type,payload,waitMs=4000)=>new Promise((resolve,reject)=>{
-    const id=uid('ai');const timeout=setTimeout(()=>{pending.delete(id);reject(Error(type==='CUSTOMER_PROFILE'?'Cần cập nhật tiện ích và bộ kết nối Windows để xác minh UID.':'Cần tiện ích 2.4.3 để tạo từng bài và lưu chờ duyệt. Cập nhật tiện ích rồi tải lại trang.'));},waitMs);
+    const id=uid('ai');const timeout=setTimeout(()=>{pending.delete(id);reject(Error(type==='CUSTOMER_PROFILE'?'Cần cập nhật tiện ích và bộ kết nối Windows để xác minh UID.':'Cần tiện ích 2.4.4 để tạo từng bài và lưu chờ duyệt. Cập nhật tiện ích rồi tải lại trang.'));},waitMs);
     pending.set(id,{resolve,reject,timeout});window.postMessage({source:'META_ASSISTANT_AI_V106',type,id,payload},location.origin);
   });
+  App.lookupKnownCustomerProfiles = async ids => (await send('CUSTOMER_PROFILES',{ids},15000)).profiles||[];
   App.lookupCustomerProfile = async (profile,force=false) => (await send('CUSTOMER_PROFILE',{profile,force},90000)).profile;
   const safePosts=posts=>(Array.isArray(posts)?posts:[]).slice(0,6).filter(p=>p&&typeof p.key==='string').map(p=>({
     key:p.key.slice(0,80),topicTitle:String(p.topicTitle||'').slice(0,300),pageId:String(p.pageId||'').slice(0,40),pageName:String(p.pageName||'').slice(0,300),
@@ -45,7 +46,7 @@
   async function openStudio(){
     syncCatalog().catch(()=>{});
     try{const state=await send('STATUS');if(studioVersionOK(state.version)){toast('Studio AI mở ở bên cạnh. Bạn cũng có thể bấm biểu tượng tiện ích để mở lại.',5000);return;}}catch{}
-    const help=h('dialog',{className:'ai-dialog'});help.append(h('h2',{textContent:'Mở Studio AI bên cạnh'}),h('p',{textContent:'Cập nhật tiện ích lên 2.4.3, bấm Tải lại tại chrome://extensions rồi tải lại trang này. Sau đó bấm biểu tượng tiện ích Meta Assistant để mở bảng tạo bài.'}),h('a',{className:'btn btn-primary',href:'chatgpt-connector.zip?v=2.4.3',download:'meta-assistant-chatgpt-connector.zip',textContent:'Tải tiện ích Studio AI 2.4.3'}),h('button',{className:'btn btn-ghost',textContent:'Đóng',onclick:()=>help.close()}));document.body.append(help);help.addEventListener('close',()=>help.remove());help.showModal();
+    const help=h('dialog',{className:'ai-dialog'});help.append(h('h2',{textContent:'Mở Studio AI bên cạnh'}),h('p',{textContent:'Cập nhật tiện ích lên 2.4.4, bấm Tải lại tại chrome://extensions rồi tải lại trang này. Sau đó bấm biểu tượng tiện ích Meta Assistant để mở bảng tạo bài.'}),h('a',{className:'btn btn-primary',href:'chatgpt-connector.zip?v=2.4.4',download:'meta-assistant-chatgpt-connector.zip',textContent:'Tải tiện ích Studio AI 2.4.4'}),h('button',{className:'btn btn-ghost',textContent:'Đóng',onclick:()=>help.close()}));document.body.append(help);help.addEventListener('close',()=>help.remove());help.showModal();
   }
   window.addEventListener('meta-theme-changed',()=>send('THEME_SYNC',{theme:document.body.classList.contains('dark-mode')?'dark':'light'}).catch(()=>{}));
   App.onLogin.push(()=>{queueCatalog();importPanel().catch(()=>{});});App.onPageChange.push(queueCatalog);
@@ -54,7 +55,7 @@
     const m=e.data;if(e.source!==window||e.origin!==location.origin||m?.source!=='META_AI_CONNECTOR_V106')return;
     if(m.type==='REPLY'&&pending.has(m.id)){const p=pending.get(m.id);clearTimeout(p.timeout);pending.delete(m.id);m.ok?p.resolve(m):p.reject(Error(m.error||'Tiện ích chưa sẵn sàng.'));return;}
     if(m.type==='THEME_CHANGED'){setDark(m.theme==='dark');return;}
-    if(m.type==='BRIDGE_READY'){queueCatalog();importPanel().catch(()=>{});return;}
+    if(m.type==='BRIDGE_READY'){window.dispatchEvent(new Event('customer-avatars-ready'));queueCatalog();importPanel().catch(()=>{});return;}
     if(m.type==='PANEL_IMPORT_READY')await importPanel();
   });
   function overview(host,mode){

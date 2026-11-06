@@ -85,7 +85,7 @@ namespace MetaAssistantUpdater {
       var origin="chrome-extension://"+candidate.Id+"/";var config=new Dictionary<string,object>{{"extensionPath",Path.GetFullPath(candidate.Folder)},{"origin",origin},{"browser",candidate.Browser}};
       File.WriteAllText(Path.Combine(InstallRoot,"updater-config.json"),Engine.Json.Serialize(config),new UTF8Encoding(false));
       var host=Path.Combine(InstallRoot,Engine.HostName+".json");File.WriteAllText(host,Engine.Json.Serialize(new Dictionary<string,object>{{"name",Engine.HostName},{"description","Meta Assistant extension updater"},{"path",exe},{"type","stdio"},{"allowed_origins",new[]{origin}}}),new UTF8Encoding(false));
-      using(var key=Registry.CurrentUser.CreateSubKey(RegistryPath(candidate.Browser))){key.SetValue("",host,RegistryValueKind.String);}result["installed"]=true;result["folder"]=candidate.Folder;return result;
+      using(var key=Registry.CurrentUser.CreateSubKey(RegistryPath(candidate.Browser))){key.SetValue("",host,RegistryValueKind.String);}CustomerAvatarCache.Publish(InstallRoot);result["installed"]=true;result["folder"]=candidate.Folder;return result;
     }
     public static Dictionary<string,object> UpdateResult(Dictionary<string,object> result,string runningVersion,string uiVersion){
       object raw;bool filesUpdated=result.TryGetValue("updated",out raw)&&raw is bool&&(bool)raw;
@@ -99,7 +99,7 @@ namespace MetaAssistantUpdater {
     static void Reply(Dictionary<string,object> data){var bytes=Encoding.UTF8.GetBytes(Engine.Json.Serialize(data));var output=Console.OpenStandardOutput();var length=BitConverter.GetBytes(bytes.Length);output.Write(length,0,4);output.Write(bytes,0,bytes.Length);output.Flush();}
     static void Native(string origin){try{var config=Engine.ReadJson(ConfigFile);if(origin!=Engine.Get(config,"origin"))throw new Exception("Tiện ích không được phép cập nhật.");var input=Console.OpenStandardInput();var length=BitConverter.ToInt32(ReadExact(input,4),0);if(length<2||length>65536)throw new Exception("Thông điệp không hợp lệ.");var message=Engine.Json.Deserialize<Dictionary<string,object>>(Encoding.UTF8.GetString(ReadExact(input,length)));var target=Engine.Get(config,"extensionPath");
       if(Engine.Get(message,"action")=="status"){var m=Engine.Installed(target);Reply(new Dictionary<string,object>{{"ok",true},{"version",Engine.Get(m,"version")}});}
-      else if(Engine.Get(message,"action")=="public_profile")Reply(PublicProfile.ReadForHost(Engine.Get(message,"profile"),AppDomain.CurrentDomain.BaseDirectory));
+      else if(Engine.Get(message,"action")=="public_profile")Reply(CustomerAvatarCache.Attach(AppDomain.CurrentDomain.BaseDirectory,Engine.Get(message,"profile"),PublicProfile.ReadForHost(Engine.Get(message,"profile"),AppDomain.CurrentDomain.BaseDirectory)));
       else if(Engine.Get(message,"action")=="update")Reply(UpdateResult(new Engine(AppDomain.CurrentDomain.BaseDirectory).Apply(Engine.Download(),target,false),Engine.Get(message,"runningVersion"),Engine.Get(message,"uiVersion")));else throw new Exception("Lệnh cập nhật không hợp lệ.");
     }catch(Exception e){Reply(new Dictionary<string,object>{{"ok",false},{"error",e.Message}});}}
     [STAThread] public static void Main(string[] args){

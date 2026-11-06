@@ -347,7 +347,8 @@ let identityWrites=Promise.resolve();
 function publicIdentity(profile){
   const uid=String(profile?.uid||''),image=new URL(profile?.avatar),url=new URL(profile?.profileUrl);
   if(!/^\d{5,30}$/.test(uid)||image.protocol!=='https:'||!image.hostname.endsWith('.fbcdn.net')||image.username||image.password||url.origin!=='https://www.facebook.com'||/(?:[?&])(access_token|token|authorization)=/i.test(image.search))throw Error('UID hoặc ảnh công khai chưa hợp lệ.');
-  return {uid,name:String(profile.name||'').slice(0,200),profileUrl:url.href,avatar:image.href,...(/^\d{5,30}$/.test(String(profile.sourceId||''))?{sourceId:String(profile.sourceId)}:{}),verifiedAt:Date.now()};
+  const avatarData=typeof profile.avatarData==='string'&&profile.avatarData.length<=200000&&/^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(profile.avatarData)?profile.avatarData:'';
+  return {...(avatarData?{avatarData}:{}),uid,name:String(profile.name||'').slice(0,200),profileUrl:url.href,avatar:image.href,...(/^\d{5,30}$/.test(String(profile.sourceId||''))?{sourceId:String(profile.sourceId)}:{}),verifiedAt:Date.now()};
 }
 async function rememberCustomerIdentities(changes){
   const write=identityWrites.catch(()=>{}).then(async()=>DB.set('customerIdentitiesV1',{...await DB.get('customerIdentitiesV1',{}),...changes}));identityWrites=write;await write;
@@ -391,8 +392,8 @@ async function automaticCustomerEvidence(page,id,force=false){
 }
 let avatarWrites = Promise.resolve();
 App.customerPics = async (page, psids, { force = false, onResult, onIdentity } = {}) => {
-  const cache = await DB.get('avatarCacheV6', {}), changes = {}, identities=await DB.get('customerIdentitiesV1',{}), identityChanges={};
-  const safeURL = value => { try { const u = new URL(value); return u.protocol === 'https:' && !u.username && !u.password && ![...u.searchParams.keys()].some(k => /^(access_token|token|authorization)$/i.test(k)) ? u.href : ''; } catch { return ''; } };
+  const cache = await DB.get('avatarCacheV7', {}), changes = {}, identities=await DB.get('customerIdentitiesV1',{}), identityChanges={};
+  const safeURL = value => { if(typeof value==='string'&&value.length<=200000&&/^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(value))return value;try { const u = new URL(value); return u.protocol === 'https:' && !u.username && !u.password && ![...u.searchParams.keys()].some(k => /^(access_token|token|authorization)$/i.test(k)) ? u.href : ''; } catch { return ''; } };
   const out = new Map(), need = [];
   const emit = (id, url) => { out.set(id, url); onResult?.(id, url); };
   for (const id of new Set(psids.filter(Boolean).map(String).filter(id => /^\d+$/.test(id)))) {
@@ -400,8 +401,15 @@ App.customerPics = async (page, psids, { force = false, onResult, onIdentity } =
     if(identities[page.id+':'+id])onIdentity?.(id,identities[page.id+':'+id]);
     if (!force && c && Date.now() - c.at < (c.url ? PIC_TTL : 60e3)) emit(id, safeURL(c.url)); else need.push(id);
   }
+  const knownTargets=[...new Set([...need,...[...out].filter(([,url])=>!url).map(([id])=>id)])];
+  if(knownTargets.length&&typeof App.lookupKnownCustomerProfiles==='function')try{
+    const known=await App.lookupKnownCustomerProfiles(knownTargets);
+    for(const entry of known){const profile=publicIdentity(entry),id=profile.sourceId||profile.uid;if(!knownTargets.includes(id)||!profile.avatarData)continue;
+      const key=page.id+':'+id;identityChanges[key]=profile;changes[key]={url:profile.avatarData,at:Date.now()};customerIdentityStatus.delete(key);onIdentity?.(id,profile);emit(id,profile.avatarData);
+    }
+  }catch(error){reportAvatarError(error);}
   const missing = [];
-  await pool(need, 4, async id => {
+  await pool(need.filter(id=>!out.get(id)), 4, async id => {
     let url = '';
     try {
       // Truy cập trực tiếp link avatar. redirect=false trả URL CDN để hiển thị mà không lộ token.
@@ -442,12 +450,12 @@ App.customerPics = async (page, psids, { force = false, onResult, onIdentity } =
         profile=found;break;
       }catch(error){lastError=error;}}
       if(!profile)throw lastError||Error('Facebook chưa trả đủ dữ liệu để tự xác minh UID.');
-      identityChanges[key]=profile;changes[key]={url:profile.avatar,at:Date.now()};customerIdentityStatus.delete(key);onIdentity?.(id,profile);emit(id,profile.avatar);
+      identityChanges[key]=profile;const image=profile.avatarData||profile.avatar;changes[key]={url:image,at:Date.now()};customerIdentityStatus.delete(key);onIdentity?.(id,profile);emit(id,image);
     } catch(error){customerIdentityStatus.set(key,String(error.message||'Chưa xác minh được UID.'));}
   });
   if(Object.keys(identityChanges).length)await rememberCustomerIdentities(identityChanges);
   for (const id of need) if (!out.has(id)) emit(id, '');
-  if (Object.keys(changes).length) { const write = avatarWrites.catch(() => {}).then(async () => { const latest = await DB.get('avatarCacheV6', {}); await DB.set('avatarCacheV6', { ...latest, ...changes }); }); avatarWrites = write; await write; }
+  if (Object.keys(changes).length) { const write = avatarWrites.catch(() => {}).then(async () => { const latest = await DB.get('avatarCacheV7', {}); await DB.set('avatarCacheV7', { ...latest, ...changes }); }); avatarWrites = write; await write; }
   return out;
 };
 // Dòng Page nhỏ: ảnh + tên (dùng trong danh sách bài, bình luận…).

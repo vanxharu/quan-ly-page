@@ -13,7 +13,7 @@ Giới hạn Graph API: Page chỉ nhắn được trong 24 giờ kể từ tin 
 Mã nguồn: `index.html`, `css/app.css`, `js/core.js` (đăng nhập, API, lưu trữ, điều hướng), mỗi tab một file `js/*.js`; `js/lib/` chép phần tính toán thuần từ tiện ích.
 
 
-Studio AI 2.4.3 có tab **Cài đặt** để sửa prompt viết bài, prompt ảnh và trang bắt đầu GPT (chatgpt.com hoặc GPT tuỳ chỉnh). Cài đặt được lưu riêng trong tiện ích, chụp lại khi bắt đầu mỗi lượt; không thay đổi lượt đang chạy. Mặc định ảnh ngang 5:4, số 0899779488, chữ dưới 25%, phù hợp chính sách Facebook. Mỗi cặp bài/ảnh được lưu trước khi làm bài tiếp.
+Studio AI 2.4.4 có tab **Cài đặt** để sửa prompt viết bài, prompt ảnh và trang bắt đầu GPT (chatgpt.com hoặc GPT tuỳ chỉnh). Cài đặt được lưu riêng trong tiện ích, chụp lại khi bắt đầu mỗi lượt; không thay đổi lượt đang chạy. Mặc định ảnh ngang 5:4, số 0899779488, chữ dưới 25%, phù hợp chính sách Facebook. Mỗi cặp bài/ảnh được lưu trước khi làm bài tiếp.
 
 Logo robot dùng trong đầu web, favicon, đầu Studio AI và biểu tượng tiện ích. Avatar Fanpage/khách giữ ảnh riêng. Avatar khách truy cập trực tiếp link Graph /ID/picture của đúng khách/Page, lấy URL CDN để hiển thị; User Profile API làm dự phòng. Bỏ ảnh mặc định, không đưa token vào URL ảnh hiển thị. Cache theo Page+PSID; tự tải khi mở danh sách/hội thoại, ảnh nào về hiện ngay và cập nhật cả đầu hội thoại lẫn tin nhắn; ảnh lỗi tự tải lại, khách chưa có ảnh được thử lại sau ít nhất một phút, không cần nút tải thủ công.
 
@@ -26,3 +26,6 @@ Avatar khách (2.4.2): hoàn toàn tự động, không có hộp nhập link ha
 
 
 Cập nhật 2.4.3 phân biệt phiên bản tệp đã cài, bộ nền đang chạy và giao diện đang mở. Khi tệp đã mới nhưng bộ nền/giao diện còn cũ, vẫn tự nạp lại. Nhãn phiên bản lấy từ mã giao diện thực sự đang chạy; chỉ báo mới nhất khi các phiên bản khớp. Trước cập nhật lưu phần sửa nháp, prompt, Page, số bài và lựa chọn ảnh. Lỗi tạo bài cũ vẫn nằm trong ChatGPT/Bản nháp, không lẫn với thông báo cập nhật trên tab Soạn bài. Bộ Windows hỗ trợ yêu cầu cập nhật từ bản cũ để hoàn tất nạp lại mà không cần giải nén lại.
+
+
+Ảnh 2.4.4: yêu cầu avatar không còn chặn hàng đợi lệnh tạo bài/giao diện. Bộ kết nối tạo thumbnail PNG 128×128 từ ảnh Facebook đã xác minh, giữ bản riêng trên máy và chép cache vào thư mục tiện ích. Bộ nền chỉ đọc cache này cho đúng ID rồi chuyển ảnh trực tiếp về web, không đưa cache vào gói công khai hay mở cho website khác. Ảnh cache được hiển thị trước khi chờ các khách/API còn lại; trường hợp mất kết nối native hoặc ảnh CDN không nhúng được vẫn dùng bản đã lưu. Cache tối đa 850 KB, giữ ba ngày phía giao diện; lưu riêng, không có token/cookie.

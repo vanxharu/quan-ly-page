@@ -12,3 +12,5 @@ Mã nguồn: Updater.cs; biên dịch lại bằng Windows PowerShell: .\Build.p
 Bản 2.4.2 đọc UID/ảnh công khai qua public_profile. Link Facebook đã được cung cấp có thể lưu theo ID trong customer-identities.json tại thư mục bộ kết nối, với uid/profileUrl/source=user_provided. Không dò theo tên. Dữ liệu này chỉ nằm trên máy, không được đóng gói vào bản công khai. Mã PublicProfile.cs được biên dịch cùng Updater.cs, dùng giao tiếp tiêu chuẩn để tương thích trình duyệt Chromium. Bộ cũ cần cập nhật executable tương ứng; không thay đổi quyền Facebook hay đọc phiên đăng nhập.
 
 2.4.3: phản hồi cập nhật có filesUpdated và reloadRequired. Bản cũ chưa gửi phiên bản đang chạy vẫn nhận tín hiệu nạp lại, kể cả khi tệp đã được cập nhật trước đó. Giữ nguyên thư mục, sao lưu và dữ liệu khách riêng trên máy.
+
+2.4.4 thêm CustomerAvatarCache.cs: tải ảnh CDN Facebook đã xác minh, tạo PNG 128×128 và giữ cache riêng giới hạn 850 KB tại customer-avatar-cache.json. Cache được chép vào thư mục tiện ích để bộ nền có thể đọc nội bộ mà không cần kết nối native cho mỗi lần xem. Cache không được đóng gói vào ZIP công khai. Giữ lại customer-identities.json riêng của máy.

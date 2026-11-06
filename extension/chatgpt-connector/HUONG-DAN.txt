@@ -1,4 +1,4 @@
-META ASSISTANT · STUDIO AI 2.4.3
+META ASSISTANT · STUDIO AI 2.4.4
 
 1. Bấm Tải lại tiện ích tại chrome://extensions. Nếu trình duyệt yêu cầu xác nhận quyền mới cho khung nhúng, bạn tự xác nhận.
 2. Tải lại Meta Assistant để đồng bộ avatar Page, lịch sử bài và giao diện sáng/tối.
@@ -23,4 +23,6 @@ LỊCH ĐĂNG: chức năng Đăng Fanpage đã gộp vào Lịch đăng. Bấm 
 
 AVATAR KHÁCH: web tự đọc ảnh và nhận diện theo dữ liệu Facebook trả về cho từng khách/hội thoại. Không nhập link, không gắn từng khách thủ công. UID đã xác minh hiển thị dưới tên; PSID để nhắn tin được giữ riêng. Các cặp ID và link bạn đã cung cấp được lưu riêng trên máy. Khách chưa được Facebook cấp dữ liệu vẫn giữ chữ viết tắt và được tự thử lại có giới hạn; không ghép theo tên trùng. Bộ kết nối Windows dùng giao thức đọc/ghi tiêu chuẩn, có báo lỗi kết nối gốc để chẩn đoán.
 
-CẬP NHẬT 2.4.3: nút Cập nhật kiểm tra tệp, bộ nền và giao diện đang chạy. Dù tệp đã mới, tiện ích vẫn tự nạp lại nếu bộ nền/giao diện cũ. Chỉ báo mới nhất khi các phiên bản khớp. Phần sửa nháp và prompt được lưu trước; lỗi GPT của lượt trước nằm tại ChatGPT/Bản nháp. Không giải nén lại vào thư mục khác.
+CẬP NHẬT 2.4.4: nút Cập nhật kiểm tra tệp, bộ nền và giao diện đang chạy. Dù tệp đã mới, tiện ích vẫn tự nạp lại nếu bộ nền/giao diện cũ. Chỉ báo mới nhất khi các phiên bản khớp. Phần sửa nháp và prompt được lưu trước; lỗi GPT của lượt trước nằm tại ChatGPT/Bản nháp. Không giải nén lại vào thư mục khác.
+
+AVATAR 2.4.4: ảnh đã xác minh được lưu riêng dưới dạng PNG nhỏ trên máy; web nhận ảnh trực tiếp từ tiện ích, không chờ cả nhóm khách/API bên ngoài. Yêu cầu ảnh tách khỏi hàng đợi tạo bài. Cache riêng không nằm trong ZIP công khai, không dùng tên để gán ảnh. Bộ kết nối mới cần chạy cùng phiên bản để tạo/cập nhật cache ảnh.

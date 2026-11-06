@@ -1,5 +1,5 @@
 importScripts('protocol.js','embed-rules.js');
-const P=MetaAIProtocol,WORKER_VERSION='2.4.3';
+const P=MetaAIProtocol,WORKER_VERSION='2.4.4';
 let updatingExtension=false;
 const callUpdater=(action,extra={})=>new Promise((resolve,reject)=>{
   if(typeof chrome.runtime.sendNativeMessage!=='function')return reject(Error('Cần cài bộ cập nhật Windows và Tải lại tiện ích một lần.'));
@@ -19,8 +19,23 @@ function profileTarget(value){
   if(!/^[a-zA-Z0-9.]{3,100}$/.test(slug)||['login','checkpoint','help','privacy','settings','photo.php','l.php','home.php','watch','reel','groups','pages','recover','dialog','share'].includes(slug.toLowerCase()))throw Error('Cần link trang cá nhân.');
   return 'https://www.facebook.com/'+slug;
 }
+const inlineAvatar=value=>typeof value==='string'&&value.length<=200000&&/^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(value)?value:'';
+function cleanPublicProfile(result,target){
+  const avatar=new URL(result.avatar);if(!/^\d{5,30}$/.test(result.uid)||avatar.protocol!=='https:'||!avatar.hostname.endsWith('.fbcdn.net')||avatar.username||avatar.password||/(?:[?&])(access_token|token|authorization)=/i.test(avatar.search))throw Error('Danh tính hoặc ảnh công khai không hợp lệ.');
+  return {...(result.sourceId===target&&/^\d{5,30}$/.test(target)?{sourceId:target}:{}),uid:result.uid,name:String(result.name||'').slice(0,200),profileUrl:profileTarget(result.profileUrl),avatar:avatar.href,...(inlineAvatar(result.avatarData)?{avatarData:result.avatarData}:{})};
+}
+let localAvatarSnapshot=null,localAvatarAt=0,localAvatarRead;
+async function localCustomerProfiles(targets){
+  if(!localAvatarSnapshot||Date.now()-localAvatarAt>(Object.keys(localAvatarSnapshot).length?30000:1000)){
+    if(!localAvatarRead)localAvatarRead=(async()=>{try{if(typeof fetch!=='function')return {};const response=await fetch(chrome.runtime.getURL('customer-avatar-cache.json'),{cache:'no-store'});return response.ok?await response.json():{};}catch{return {};}})().then(value=>{localAvatarSnapshot=value;localAvatarAt=Date.now();return value;}).finally(()=>{localAvatarRead=null;});
+    await localAvatarRead;
+  }
+  const profiles=[];for(const target of [...new Set(targets)].slice(0,50)){const raw=localAvatarSnapshot?.[target];if(!raw||!Number.isFinite(Number(raw.cachedAt))||Date.now()-Number(raw.cachedAt)>3*864e5||Number(raw.cachedAt)>Date.now()+300e3)continue;try{const profile=cleanPublicProfile(raw,target);if(inlineAvatar(profile.avatarData)&&(profile.uid===target||profile.sourceId===target||!/^\d+$/.test(target)))profiles.push(profile);}catch{}}
+  return profiles;
+}
 async function lookupPublicProfile(payload){
   const target=profileTarget(payload?.profile),key='profile:'+target;
+  if(!payload?.force){const local=await localCustomerProfiles([target]);if(local.length)return local[0];}
   const failed=publicProfileFailures.get(key);if(!payload?.force&&failed&&Date.now()-failed.at<3600e3)throw Error(failed.error);
   if(publicProfileRequests.has(key))return publicProfileRequests.get(key);
   const request=(async()=>{
@@ -31,10 +46,9 @@ async function lookupPublicProfile(payload){
       if(typeof chrome.runtime.sendNativeMessage!=='function')return reject(Error('Chưa cài bộ kết nối Windows.'));
       chrome.runtime.sendNativeMessage('com.metaassistant.updater',{action:'public_profile',profile:target},data=>{if(chrome.runtime.lastError){const reason=String(chrome.runtime.lastError.message||'').slice(0,300);profileConnectorUnavailableUntil=Date.now()+60000;return reject(Error('Kết nối Windows: '+reason));}if(!data?.ok)return reject(Error(data?.error||'Chưa đọc được UID công khai.'));resolve(data);});
     });
-    const avatar=new URL(result.avatar);if(!/^\d{5,30}$/.test(result.uid)||avatar.protocol!=='https:'||!avatar.hostname.endsWith('.fbcdn.net')||avatar.username||avatar.password||/(?:[?&])(access_token|token|authorization)=/i.test(avatar.search))throw Error('Danh tính hoặc ảnh công khai không hợp lệ.');
-    const profile={...(result.sourceId===target&&/^\d{5,30}$/.test(target)?{sourceId:target}:{}),uid:result.uid,name:String(result.name||'').slice(0,200),profileUrl:profileTarget(result.profileUrl),avatar:avatar.href};
+    const profile=cleanPublicProfile(result,target);
     // Merge after the request so parallel customer results do not overwrite each other.
-    const write=publicProfileWrites.catch(()=>{}).then(async()=>{const current=(await chrome.storage.local.get('publicProfileCacheV1')).publicProfileCacheV1||{};current[key]={ok:true,at:Date.now(),profile};const entries=Object.entries(current).sort((a,b)=>b[1].at-a[1].at).slice(0,1000);await chrome.storage.local.set({publicProfileCacheV1:Object.fromEntries(entries)});});publicProfileWrites=write;await write;return profile;
+    const write=publicProfileWrites.catch(()=>{}).then(async()=>{const current=(await chrome.storage.local.get('publicProfileCacheV1')).publicProfileCacheV1||{};const {avatarData,...metadata}=profile;current[key]={ok:true,at:Date.now(),profile:metadata};const entries=Object.entries(current).sort((a,b)=>b[1].at-a[1].at).slice(0,1000);await chrome.storage.local.set({publicProfileCacheV1:Object.fromEntries(entries)});});publicProfileWrites=write;await write;return profile;
   })();publicProfileRequests.set(key,request);try{const result=await request;publicProfileFailures.delete(key);return result;}catch(error){publicProfileFailures.set(key,{at:Date.now(),error:String(error.message)});if(publicProfileFailures.size>1000)publicProfileFailures.delete(publicProfileFailures.keys().next().value);throw error;}finally{publicProfileRequests.delete(key);}
 }
 const configureInput=async input=>{input.settings=P.settings((await chrome.storage.local.get('studioSettings')).studioSettings);input.workflow=input.settings.reddit?P.WORKFLOW:'custom-post-v1';for(const item of input.items)item.brief=input.settings.postPrompt;return input;};
@@ -114,6 +128,7 @@ async function handle(m,sender) {
     if(m.type==='PANEL_OPEN_WEB'){const tabs=await chrome.tabs.query({url:'https://vanxharu.github.io/quan-ly-page/*'});if(tabs[0])await chrome.tabs.update(tabs[0].id,{active:true});else await chrome.tabs.create({url:'https://vanxharu.github.io/quan-ly-page/',active:true});return {ok:true};}
     throw Error('Lệnh bảng AI không hợp lệ.');
   }
+  if(m?.type==='CUSTOMER_PROFILES'&&fromWeb){const ids=(Array.isArray(m.payload?.ids)?m.payload.ids:[]).map(String).filter(id=>/^\d{5,30}$/.test(id)).slice(0,50);return {ok:true,profiles:await localCustomerProfiles(ids)};}
   if(m?.type==='CUSTOMER_PROFILE'&&fromWeb)return {ok:true,profile:await lookupPublicProfile(m.payload)};
   if(m?.type==='CATALOG_SYNC'&&fromWeb){const catalog=cleanCatalog(m.payload);await chrome.storage.local.set({pageCatalog:catalog,studioTheme:catalog.theme});return {ok:true};}
   if(m?.type==='THEME_SYNC'&&fromWeb){await chrome.storage.local.set({studioTheme:m.payload?.theme==='dark'?'dark':'light'});return {ok:true};}
@@ -143,7 +158,7 @@ async function handle(m,sender) {
     if(job.frameClaimed&&!job.frameDocumentId&&sender.documentId){job.frameDocumentId=sender.documentId;job.frameBindingInfo={...job.frameBindingInfo,documentIdAvailableLater:true};await save(job);}
     if(!job.frameClaimed){if(!['START','FRAME_CLAIM'].includes(m.type))return {ok:true,job:null,cancelled:true};job.frameClaimed=true;job.frameDocumentId=sender.documentId||null;job.frameBindingInfo={hasDocumentId:!!sender.documentId,hasTab:!!sender.tab,frameId:Number.isInteger(sender.frameId)?sender.frameId:null};await save(job);}
   }else if(job.gptTab!==sender.tab?.id)return {ok:true,job:null,cancelled:true};
-  if(m.type==='CLAIM'&&m.agentVersion!=='2.4.3'){await finish(job,'Tab ChatGPT đang dùng tiện ích cũ. Cập nhật tiện ích và tải lại cả trang Meta Assistant lẫn tab ChatGPT.');return {ok:false,error:'Phiên bản tiện ích trong tab ChatGPT chưa đồng bộ.'};}
+  if(m.type==='CLAIM'&&m.agentVersion!=='2.4.4'){await finish(job,'Tab ChatGPT đang dùng tiện ích cũ. Cập nhật tiện ích và tải lại cả trang Meta Assistant lẫn tab ChatGPT.');return {ok:false,error:'Phiên bản tiện ích trong tab ChatGPT chưa đồng bộ.'};}
   if(m.type==='CLAIM')return {ok:true,job:{id:job.id,nonce:job.nonce,input:inputFor(job),index:job.currentIndex||0,total:job.input.items.length,status:job.status}};
   if(m.nonce!==job.nonce||m.id!==job.id)throw Error('Lượt tạo không hợp lệ.');
   if(m.type==='FRAME_CLAIM')return {ok:true};
@@ -163,5 +178,5 @@ async function handle(m,sender) {
 }
 // Tuần tự hoá để hai tab không cùng mở lượt mới hoặc ghi đè trạng thái.
 let messages=Promise.resolve();
-chrome.runtime.onMessage.addListener((message,sender,respond)=>{if(message?.type==='OPEN_PANEL'&&P.website(sender.url)){openStudio(sender.tab).then(()=>respond({ok:true}),e=>respond({ok:false,error:e.message}));return true;}const task=messages.then(()=>handle(message,sender));messages=task.catch(()=>{});task.then(respond,e=>respond({ok:false,error:e.message}));return true;});
+chrome.runtime.onMessage.addListener((message,sender,respond)=>{if(message?.type==='OPEN_PANEL'&&P.website(sender.url)){openStudio(sender.tab).then(()=>respond({ok:true}),e=>respond({ok:false,error:e.message}));return true;}const independent=['CUSTOMER_PROFILE','CUSTOMER_PROFILES'].includes(message?.type)&&P.website(sender.url);const task=independent?handle(message,sender):messages.then(()=>handle(message,sender));if(!independent)messages=task.catch(()=>{});task.then(respond,e=>respond({ok:false,error:e.message}));return true;});
 chrome.tabs.onRemoved.addListener(async tabId=>{const job=await getJob();if(job?.gptTab===tabId&&['opening','running'].includes(job.status))await finish(job,'Tab ChatGPT đã đóng. Các bài đã nhận vẫn được giữ trên web.');});
