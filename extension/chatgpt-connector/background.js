@@ -1,6 +1,32 @@
 importScripts('protocol.js','embed-rules.js');
-const P=MetaAIProtocol,WORKER_VERSION='2.4.4';
+const P=MetaAIProtocol,WORKER_VERSION='2.4.5';
 let updatingExtension=false;
+
+// Sau khi nạp lại tiện ích, content script ở tab web cũ đã bị Chrome vô hiệu hoá.
+// Chỉ sửa tab Meta Assistant không còn cầu nối; không đụng tab GPT hoặc bản nháp.
+const bridgeRepairs=new Map(),bridgeChecks=new Map();
+async function repairWebConnections(){
+  if(typeof chrome.tabs.query!=='function'||typeof chrome.tabs.reload!=='function')return;
+  const tabs=await chrome.tabs.query({url:'https://vanxharu.github.io/quan-ly-page/*'});
+  await Promise.all(tabs.filter(tab=>Number.isInteger(tab.id)&&P.website(tab.url)&&tab.status!=='loading').map(tab=>{
+    if(bridgeRepairs.has(tab.id))return bridgeRepairs.get(tab.id);
+    if(Date.now()-(bridgeChecks.get(tab.id)||0)<10000)return;
+    bridgeChecks.set(tab.id,Date.now());
+    const task=(async()=>{
+      let timer,healthy=false;
+      try{const answer=await Promise.race([chrome.tabs.sendMessage(tab.id,{channel:'META_AI_EVENT',type:'BRIDGE_PING'}),new Promise(resolve=>timer=setTimeout(()=>resolve(null),2000))]);healthy=answer?.ok===true&&answer.version===WORKER_VERSION;}catch{}finally{clearTimeout(timer);}
+      if(healthy)return;
+      const key='webBridgeReloadV1:'+tab.id,previous=(await chrome.storage.session.get(key))[key];
+      if(previous&&previous.url===tab.url&&Date.now()-previous.at<60000)return;
+      await chrome.storage.session.set({[key]:{url:tab.url,at:Date.now()}});
+      await chrome.tabs.reload(tab.id,{bypassCache:true});
+    })().catch(()=>{}).finally(()=>bridgeRepairs.delete(tab.id));
+    bridgeRepairs.set(tab.id,task);return task;
+  }));
+}
+chrome.runtime.onInstalled?.addListener(()=>repairWebConnections().catch(()=>{}));
+chrome.runtime.onStartup?.addListener(()=>repairWebConnections().catch(()=>{}));
+
 const callUpdater=(action,extra={})=>new Promise((resolve,reject)=>{
   if(typeof chrome.runtime.sendNativeMessage!=='function')return reject(Error('Cần cài bộ cập nhật Windows và Tải lại tiện ích một lần.'));
   chrome.runtime.sendNativeMessage('com.metaassistant.updater',{action,...extra},result=>{
@@ -120,7 +146,7 @@ async function handle(m,sender) {
     if(m.type==='PANEL_OPEN_GPT'){const job=await getJob();if(job?.gptTab){try{await chrome.tabs.update(job.gptTab,{active:true});return {ok:true};}catch{}}await chrome.tabs.create({url:job?.input?.settings?.gptHome||await homeFor(),active:true});return {ok:true};}
     if(m.type==='PANEL_SWITCH_TO_TAB'){const job=await getJob();if(!job||job.mode!=='panel'||job.transport!=='embedded'||job.status!=='opening'||job.posts.length)throw Error('GPT đã bắt đầu lượt này. Bấm Dừng trước khi đổi cách mở để tránh gửi lặp.');const tab=await chrome.tabs.create({url:job?.input?.settings?.gptHome||await homeFor(),active:true});job.transport='tab';job.gptTab=tab.id;job.frameDocumentId=null;await save(job);return {ok:true};}
     if(m.type==='PANEL_THEME'){const theme=m.theme==='dark'?'dark':'light';await chrome.storage.local.set({studioTheme:theme});for(const tab of await chrome.tabs.query({url:'https://vanxharu.github.io/quan-ly-page/*'})){try{await chrome.tabs.sendMessage(tab.id,{channel:'META_AI_EVENT',type:'THEME_CHANGED',theme});}catch{}}return {ok:true};}
-    if(m.type==='PANEL_STATUS'){const local=await chrome.storage.local.get(['panelJob','pageCatalog','pendingTransfer','studioTheme','marketingHistoryV1','studioSettings']);const live=await getJob();if(local.panelJob&&['opening','running'].includes(local.panelJob.status)&&live?.id!==local.panelJob.id){local.panelJob.status='interrupted';local.panelJob.progress='Lượt tạo đã ngắt khi trình duyệt hoặc tiện ích tải lại. Các bản nháp đã xong vẫn được giữ.';await chrome.storage.local.set({panelJob:local.panelJob});}return {ok:true,version:WORKER_VERSION,...local,externalRunning:!!live&&live.mode!=='panel'&&['opening','running'].includes(live.status)};}
+    if(m.type==='PANEL_STATUS'){repairWebConnections().catch(()=>{});const local=await chrome.storage.local.get(['panelJob','pageCatalog','pendingTransfer','studioTheme','marketingHistoryV1','studioSettings']);const live=await getJob();if(local.panelJob&&['opening','running'].includes(local.panelJob.status)&&live?.id!==local.panelJob.id){local.panelJob.status='interrupted';local.panelJob.progress='Lượt tạo đã ngắt khi trình duyệt hoặc tiện ích tải lại. Các bản nháp đã xong vẫn được giữ.';await chrome.storage.local.set({panelJob:local.panelJob});}return {ok:true,version:WORKER_VERSION,...local,externalRunning:!!live&&live.mode!=='panel'&&['opening','running'].includes(live.status)};}
     if(m.type==='PANEL_GENERATE')return startPanel(m.payload,m.transport,m.panelId);
     if(m.type==='PANEL_CANCEL'){const job=await getJob();if(job&&['opening','running'].includes(job.status)){job.status='cancelled';job.progress='Đã dừng. Các bài đã tạo được giữ trong tiện ích.';await save(job);}return {ok:true};}
     if(m.type==='PANEL_EDIT'){const live=await getJob();const job=live?.mode==='panel'?live:(await chrome.storage.local.get('panelJob')).panelJob;const post=job?.posts.find(p=>p.key===m.key);if(!post)throw Error('Không tìm thấy bài.');post.text=String(m.text||'').slice(0,18000);if(live?.id===job.id)await save(job);else await chrome.storage.local.set({panelJob:job});return {ok:true};}
@@ -158,7 +184,7 @@ async function handle(m,sender) {
     if(job.frameClaimed&&!job.frameDocumentId&&sender.documentId){job.frameDocumentId=sender.documentId;job.frameBindingInfo={...job.frameBindingInfo,documentIdAvailableLater:true};await save(job);}
     if(!job.frameClaimed){if(!['START','FRAME_CLAIM'].includes(m.type))return {ok:true,job:null,cancelled:true};job.frameClaimed=true;job.frameDocumentId=sender.documentId||null;job.frameBindingInfo={hasDocumentId:!!sender.documentId,hasTab:!!sender.tab,frameId:Number.isInteger(sender.frameId)?sender.frameId:null};await save(job);}
   }else if(job.gptTab!==sender.tab?.id)return {ok:true,job:null,cancelled:true};
-  if(m.type==='CLAIM'&&m.agentVersion!=='2.4.4'){await finish(job,'Tab ChatGPT đang dùng tiện ích cũ. Cập nhật tiện ích và tải lại cả trang Meta Assistant lẫn tab ChatGPT.');return {ok:false,error:'Phiên bản tiện ích trong tab ChatGPT chưa đồng bộ.'};}
+  if(m.type==='CLAIM'&&m.agentVersion!=='2.4.5'){await finish(job,'Tab ChatGPT đang dùng tiện ích cũ. Cập nhật tiện ích và tải lại cả trang Meta Assistant lẫn tab ChatGPT.');return {ok:false,error:'Phiên bản tiện ích trong tab ChatGPT chưa đồng bộ.'};}
   if(m.type==='CLAIM')return {ok:true,job:{id:job.id,nonce:job.nonce,input:inputFor(job),index:job.currentIndex||0,total:job.input.items.length,status:job.status}};
   if(m.nonce!==job.nonce||m.id!==job.id)throw Error('Lượt tạo không hợp lệ.');
   if(m.type==='FRAME_CLAIM')return {ok:true};
@@ -179,4 +205,4 @@ async function handle(m,sender) {
 // Tuần tự hoá để hai tab không cùng mở lượt mới hoặc ghi đè trạng thái.
 let messages=Promise.resolve();
 chrome.runtime.onMessage.addListener((message,sender,respond)=>{if(message?.type==='OPEN_PANEL'&&P.website(sender.url)){openStudio(sender.tab).then(()=>respond({ok:true}),e=>respond({ok:false,error:e.message}));return true;}const independent=['CUSTOMER_PROFILE','CUSTOMER_PROFILES'].includes(message?.type)&&P.website(sender.url);const task=independent?handle(message,sender):messages.then(()=>handle(message,sender));if(!independent)messages=task.catch(()=>{});task.then(respond,e=>respond({ok:false,error:e.message}));return true;});
-chrome.tabs.onRemoved.addListener(async tabId=>{const job=await getJob();if(job?.gptTab===tabId&&['opening','running'].includes(job.status))await finish(job,'Tab ChatGPT đã đóng. Các bài đã nhận vẫn được giữ trên web.');});
+chrome.tabs.onRemoved.addListener(async tabId=>{bridgeChecks.delete(tabId);await chrome.storage.session.remove?.('webBridgeReloadV1:'+tabId);const job=await getJob();if(job?.gptTab===tabId&&['opening','running'].includes(job.status))await finish(job,'Tab ChatGPT đã đóng. Các bài đã nhận vẫn được giữ trên web.');});
