@@ -182,6 +182,7 @@
     if(pending)pending.finally(()=>{if(S.pics.has(key))return;pictureChecked.delete(key);queuePics([c]);});
   }
   function retryPicture(c, url) {
+    if(url)App.noteCustomerAvatarImageError?.(c.page,c.other.id);
     const key = pictureKey(c) + ':' + url;
     if (!url || failedPictures.has(key)) return;
     failedPictures.add(key); S.pics.delete(pictureKey(c)); pictureChecked.delete(pictureKey(c));

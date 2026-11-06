@@ -369,6 +369,7 @@ function recordAvatarDiagnostic(page,id,hasPhoto,error,stage=''){
     App.reportCustomerAvatarDiagnostics(String(page.id),items).catch(()=>{});
   },1500));
 }
+App.noteCustomerAvatarImageError=(page,id)=>recordAvatarDiagnostic(page,String(id),false,Error('Ảnh đã có URL nhưng trình duyệt tải thất bại.'),'image_load');
 async function avatarRequest(page,id,path,params={},method='GET'){
   try{return await api(path,params,method,page.access_token);}
   catch(error){recordAvatarDiagnostic(page,id,null,error,params.fields||'picture');throw error;}
