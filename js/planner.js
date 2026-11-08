@@ -159,14 +159,24 @@
     if (!waiting.length) return log('err', 'Không có bài nháp nào chưa xếp giờ.');
     const byKey = new Map();
     for (const i of waiting) { const k = pageOf(i).id; (byKey.get(k) || byKey.set(k, []).get(k)).push(i); }
-    const days = s.days?.length ? s.days : Array.from({ length: 14 }, (_, d) => Pure.dayKeyOf(Date.now() + d * 864e5));
+    // Bỏ ngày đăng đã qua (không còn hiện trên lịch chọn) để không xếp 0 bài mà không rõ lý do.
+    const days = Pure.activeDays(s.days);
+    if ((s.days || []).some(d => !days.includes(d))) { s.days = (s.days || []).filter(d => days.includes(d)); await DB.set(SETTINGS, { ...(await DB.get(SETTINGS, {})), days: s.days }); }
     const live = queue.filter(i => i.at).map(i => ({ ...i, pageKey: pageOf(i)?.id || i.pageKey }));
     const plan = Pure.planTimes([...byKey.keys()].map(key => ({ key, cfg: cfgFor(s, key) })), days, live).filter(p => p.at).sort((a, b) => a.at - b.at);
     let n = 0;
     for (const slot of plan) { const item = byKey.get(slot.key)?.shift(); if (item) { item.at = slot.at; n++; } }
     await DB.set(QUEUE, queue);
     const left = [...byKey.values()].reduce((a, l) => a + l.length, 0);
-    log(left ? 'pending' : 'ok', `Đã xếp giờ ${n} bài.${left ? ` Còn ${left} bài chưa có chỗ: chọn thêm ngày đăng hoặc tăng số bài/ngày.` : ''}`);
+    // Nói rõ lý do cho từng Page chưa xếp được (thiếu ngày trong tuần, khung giờ trống…), không chỉ báo chung chung.
+    const why = [...byKey.entries()].filter(([, l]) => l.length).map(([key]) => {
+      const cfg = cfgFor(s, key), name = App.pageById(key)?.name || key;
+      if (!cfg.windows.length) return `${name}: khung giờ trống`;
+      if (!cfg.weekdays?.length) return `${name}: chưa chọn ngày nào trong tuần (T2–CN)`;
+      if (!days.some(d => cfg.weekdays.includes(new Date(d + 'T00:00').getDay()))) return `${name}: các ngày đăng đã chọn không rơi vào ngày trong tuần của Page này`;
+      return `${name}: đã kín ${cfg.perDay} bài/ngày trong các ngày đã chọn`;
+    });
+    log(left ? 'pending' : 'ok', `Đã xếp giờ ${n} bài.${left ? ` Còn ${left} bài chưa có chỗ — ${why.join('; ')}. Chọn thêm ngày đăng, ngày trong tuần hoặc tăng số bài/ngày.` : ''}`);
     refresh();
   }
 

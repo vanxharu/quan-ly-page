@@ -132,11 +132,19 @@ window.Pure = (() => {
   // Với mỗi ngày đã tick và mỗi Page: đủ "số bài/ngày" (trừ bài đã có trong hàng chờ ngày đó), đúng ngày trong tuần của Page.
   // Giờ ngẫu nhiên trong các khung tương tác (mỗi bài một khung khác nhau nếu đủ khung), bước 5 phút;
   // cùng Page cách nhau ≥ 1 giờ, khác Page cách nhau ≥ 15 phút, sau hiện tại ≥ 45 phút.
+  // Ngày đăng đã chọn còn dùng được (hôm nay trở đi). Hết ngày nào → 14 ngày tới. Ngày đã qua không còn hiện trên lịch chọn,
+  // nên giữ lại sẽ khiến "Xếp giờ tự động" xếp 0 bài mà người dùng không thấy lý do.
+  function activeDays(days, now = Date.now(), span = 14) {
+    const today = dayKeyOf(now), chosen = [...new Set((days || []).filter(d => typeof d === 'string' && d >= today))].sort();
+    return chosen.length ? chosen : Array.from({ length: span }, (_, d) => dayKeyOf(now + d * 864e5));
+  }
   function planTimes(pages, days, queue = [], now = Date.now(), rand = Math.random) {
     const live = queue.filter(item => item.status !== 'error');
     const taken = live.map(item => item.at);
     const plan = [];
-    const allDays = [...new Set([...days, ...pages.flatMap(({ cfg }) => cfg.days || [])])].sort();
+    const today = dayKeyOf(now);
+    pages = pages.map(p => ({ ...p, cfg: { ...p.cfg, days: (p.cfg.days || []).filter(d => d >= today) } }));
+    const allDays = [...new Set([...days, ...pages.flatMap(({ cfg }) => cfg.days || [])])].filter(d => d >= today).sort();
     for (const day of allDays) {
       const [y, m, d] = day.split('-').map(Number);
       const weekday = new Date(y, m - 1, d).getDay();
@@ -178,5 +186,5 @@ window.Pure = (() => {
     }).sort((a, b) => b.sent - a.sent || b.won - a.won);
   }
   return { STATUS, orderTotals, summarize, rangeOf, series, topProducts, loyalCustomers, customerKey, phoneKey, csv,
-    DEFAULT_WINDOWS, WEEKDAYS, MIN_LEAD, parseWindows, windowsLabel, hhmm, dayKeyOf, planTimes, DEFAULT_TOPICS, summarizeTemplates: summarize_tpl };
+    DEFAULT_WINDOWS, WEEKDAYS, MIN_LEAD, parseWindows, windowsLabel, hhmm, dayKeyOf, activeDays, planTimes, DEFAULT_TOPICS, summarizeTemplates: summarize_tpl };
 })();
