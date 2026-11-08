@@ -61,11 +61,18 @@ async function profile({ pageId }) {
   if (menu.length) body.persistent_menu = [{ locale: 'default', composer_input_disabled: false, call_to_actions: menu.map(action) }];
   const ice = (s.ice_breakers || []).filter(q => q.question).slice(0, 4);
   if (ice.length) body.ice_breakers = [{ locale: 'default', call_to_actions: ice.map(q => ({ question: q.question.slice(0, 80), payload: q.flow_id ? `FLOW:${q.flow_id}` : `TEXT:${q.text || q.question}` })) }];
-  await fb('/me/messenger_profile', token, body);
-  // Mục nào để trống thì xoá khỏi Messenger.
-  const remove = ['greeting', 'persistent_menu', 'ice_breakers'].filter(k => !body[k]);
+  let menuBlocked = false;
+  try { await fb('/me/messenger_profile', token, body); }
+  catch (e) {
+    // Menu cố định cần app là "ứng dụng chính" của Page: vẫn áp lời chào, nút Bắt đầu, câu hỏi gợi ý.
+    if (!body.persistent_menu || !/ứng dụng chính|primary|default app|chưa đặt ứng dụng/i.test(e.message)) throw e;
+    delete body.persistent_menu; menuBlocked = true;
+    await fb('/me/messenger_profile', token, body);
+  }
+  // Mục để trống thì xoá. Facebook chỉ nhận tên viết hoa và không cho xoá lời chào qua API.
+  const remove = [['persistent_menu', 'PERSISTENT_MENU'], ['ice_breakers', 'ICE_BREAKERS']].filter(([k]) => !body[k] && !(k === 'persistent_menu' && menuBlocked)).map(([, f]) => f);
   if (remove.length) await fb('/me/messenger_profile', token, { fields: remove }, 'DELETE');
-  return { ok: true };
+  return { ok: true, menuBlocked };
 }
 
 async function status() {

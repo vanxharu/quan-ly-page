@@ -176,6 +176,36 @@
     return wrap;
   }
 
+  // ── Áp Menu & lời chào lên Messenger (làm ngay trên web bằng token Page vừa đăng nhập) ──
+  // Facebook: lệnh xoá chỉ nhận tên viết hoa (PERSISTENT_MENU, ICE_BREAKERS…) và không có GREETING; menu cố định cần app là
+  // "ứng dụng chính" của Page. Lỗi menu không được làm hỏng lời chào, nút Bắt đầu và câu hỏi gợi ý.
+  const NOT_PRIMARY = /ứng dụng chính|primary|default app|chưa đặt ứng dụng|not.*(primary|default).*app|thread owner/i;
+  App.messengerProfileBody = s => {
+    const action = m => m.type === 'url' ? { type: 'web_url', title: m.title.slice(0, 30), url: m.value } : { type: 'postback', title: m.title.slice(0, 30), payload: m.type === 'flow' ? `FLOW:${m.value}` : `TEXT:${m.value || m.title}` };
+    const body = { get_started: { payload: 'GET_STARTED' } };
+    if (s.greeting) body.greeting = [{ locale: 'default', text: s.greeting.slice(0, 160) }];
+    const menu = (s.persistent_menu || []).filter(m => m.title && m.value).slice(0, 20);
+    if (menu.length) body.persistent_menu = [{ locale: 'default', composer_input_disabled: false, call_to_actions: menu.map(action) }];
+    const ice = (s.ice_breakers || []).filter(q => q.question).slice(0, 4);
+    if (ice.length) body.ice_breakers = [{ locale: 'default', call_to_actions: ice.map(q => ({ question: q.question.slice(0, 80), payload: q.flow_id ? `FLOW:${q.flow_id}` : `TEXT:${q.question}` })) }];
+    return body;
+  };
+  App.applyMessengerProfile = async (page, s, call = api) => {
+    const body = App.messengerProfileBody(s), notes = [];
+    try { await call('/me/messenger_profile', body, 'POST', page.access_token); }
+    catch (e) {
+      if (!body.persistent_menu || !NOT_PRIMARY.test(e.message)) throw e;
+      delete body.persistent_menu;
+      await call('/me/messenger_profile', body, 'POST', page.access_token);
+      notes.push('Chưa đặt được menu cố định: Facebook yêu cầu VNPAGE là ứng dụng nhận tin chính của Page (xem hướng dẫn bên dưới). Lời chào, nút Bắt đầu và câu hỏi gợi ý đã áp dụng.');
+    }
+    // Mục để trống thì xoá khỏi Messenger. Lời chào không xoá được qua API (Facebook không có GREETING trong danh sách xoá).
+    const remove = [['persistent_menu', 'PERSISTENT_MENU'], ['ice_breakers', 'ICE_BREAKERS']].filter(([k]) => !body[k] && !(k === 'persistent_menu' && notes.length)).map(([, f]) => f);
+    if (remove.length) await call('/me/messenger_profile', { fields: remove }, 'DELETE', page.access_token);
+    if (!s.greeting) notes.push('Lời chào để trống: Messenger giữ lời chào cũ (Facebook không cho xoá lời chào qua API).');
+    return { notes, menuBlocked: notes.length > 0 && !!(s.persistent_menu || []).some(m => m.title && m.value) && !body.persistent_menu };
+  };
+
   // ── Menu & lời chào ────────────────────────────────────────
   panel('botmenu', async el => {
     const pages = App.selected().filter(p => connected.some(c => c.id === p.id));
@@ -210,17 +240,26 @@
       h('div', { className: 'row section-gap' }, h('button', { className: 'btn btn-primary', textContent: `Lưu & áp dụng cho ${pages.length} Page`, onclick: save })),
       h('div', { className: 'log', id: 'bmLog' }));
     async function save(e) {
-      e.target.disabled = true; $('bmLog').replaceChildren();
+      e.target.disabled = true; $('bmLog').replaceChildren(); let blocked = false;
       const row = { bot_enabled: s.bot_enabled !== false, pause_minutes: s.pause_minutes ?? 30, welcome_flow_id: s.welcome_flow_id || null, greeting: s.greeting || '',
         fallback_text: s.fallback_text || '', persistent_menu: s.persistent_menu.filter(m => m.title && m.value), ice_breakers: s.ice_breakers.filter(b => b.question), updated_at: new Date().toISOString() };
       for (const p of pages) {
         try {
           await q(sb().from('page_settings').upsert({ page_id: p.id, ...row }));
-          // Token Page trên máy chủ hỏng → tự làm mới bằng phiên Facebook hiện tại rồi áp menu lại.
-          const { refreshed } = await S.callWithFreshToken('profile', { pageId: p.id });
-          $('bmLog').append(h('div', { className: 'status ok', textContent: `✓ ${p.name}${refreshed ? ' (đã làm mới token)' : ''}` }));
+          // Áp lên Messenger bằng token Page của phiên đăng nhập hiện tại (luôn mới), không phụ thuộc token lưu trên máy chủ.
+          const live = App.pageById(p.id);
+          if (live?.access_token) {
+            const { notes, menuBlocked } = await App.applyMessengerProfile(live, row);
+            if (menuBlocked) blocked = true;
+            $('bmLog').append(h('div', { className: 'status ' + (menuBlocked ? 'pending' : 'ok'), textContent: `${menuBlocked ? '⚠' : '✓'} ${p.name}${notes.length ? ' · ' + notes.join(' ') : ''}` }));
+          } else {
+            const { refreshed } = await S.callWithFreshToken('profile', { pageId: p.id });
+            $('bmLog').append(h('div', { className: 'status ok', textContent: `✓ ${p.name}${refreshed ? ' (đã làm mới token)' : ''}` }));
+          }
         } catch (err) { $('bmLog').append(h('div', { className: 'status err', textContent: `✗ ${p.name}: ${err.message}` })); }
       }
+      if (blocked) $('bmLog').append(h('div', { className: 'hint', style: 'margin-top:8px', textContent:
+        'Cách đặt VNPAGE làm ứng dụng nhận tin chính: mở Meta Business Suite của Page → Cài đặt → Nhắn tin nâng cao (Advanced messaging) → Định tuyến cuộc trò chuyện / Ứng dụng đã kết nối → chọn VNPAGE làm ứng dụng nhận tin chính (Primary receiver) → Lưu. Rồi bấm Lưu & áp dụng lại. Khi VNPAGE chưa là ứng dụng chính, Facebook cũng không chuyển tin của khách cho bot, nên bot sẽ không tự trả lời.' }));
       e.target.disabled = false;
     }
     draw();

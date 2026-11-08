@@ -195,12 +195,18 @@ async function pageContext(pageId) {
   const settings = (await one(`page_settings?page_id=eq.${pageId}&select=*`)) || { bot_enabled: false };
   return { token: tokenCache.get(pageId), settings };
 }
+const standbyWarned = new Set();
 async function handle(body) {
   if (body.object !== 'page') return;
   for (const entry of body.entry || []) {
     const { token, settings } = await pageContext(String(entry.id));
     if (!token) { await log(entry.id, 'error', { message: 'Page chưa kết nối với máy chủ (thiếu token).' }); continue; }
     for (const ev of entry.messaging || []) await onMessaging(String(entry.id), token, settings, ev).catch(e => log(entry.id, 'error', { where: 'message', message: e.message }));
+    // App không phải ứng dụng nhận tin chính → Facebook chỉ gửi bản "standby" để theo dõi, bot không được trả lời.
+    if ((entry.standby || []).some(ev => ev.message && !ev.message.is_echo) && !standbyWarned.has(String(entry.id))) {
+      standbyWarned.add(String(entry.id));
+      await log(entry.id, 'error', { where: 'standby', message: 'VNPAGE chưa là ứng dụng nhận tin chính của Page nên Facebook không chuyển tin cho bot. Đặt VNPAGE làm Primary receiver ở Meta Business Suite › Cài đặt › Nhắn tin nâng cao.' });
+    }
     for (const ch of entry.changes || []) if (ch.field === 'feed') await onComment(String(entry.id), token, settings, ch.value || {}).catch(e => log(entry.id, 'error', { where: 'comment', message: e.message }));
   }
 }
