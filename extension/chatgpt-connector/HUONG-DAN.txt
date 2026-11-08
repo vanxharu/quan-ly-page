@@ -1,4 +1,4 @@
-META ASSISTANT · STUDIO AI 2.5.1
+META ASSISTANT · STUDIO AI 2.5.2
 
 1. Bấm Tải lại tiện ích tại chrome://extensions. Nếu trình duyệt yêu cầu xác nhận quyền mới cho khung nhúng, bạn tự xác nhận.
 2. Tải lại Meta Assistant để đồng bộ avatar Page, lịch sử bài và giao diện sáng/tối.
@@ -39,3 +39,4 @@ Lên lịch có ảnh: tải ảnh chưa xuất bản, gắn mã ảnh vào bài
 Avatar: dùng profile_pic của PSID trước; từng khách tự chuyển nguồn dự phòng, không đợi cả nhóm. Ảnh nhận được lưu ngay. Yêu cầu ảnh Facebook có ngắt chờ 12 giây để thử nguồn khác; không đổi thời gian chờ GPT. Mã 100/33 trên /picture không được dùng để kết luận mọi khách đều bị chặn. Bộ Windows báo hostVersion và tính năng để phân biệt mã đang chạy với phiên bản tệp tiện ích.
 
 LINK CHATGPT 2.5.1: ô Link ChatGPT nhận trang chủ, GPT tuỳ chỉnh (chatgpt.com/g/…) hoặc link một hội thoại (chatgpt.com/c/…). Với link hội thoại, bài mới được viết tiếp trong hội thoại đó; tiện ích ghi nhận các câu trả lời có sẵn nên không đọc nhầm bài cũ.
+LÀM MỚI 2.5.2: tab Bản nháp có nút Làm mới để xoá bản nháp đã chuyển sang web và dọn lượt tạo bị kẹt. Nếu còn bài chưa chuyển, tiện ích hỏi lại trước khi xoá.

@@ -1,5 +1,5 @@
 importScripts('protocol.js','embed-rules.js','studio-storage.js');
-const P=MetaAIProtocol,WORKER_VERSION='2.5.1';
+const P=MetaAIProtocol,WORKER_VERSION='2.5.2';
 let updatingExtension=false;
 
 // Sau khi nạp lại tiện ích, content script ở tab web cũ đã bị Chrome vô hiệu hoá.
@@ -158,6 +158,11 @@ async function handle(m,sender) {
     if(m.type==='PANEL_CANCEL'){const job=await getJob();if(job&&['opening','running'].includes(job.status)){job.status='cancelled';job.progress='Đã dừng. Các bài đã tạo được giữ trong tiện ích.';await save(job);}return {ok:true};}
     if(m.type==='PANEL_EDIT'){const live=await getJob();const job=live?.mode==='panel'?live:(await StudioStorage.local.get('panelJob')).panelJob;const post=job?.posts.find(p=>p.key===m.key);if(!post)throw Error('Không tìm thấy bài.');post.text=String(m.text||'').slice(0,18000);if(live?.id===job.id)await save(job);else await StudioStorage.local.set({panelJob:job});return {ok:true};}
     if(m.type==='PANEL_TRANSFER')return transferPanel(Array.isArray(m.keys)?m.keys:[]);
+    // Làm mới: dừng lượt đang chạy (nếu có) và xoá bản nháp của bảng. Bài chưa chuyển sang web chỉ bị xoá khi panel đã hỏi và gửi discard.
+    if(m.type==='PANEL_RESET'){const live=await getJob(),job=live?.mode==='panel'?live:(await StudioStorage.local.get('panelJob')).panelJob;
+      const unsent=(job?.posts||[]).filter(p=>!p.transferredAt&&p.text?.trim()).length;if(unsent&&!m.discard)throw Error(`Còn ${unsent} bài chưa chuyển sang web.`);
+      if(live?.mode==='panel'){if(['opening','running'].includes(live.status)){live.status='cancelled';live.progress='Đã làm mới.';}await StudioStorage.session.remove('job');}
+      await StudioStorage.local.remove('panelJob');return {ok:true,removed:job?.posts?.length||0};}
     if(m.type==='PANEL_OPEN_WEB'){const tabs=await chrome.tabs.query({url:'https://vanxharu.github.io/quan-ly-page/*'});if(tabs[0])await chrome.tabs.update(tabs[0].id,{active:true});else await chrome.tabs.create({url:'https://vanxharu.github.io/quan-ly-page/',active:true});return {ok:true};}
     throw Error('Lệnh bảng AI không hợp lệ.');
   }
@@ -197,7 +202,7 @@ async function handle(m,sender) {
     if(job.frameClaimed&&!job.frameDocumentId&&sender.documentId){job.frameDocumentId=sender.documentId;job.frameBindingInfo={...job.frameBindingInfo,documentIdAvailableLater:true};await save(job);}
     if(!job.frameClaimed){if(!['START','FRAME_CLAIM'].includes(m.type))return {ok:true,job:null,cancelled:true};job.frameClaimed=true;job.frameDocumentId=sender.documentId||null;job.frameBindingInfo={hasDocumentId:!!sender.documentId,hasTab:!!sender.tab,frameId:Number.isInteger(sender.frameId)?sender.frameId:null};await save(job);}
   }else if(job.gptTab!==sender.tab?.id)return {ok:true,job:null,cancelled:true};
-  if(m.type==='CLAIM'&&m.agentVersion!=='2.5.1'){await finish(job,'Tab ChatGPT đang dùng tiện ích cũ. Cập nhật tiện ích và tải lại cả trang Meta Assistant lẫn tab ChatGPT.');return {ok:false,error:'Phiên bản tiện ích trong tab ChatGPT chưa đồng bộ.'};}
+  if(m.type==='CLAIM'&&m.agentVersion!=='2.5.2'){await finish(job,'Tab ChatGPT đang dùng tiện ích cũ. Cập nhật tiện ích và tải lại cả trang Meta Assistant lẫn tab ChatGPT.');return {ok:false,error:'Phiên bản tiện ích trong tab ChatGPT chưa đồng bộ.'};}
   if(m.type==='CLAIM')return {ok:true,job:{id:job.id,nonce:job.nonce,input:inputFor(job),index:job.currentIndex||0,total:job.input.items.length,status:job.status}};
   if(m.nonce!==job.nonce||m.id!==job.id)throw Error('Lượt tạo không hợp lệ.');
   if(m.type==='FRAME_CLAIM')return {ok:true};

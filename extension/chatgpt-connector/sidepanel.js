@@ -1,5 +1,5 @@
 (() => {
-  const $=id=>document.getElementById(id),panelId=crypto.randomUUID(),P=MetaAIProtocol,UI_VERSION='2.5.1';
+  const $=id=>document.getElementById(id),panelId=crypto.randomUUID(),P=MetaAIProtocol,UI_VERSION='2.5.2';
   $('appVersion').textContent='v'+UI_VERSION;
   $('postPrompt').textContent=P.POST_PROMPT;$('imagePrompt').textContent=P.IMAGE_PROMPT;
   let settingsKey='',updating=false,state={},catalogStamp=0,choices={},loadTimer,view='compose',transport='embedded',frameReady=false,frameLoaded=false,frameDelivered=false,pendingRun=null,frameTimer,runAckTimer,frameAck=false,frameClaimed=false,lastFrameInfo=null,versionMismatch=false,frameNavigationReady=false,bufferedReady=null,frameJobId='';
@@ -64,7 +64,7 @@
   const imageObserver=typeof IntersectionObserver==='function'?new IntersectionObserver(entries=>{for(const entry of entries)if(entry.isIntersecting){imageObserver.unobserve(entry.target);loadDraftImage(entry.target,entry.target.dataset.postImageKey);}}):null;
   function drawResults(){
     if(document.activeElement?.matches('textarea[data-key]'))return;imageObserver?.disconnect();
-    const job=state.panelJob,posts=job?.posts||[];$('navCount').textContent=String(posts.length);$('draftCount').textContent=posts.length?`${job.completedKeys?.length||0}/${job.input.items.length} bài đã hoàn tất · Giữ đúng Page`:'Bài và ảnh được lưu ngay trong tiện ích.';$('empty').hidden=!!posts.length;
+    const job=state.panelJob,posts=job?.posts||[];$('navCount').textContent=String(posts.length);$('draftCount').textContent=posts.length?`${job.completedKeys?.length||0}/${job.input.items.length} bài đã hoàn tất · Giữ đúng Page`:'Bài và ảnh được lưu ngay trong tiện ích.';$('empty').hidden=!!posts.length;$('resetDrafts').hidden=!posts.length&&!job;
     $('results').replaceChildren(...posts.map((post,index)=>{
       const complete=job.completedKeys?.includes(post.key),canTransfer=complete||!['opening','running'].includes(job.status)&&!!post.text?.trim(),page=state.pageCatalog?.pages.find(p=>p.id===post.pageId)||{name:post.pageName};
       const card=node('article',{className:'draft'});card.append(node('div',{className:'draft-header'},avatar(page,true),node('div',{},node('h2',{textContent:post.pageName}),node('p',{textContent:post.topicTitle||'Bài '+(index+1)}))));
@@ -109,13 +109,18 @@
   $('generate').onclick=async()=>{try{
     const pages=selected(),n=count();if(!pages.length)throw Error('Chọn ít nhất một Page.');if(!Number.isSafeInteger(n)||!Number.isSafeInteger(pages.length*n))throw Error('Số bài phải là số nguyên dương hợp lệ.');
     const items=[];for(const page of pages)for(let i=0;i<n;i++)items.push({key:'post-'+crypto.randomUUID(),pageId:page.id,pageName:page.name});
-    if(versionMismatch)throw Error('Cần tải lại toàn bộ tiện ích để nạp bộ nền 2.5.1.');
+    if(versionMismatch)throw Error('Cần tải lại toàn bộ tiện ích để nạp bộ nền 2.5.2.');
     $('generate').disabled=true;const result=await call('PANEL_GENERATE',{payload:{items,images:$('images').checked},transport,panelId});notice('');if(transport==='embedded'){if(!result.runJob)throw Error('Bộ nền chưa trả lệnh cho khung nhúng. Cần tải lại tiện ích.');await mountFrame(result.runJob);}switchView('gpt');await load();
   }catch(e){notice(e.message,true);await load().catch(()=>{});}};
   $('cancel').onclick=async()=>{try{pendingRun=null;const id=state.panelJob?.id;await call('PANEL_CANCEL');if(frameReady&&id)$('gptFrame').contentWindow.postMessage({source:'META_STUDIO_PANEL',type:'FRAME_CANCEL',jobId:id},'https://chatgpt.com');await load();}catch(e){notice(e.message,true);}};
   $('transfer').onclick=()=>transfer(ready().map(p=>p.key));$('count').oninput=scope;$('images').onchange=footer;$('refresh').onclick=()=>load().catch(e=>notice(e.message,true));$('pageSearch').oninput=drawPages;
   $('selectAll').onclick=()=>{for(const p of state.pageCatalog?.pages||[])choices[p.id]={...(choices[p.id]||{index:0}),checked:true};drawPages();remember().catch(()=>{});};$('clearSelection').onclick=()=>{for(const choice of Object.values(choices))choice.checked=false;drawPages();remember().catch(()=>{});};
   for(const button of document.querySelectorAll('[data-target]')){button.onclick=()=>switchView(button.dataset.target);button.onkeydown=e=>{if(!['ArrowLeft','ArrowRight'].includes(e.key))return;e.preventDefault();const buttons=[...document.querySelectorAll('[data-target]')],index=buttons.indexOf(button),next=buttons[(index+(e.key==='ArrowRight'?1:2))%buttons.length];next.focus();switchView(next.dataset.target);};}
+  // Làm mới bảng bản nháp sau khi đã đưa bài sang web (hoặc khi lượt tạo bị kẹt). Hỏi lại nếu còn bài chưa chuyển.
+  $('resetDrafts').onclick=async()=>{try{const posts=state.panelJob?.posts||[],unsent=posts.filter(p=>!p.transferredAt&&p.text?.trim()).length,active=['opening','running'].includes(state.panelJob?.status);
+    const ask=unsent?`Còn ${unsent} bài CHƯA chuyển sang web. Làm mới sẽ xoá luôn các bài này và không khôi phục được. Vẫn làm mới?`:active?'Lượt tạo đang chạy sẽ bị dừng và bản nháp được xoá khỏi tiện ích. Làm mới?':'Xoá các bản nháp đã chuyển sang web khỏi tiện ích để bắt đầu lượt mới?';
+    if(!confirm(ask))return;const id=state.panelJob?.id;if(active){pendingRun=null;await call('PANEL_CANCEL');if(frameReady&&id)$('gptFrame').contentWindow.postMessage({source:'META_STUDIO_PANEL',type:'FRAME_CANCEL',jobId:id},'https://chatgpt.com');}
+    await call('PANEL_RESET',{discard:true});notice('Đã làm mới. Chọn Page để tạo lượt mới.');await load();switchView('compose');}catch(e){notice(e.message,true);}};
   $('backCompose').onclick=()=>switchView('compose');$('openWeb').onclick=()=>call('PANEL_OPEN_WEB').catch(e=>notice(e.message,true));$('openGpt').onclick=()=>call('PANEL_OPEN_GPT').catch(e=>notice(e.message,true));
   $('reloadFrame').onclick=()=>{frameLoaded=false;mountFrame().catch(e=>notice(e.message,true));};
   $('fallbackTab').onclick=async()=>{try{if(busy()){await call('PANEL_SWITCH_TO_TAB');pendingRun=null;}transport='tab';await chrome.storage.local.set({studioTransport:transport});$('frameWarning').hidden=true;notice('Đang dùng tab GPT riêng. Bài và ảnh vẫn được lưu tại tiện ích.');await load();}catch(e){notice(e.message,true);}};
