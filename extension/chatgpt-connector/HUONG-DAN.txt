@@ -1,4 +1,4 @@
-META ASSISTANT · STUDIO AI 2.5.0
+META ASSISTANT · STUDIO AI 2.5.1
 
 1. Bấm Tải lại tiện ích tại chrome://extensions. Nếu trình duyệt yêu cầu xác nhận quyền mới cho khung nhúng, bạn tự xác nhận.
 2. Tải lại Meta Assistant để đồng bộ avatar Page, lịch sử bài và giao diện sáng/tối.
@@ -37,3 +37,5 @@ BÁO LỖI AVATAR 2.5.0: tự ghi phản hồi API theo Page/ID khách vào inbo
 STUDIO 2.5.0: bỏ chặn tổng 6 bài/lượt và 3 bài/Page. Tiếp tục tạo từng bài → ảnh → lưu nháp trước bài kế tiếp. Bản nháp lớn lưu trong IndexedDB; Chrome storage giữ con trỏ nhỏ, ảnh xem theo nhu cầu. Chuyển toàn bộ số bài sang web theo các phần nhỏ có xác nhận lưu, không cắt còn 6 bài. Chỉ dọn bản lưu của lượt cũ sau khi tất cả bài đã được web xác nhận và bắt đầu lượt mới.
 Lên lịch có ảnh: tải ảnh chưa xuất bản, gắn mã ảnh vào bài feed được hẹn giờ. Không chuyển sang bài chỉ có chữ khi tải ảnh lỗi; bài AI cần ảnh bị chặn duyệt/lên lịch nếu chưa nhận ảnh. Nhận lại ảnh có thể sửa nháp lỗi thiếu ảnh mà không đè nội dung người dùng đã sửa. Ảnh xem trước hỗ trợ attachments của Facebook.
 Avatar: dùng profile_pic của PSID trước; từng khách tự chuyển nguồn dự phòng, không đợi cả nhóm. Ảnh nhận được lưu ngay. Yêu cầu ảnh Facebook có ngắt chờ 12 giây để thử nguồn khác; không đổi thời gian chờ GPT. Mã 100/33 trên /picture không được dùng để kết luận mọi khách đều bị chặn. Bộ Windows báo hostVersion và tính năng để phân biệt mã đang chạy với phiên bản tệp tiện ích.
+
+LINK CHATGPT 2.5.1: ô Link ChatGPT nhận trang chủ, GPT tuỳ chỉnh (chatgpt.com/g/…) hoặc link một hội thoại (chatgpt.com/c/…). Với link hội thoại, bài mới được viết tiếp trong hội thoại đó; tiện ích ghi nhận các câu trả lời có sẵn nên không đọc nhầm bài cũ.
