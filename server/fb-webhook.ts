@@ -202,10 +202,16 @@ async function handle(body) {
     const { token, settings } = await pageContext(String(entry.id));
     if (!token) { await log(entry.id, 'error', { message: 'Page chưa kết nối với máy chủ (thiếu token).' }); continue; }
     for (const ev of entry.messaging || []) await onMessaging(String(entry.id), token, settings, ev).catch(e => log(entry.id, 'error', { where: 'message', message: e.message }));
-    // App không phải ứng dụng nhận tin chính → Facebook chỉ gửi bản "standby" để theo dõi, bot không được trả lời.
-    if ((entry.standby || []).some(ev => ev.message && !ev.message.is_echo) && !standbyWarned.has(String(entry.id))) {
-      standbyWarned.add(String(entry.id));
-      await log(entry.id, 'error', { where: 'standby', message: 'VNPAGE chưa là ứng dụng nhận tin chính của Page nên Facebook không chuyển tin cho bot. Đặt VNPAGE làm Primary receiver ở Meta Business Suite › Cài đặt › Nhắn tin nâng cao.' });
+    // App không phải ứng dụng nhận tin mặc định → Facebook chỉ gửi bản "standby". Thử lấy quyền hội thoại (Facebook cho phép khi
+    // hội thoại đang rảnh); được thì xử lý như tin thường, không được thì ghi Nhật ký một lần.
+    for (const ev of (entry.standby || []).filter(ev => ev.message && !ev.message.is_echo && ev.sender?.id)) {
+      if (!settings.bot_enabled) break;
+      const took = await fb(`/${entry.id}/take_thread_control`, token, { recipient: { id: ev.sender.id }, metadata: BOT_TAG }).then(() => true, () => false);
+      if (took) { await onMessaging(String(entry.id), token, settings, ev).catch(e => log(entry.id, 'error', { where: 'message', message: e.message })); continue; }
+      if (!standbyWarned.has(String(entry.id))) {
+        standbyWarned.add(String(entry.id));
+        await log(entry.id, 'error', { where: 'standby', message: 'VNPAGE chưa là ứng dụng nhận tin mặc định của Page nên Facebook không chuyển tin cho bot. Đặt VNPAGE làm mặc định ở facebook.com/settings?tab=msgr_conversation_routing (dùng Facebook với tư cách Page).' });
+      }
     }
     for (const ch of entry.changes || []) if (ch.field === 'feed') await onComment(String(entry.id), token, settings, ch.value || {}).catch(e => log(entry.id, 'error', { where: 'comment', message: e.message }));
   }

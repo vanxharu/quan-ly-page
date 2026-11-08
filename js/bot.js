@@ -33,7 +33,7 @@
     const draw = async () => {
       const rules = await q(sb().from('rules').select('*').eq('kind', kind).order('priority', { ascending: false }).order('created_at'));
       const box = h('div', {});
-      el.replaceChildren(...[notConnected(), box].filter(Boolean));
+      el.replaceChildren(...[kind === 'message' && App.selected().length ? routingCard(App.selected()) : null, notConnected(), box].filter(Boolean));
       box.append(
         h('div', { className: 'toolbar' }, h('h3', { className: 'card-title grow', textContent: kind === 'message' ? `Quy tắc trả lời tin nhắn (${rules.length})` : `Quy tắc trả lời bình luận (${rules.length})` }),
           h('button', { className: 'btn btn-primary', textContent: '+ Quy tắc mới', onclick: () => { editing = {}; draw(); } })),
@@ -206,6 +206,57 @@
     return { notes, menuBlocked: notes.length > 0 && !!(s.persistent_menu || []).some(m => m.title && m.value) && !body.persistent_menu };
   };
 
+  // ── Ứng dụng nhận tin mặc định (Conversation Routing) ─────────
+  // Facebook không có API để app tự đặt mình làm ứng dụng mặc định; chỉ đọc được app đang giữ hội thoại (thread_owner).
+  // Kiểm tra từng Page bằng hội thoại gần nhất (dùng lại bản lưu Hộp thư), lưu kết quả 6 giờ, và mở đúng chỗ cài đặt.
+  const ROUTING_KEY = 'msgrRoutingV1', ROUTING_TTL = 6 * 3600e3;
+  const KNOWN_APPS = { '263902037430900': 'Inbox in Meta Business Suite', '170005996917513': 'AhaChat' };
+  const myAppId = () => String($('appId')?.value?.trim() || App.DEFAULT_APP_ID);
+  const routingSaved = () => { try { return JSON.parse(local.get(ROUTING_KEY) || '{}'); } catch { return {}; } };
+  App.routing = {
+    async check(page) {
+      let convs = [];
+      try { convs = await App.inbox.convsFor(page, { maxAge: 10 * 60e3, low: false }); } catch (e) { if (e.cache) convs = e.cache; }
+      const psid = convs.map(c => c.other?.id).find(id => id && String(id) !== String(page.id));
+      let result;
+      if (!psid) result = { status: 'unknown', reason: 'Page chưa có hội thoại để kiểm tra.' };
+      else try {
+        const r = await api(`/${page.id}/thread_owner`, { recipient: psid }, 'GET', page.access_token);
+        const owner = String(r.data?.[0]?.thread_owner?.app_id || '');
+        result = !owner ? { status: 'unknown', reason: 'Hội thoại gần nhất đang để trống quyền; chưa xác định được.' }
+          : owner === myAppId() ? { status: 'ok' } : { status: 'other', appId: owner, appName: KNOWN_APPS[owner] || 'Ứng dụng ' + owner };
+      } catch (e) { result = { status: 'unknown', reason: e.message }; }
+      const saved = routingSaved(); saved[page.id] = { ...result, at: Date.now() }; local.set(ROUTING_KEY, JSON.stringify(saved));
+      return result;
+    },
+    get(pageId) { const r = routingSaved()[pageId]; return r && Date.now() - r.at < ROUTING_TTL ? r : null; },
+    markBlocked(pageId) { const saved = routingSaved(); saved[pageId] = { status: 'other', appName: 'ứng dụng khác', reason: 'Facebook báo VNPAGE chưa là ứng dụng chính khi đặt menu.', at: Date.now() }; local.set(ROUTING_KEY, JSON.stringify(saved)); }
+  };
+  function routingCard(pages) {
+    const box = h('div', { className: 'card routing-card' });
+    const draw = () => {
+      const rows = pages.map(p => ({ p, r: App.routing.get(p.id) }));
+      const missing = rows.filter(x => x.r && x.r.status !== 'ok');
+      box.replaceChildren(
+        h('div', { className: 'card-head' }, h('h3', { className: 'card-title', textContent: 'Ứng dụng nhận tin mặc định' }),
+          h('button', { className: 'btn btn-soft btn-sm', textContent: `Kiểm tra ${pages.length} Page`, onclick: async e => { e.target.disabled = true; e.target.textContent = 'Đang kiểm tra…'; await pool(pages, 3, p => App.routing.check(p)); draw(); } })),
+        h('p', { className: 'hint', textContent: missing.length ? `${missing.length} Page chưa đặt VNPAGE làm ứng dụng nhận tin mặc định: bot không nhận được tin và không đặt được menu cố định. Facebook không cho app tự đổi; bấm 2 nút theo thứ tự cho từng Page.`
+          : 'VNPAGE cần là ứng dụng nhận tin mặc định thì bot mới trả lời và đặt được menu cố định. Bấm Kiểm tra để xem từng Page.' }),
+        h('div', { className: 'list' }, ...rows.map(({ p, r }) => h('div', { className: 'item routing-row', style: 'cursor:default' },
+          App.pageTag(p),
+          h('span', { className: 'status ' + (!r ? 'pending' : r.status === 'ok' ? 'ok' : r.status === 'other' ? 'err' : 'pending'),
+            textContent: !r ? 'Chưa kiểm tra' : r.status === 'ok' ? '✓ VNPAGE đang nhận tin' : r.status === 'other' ? `Đang nhận tin: ${r.appName}` : 'Chưa rõ', title: r?.reason || '' }),
+          r && r.status !== 'ok' ? h('span', { className: 'row', style: 'gap:6px;flex-wrap:wrap' },
+            App.metaLink(`https://www.facebook.com/${encodeURIComponent(p.id)}`, '1. Mở Page, bấm "Chuyển" ↗'),
+            App.metaLink('https://www.facebook.com/settings?tab=msgr_conversation_routing', '2. Đặt VNPAGE làm mặc định ↗'),
+            h('button', { className: 'btn btn-ghost btn-sm', textContent: 'Kiểm tra lại', onclick: async e => { e.target.disabled = true; await App.routing.check(p); draw(); } })) : null))),
+        missing.length ? h('p', { className: 'hint', textContent: 'Ở bước 2: tại "Ứng dụng định tuyến mặc định" bấm Thiết lập (hoặc ⋯ › Chỉnh sửa), chọn VNPAGE, bấm Lưu/Tiếp tục. Nếu Page đang dùng chatbot khác (AhaChat, Fchat…), chatbot đó sẽ ngừng tự trả lời.' }) : null);
+    };
+    draw();
+    return box;
+  }
+  App.routingCard = routingCard;
+
   // ── Menu & lời chào ────────────────────────────────────────
   panel('botmenu', async el => {
     const pages = App.selected().filter(p => connected.some(c => c.id === p.id));
@@ -250,7 +301,7 @@
           const live = App.pageById(p.id);
           if (live?.access_token) {
             const { notes, menuBlocked } = await App.applyMessengerProfile(live, row);
-            if (menuBlocked) blocked = true;
+            if (menuBlocked) { blocked = true; App.routing.markBlocked(p.id); }
             $('bmLog').append(h('div', { className: 'status ' + (menuBlocked ? 'pending' : 'ok'), textContent: `${menuBlocked ? '⚠' : '✓'} ${p.name}${notes.length ? ' · ' + notes.join(' ') : ''}` }));
           } else {
             const { refreshed } = await S.callWithFreshToken('profile', { pageId: p.id });
@@ -258,12 +309,11 @@
           }
         } catch (err) { $('bmLog').append(h('div', { className: 'status err', textContent: `✗ ${p.name}: ${err.message}` })); }
       }
-      if (blocked) $('bmLog').append(h('div', { className: 'hint', style: 'margin-top:8px', textContent:
-        'Cách đặt VNPAGE làm ứng dụng nhận tin chính: mở Meta Business Suite của Page → Cài đặt → Nhắn tin nâng cao (Advanced messaging) → Định tuyến cuộc trò chuyện / Ứng dụng đã kết nối → chọn VNPAGE làm ứng dụng nhận tin chính (Primary receiver) → Lưu. Rồi bấm Lưu & áp dụng lại. Khi VNPAGE chưa là ứng dụng chính, Facebook cũng không chuyển tin của khách cho bot, nên bot sẽ không tự trả lời.' }));
+      if (blocked) { const card = $('botmenuBody')?.querySelector('.routing-card'); if (card) card.replaceWith(routingCard(pages)); }
       e.target.disabled = false;
     }
     draw();
-    el.replaceChildren(form, h('p', { className: 'hint', textContent: 'Messenger có thể mất vài phút mới hiện menu / lời chào mới; khách cũ cần mở lại khung chat.' }));
+    el.replaceChildren(routingCard(pages), form, h('p', { className: 'hint', textContent: 'Messenger có thể mất vài phút mới hiện menu / lời chào mới; khách cũ cần mở lại khung chat.' }));
   });
 
   // ── Nhật ký & đơn bot ──────────────────────────────────────

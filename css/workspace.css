@@ -61,3 +61,4 @@ body:has([data-panel=inbox]:not([hidden])) main{padding-top:12px;padding-bottom:
 .planner-composer{scroll-margin-top:calc(var(--workspace-header-height,76px) + 12px)}
 
 .planner-delete-choice{display:grid;gap:8px;margin:6px 0 4px}.planner-delete-choice label{display:flex;gap:8px;align-items:flex-start;font-size:13px;line-height:1.45;cursor:pointer}.planner-meta-links{flex-wrap:wrap;gap:6px;margin-top:6px}
+.routing-card{margin-bottom:14px}.routing-row{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
