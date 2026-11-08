@@ -107,7 +107,7 @@
   // ── Đã hẹn trên FB: giao diện kiểu "Bài viết đã lên lịch" của Meta Business Suite ──
   // Bảng theo ngày, lọc Page / tìm nội dung, chọn nhiều để huỷ, đổi giờ, đăng ngay, mở trên Meta. Bài quá giờ mà Facebook
   // chưa đăng được tách riêng để dọn.
-  const SC = { posts: [], errors: [], selected: new Set(), q: '', page: '', open: new Set(), editing: '', view: local.get('scView') === 'week' ? 'week' : 'list', week: 0 };
+  const SC = { posts: [], errors: [], selected: new Set(), q: '', page: '', open: new Set(), editing: '', view: ['week', 'month'].includes(local.get('scView')) ? local.get('scView') : 'list', week: 0 };
   const WD = ['Chủ Nhật', 'Thứ Hai', 'Thứ Ba', 'Thứ Tư', 'Thứ Năm', 'Thứ Sáu', 'Thứ Bảy'];
   const dayLabel = ms => { const d = new Date(ms), t = new Date(); t.setHours(0, 0, 0, 0); const diff = Math.round((new Date(d).setHours(0, 0, 0, 0) - t) / 864e5);
     return (diff === 0 ? 'Hôm nay · ' : diff === 1 ? 'Ngày mai · ' : '') + `${WD[d.getDay()]}, ${d.getDate()} tháng ${d.getMonth() + 1}${d.getFullYear() !== t.getFullYear() ? ', ' + d.getFullYear() : ''}`; };
@@ -126,10 +126,12 @@
         h('div', { className: 'sc-toolbar' },
           h('input', { type: 'search', id: 'scSearch', placeholder: 'Tìm theo nội dung bài viết…', 'aria-label': 'Tìm bài', oninput: e => { SC.q = e.target.value; this.draw(); } }),
           h('select', { id: 'scPage', 'aria-label': 'Lọc theo Page', onchange: e => { SC.page = e.target.value; this.draw(); } }),
-          h('div', { className: 'sc-seg', role: 'group', 'aria-label': 'Kiểu xem' }, ...[['list', 'Danh sách'], ['week', 'Lịch']].map(([v, t]) =>
+          h('div', { className: 'sc-seg', role: 'group', 'aria-label': 'Kiểu xem' }, ...[['list', 'Danh sách'], ['week', 'Tuần'], ['month', 'Tháng']].map(([v, t]) =>
             h('button', { type: 'button', dataset: { view: v }, 'aria-pressed': String(SC.view === v), textContent: t, onclick: () => { SC.view = v; local.set('scView', v); this.draw(); } }))),
           h('span', { className: 'grow' }), h('span', { className: 'hint', id: 'scCount' })),
-        h('div', { className: 'sc-table', id: 'scList', role: 'table', 'aria-label': 'Bài viết đã lên lịch' })));
+        h('div', { className: 'sc-table', id: 'scList', role: 'table', 'aria-label': 'Bài viết đã lên lịch' }),
+        h('div', { id: 'scMonth', hidden: true })));
+
     },
     async cancelPosts(posts, label) {
       if (!posts.length) return toast('Không có bài hẹn nào để huỷ.');
@@ -212,6 +214,11 @@
     draw() {
       if (!$('scList')) return;
       $('scList').closest('.sc-card')?.querySelectorAll('.sc-seg button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.view === SC.view)));
+      // Tháng: lịch tháng gộp bài đã đăng, bài hẹn trên FB và hàng chờ (kéo bài hàng chờ sang ngày khác để đổi ngày).
+      const monthView = SC.view === 'month';
+      $('scList').hidden = monthView; if ($('scMonth')) $('scMonth').hidden = !monthView;
+      $('scSearch').hidden = monthView; $('scPage').hidden = monthView;
+      if (monthView) { if ($('scMonth') && !$('scMonth').childElementCount) App.monthCalendar?.mount($('scMonth')); App.monthCalendar?.refresh(); return this.syncSelection(); }
       const pages = [...new Map(SC.posts.map(p => [p.page.id, p.page])).values()];
       $('scPage').replaceChildren(h('option', { value: '', textContent: `Tất cả Page (${SC.posts.length})` }), ...pages.map(pg => h('option', { value: pg.id, selected: pg.id === SC.page, textContent: `${pg.name} (${SC.posts.filter(p => p.page.id === pg.id).length})` })));
       const list = this.visible().sort((a, b) => a.scheduled_publish_time - b.scheduled_publish_time);
@@ -242,7 +249,7 @@
         const all = lists.flat();
         SC.errors = all.filter(x => x.error).map(x => x.error); SC.posts = all.filter(x => !x.error);
         if (SC.page && !SC.posts.some(p => p.page.id === SC.page)) SC.page = '';
-        this.posts = SC.posts; this.draw();
+        this.posts = SC.posts; if (SC.view === 'month') App.monthCalendar?.reload(); this.draw();
       });
     }
   });

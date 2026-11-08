@@ -12,10 +12,10 @@ App.CONFIG_ID = '1092800303751533';
 // Điều hướng 2 tầng giống tiện ích: nhóm → tab con [id, nhãn, biểu tượng].
 App.NAV = {
   messages: ['Tin nhắn', [['inbox', 'Hộp thư', 'i-msg'], ['templates', 'Mẫu tin', 'i-msg'], ['crm', 'Khách hàng', 'i-user'], ['bulk', 'Gửi hàng loạt', 'i-send']]],
-  publishing: ['Đăng bài', [['planner', 'Lịch đăng', 'i-cal'], ['scheduled', 'Đã hẹn trên FB', 'i-cal'], ['topics', 'Cách AI viết', 'i-grid']]],
+  publishing: ['Đăng bài', [['planner', 'Lịch đăng', 'i-cal'], ['scheduled', 'Lịch nội dung', 'i-cal'], ['topics', 'Cách AI viết', 'i-grid']]],
   auto: ['Tự động', [['botrules', 'Từ khoá', 'i-msg'], ['botcomments', 'Bình luận tự động', 'i-like'], ['botflows', 'Kịch bản', 'i-grid'], ['botmenu', 'Menu & lời chào', 'i-gear'], ['botlog', 'Nhật ký & đơn bot', 'i-cal']]],
   engage: ['Tương tác', [['comments', 'Bình luận', 'i-like'], ['scanner', 'Quét bài viết', 'i-search']]],
-  manage: ['Quản lý', [['dashboard', 'Tổng quan', 'i-grid'], ['calendar', 'Lịch nội dung', 'i-cal'], ['stats', 'Số liệu', 'i-grid'], ['sales', 'Bán hàng', 'i-cart'], ['settings', 'Cài đặt', 'i-gear']]]
+  manage: ['Quản lý', [['dashboard', 'Tổng quan', 'i-grid'], ['stats', 'Số liệu', 'i-grid'], ['sales', 'Bán hàng', 'i-cart'], ['settings', 'Cài đặt', 'i-gear']]]
 };
 
 // ── Tiện ích DOM ───────────────────────────────────────────
