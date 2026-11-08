@@ -89,3 +89,10 @@ body:has([data-panel=inbox]:not([hidden])) main{padding-top:12px;padding-bottom:
 .ev-media img,.ev-noimg{display:block;width:30px;height:30px;border-radius:5px;object-fit:cover;background:var(--bg-input)}.ev-avatar{position:absolute;right:-3px;bottom:-3px;border-radius:50%;box-shadow:0 0 0 1.5px var(--bg-card);line-height:0}
 .ev-copy{min-width:0;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;font-size:10.5px}.ev-copy strong{font-weight:700}
 .cal .day{min-height:120px}@media (max-width:760px){.ev-media,.ev-media img,.ev-noimg{width:22px;height:22px}.ev-copy{-webkit-line-clamp:1}}
+.sn-link input{flex:1 1 320px;max-width:560px}.sn-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin:10px 0}
+.sn-kpi{display:grid;gap:3px;padding:10px 12px;border:1px solid var(--border);border-radius:10px;background:var(--bg-card);text-decoration:none;color:var(--text-primary);min-width:0}.sn-kpi span{font-size:11.5px;color:var(--text-muted)}.sn-kpi strong{font-size:18px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sn-best{grid-column:span 2}.sn-best strong{font-size:13px}.sn-table td{vertical-align:middle}.sn-table tr.is-active td{background:var(--primary-soft)}
+.sn-page{display:inline-flex;align-items:center;gap:6px;max-width:200px}.sn-page span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sn-post{display:flex;align-items:center;gap:10px;max-width:460px;color:var(--text-primary);text-decoration:none}.sn-post img,.sn-noimg{width:48px;height:48px;flex:none;border-radius:8px;object-fit:cover;border:1px solid var(--border);background:var(--bg-input)}.sn-noimg{display:grid;place-items:center;color:var(--text-muted);font-weight:700}
+.sn-post span{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;font-size:12.5px;line-height:1.4}.sn-post:hover span{color:var(--primary)}
+.sn-comments{margin-top:16px;padding-top:14px;border-top:1px solid var(--border)}.sn-cmt{max-width:420px;white-space:pre-line;font-size:12.5px}
