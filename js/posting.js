@@ -107,7 +107,7 @@
   // ── Đã hẹn trên FB: giao diện kiểu "Bài viết đã lên lịch" của Meta Business Suite ──
   // Bảng theo ngày, lọc Page / tìm nội dung, chọn nhiều để huỷ, đổi giờ, đăng ngay, mở trên Meta. Bài quá giờ mà Facebook
   // chưa đăng được tách riêng để dọn.
-  const SC = { posts: [], errors: [], selected: new Set(), q: '', page: '', open: new Set(), editing: '' };
+  const SC = { posts: [], errors: [], selected: new Set(), q: '', page: '', open: new Set(), editing: '', view: local.get('scView') === 'week' ? 'week' : 'list', week: 0 };
   const WD = ['Chủ Nhật', 'Thứ Hai', 'Thứ Ba', 'Thứ Tư', 'Thứ Năm', 'Thứ Sáu', 'Thứ Bảy'];
   const dayLabel = ms => { const d = new Date(ms), t = new Date(); t.setHours(0, 0, 0, 0); const diff = Math.round((new Date(d).setHours(0, 0, 0, 0) - t) / 864e5);
     return (diff === 0 ? 'Hôm nay · ' : diff === 1 ? 'Ngày mai · ' : '') + `${WD[d.getDay()]}, ${d.getDate()} tháng ${d.getMonth() + 1}${d.getFullYear() !== t.getFullYear() ? ', ' + d.getFullYear() : ''}`; };
@@ -126,6 +126,8 @@
         h('div', { className: 'sc-toolbar' },
           h('input', { type: 'search', id: 'scSearch', placeholder: 'Tìm theo nội dung bài viết…', 'aria-label': 'Tìm bài', oninput: e => { SC.q = e.target.value; this.draw(); } }),
           h('select', { id: 'scPage', 'aria-label': 'Lọc theo Page', onchange: e => { SC.page = e.target.value; this.draw(); } }),
+          h('div', { className: 'sc-seg', role: 'group', 'aria-label': 'Kiểu xem' }, ...[['list', 'Danh sách'], ['week', 'Lịch']].map(([v, t]) =>
+            h('button', { type: 'button', dataset: { view: v }, 'aria-pressed': String(SC.view === v), textContent: t, onclick: () => { SC.view = v; local.set('scView', v); this.draw(); } }))),
           h('span', { className: 'grow' }), h('span', { className: 'hint', id: 'scCount' })),
         h('div', { className: 'sc-table', id: 'scList', role: 'table', 'aria-label': 'Bài viết đã lên lịch' })));
     },
@@ -157,14 +159,14 @@
     row(p) {
       const ms = p.scheduled_publish_time * 1000, img = App.scheduledPostImage(p), late = ms < Date.now(), opened = SC.open.has(p.id), editing = SC.editing === p.id;
       const check = h('input', { type: 'checkbox', checked: SC.selected.has(p.id), 'aria-label': 'Chọn bài', onchange: e => { e.target.checked ? SC.selected.add(p.id) : SC.selected.delete(p.id); this.syncSelection(); } });
-      return h('div', { className: 'sc-row' + (SC.selected.has(p.id) ? ' is-selected' : '') + (late ? ' is-late' : ''), role: 'row' },
+      return h('div', { className: 'sc-row' + (SC.selected.has(p.id) ? ' is-selected' : '') + (late ? ' is-late' : ''), role: 'row', dataset: { post: p.id } },
         h('div', { className: 'sc-cell sc-check' }, check),
         h('div', { className: 'sc-cell sc-post' },
           img ? h('img', { className: 'sc-thumb', src: img, alt: '', loading: 'lazy' }) : h('div', { className: 'sc-thumb sc-thumb-empty', textContent: 'Aa' }),
           h('div', { className: 'sc-post-copy' },
             h('div', { className: 'sc-text' + (opened ? ' is-open' : ''), title: opened ? '' : 'Bấm để xem đầy đủ', textContent: p.message || '(Bài chỉ có ảnh)', onclick: () => { opened ? SC.open.delete(p.id) : SC.open.add(p.id); this.draw(); } }),
             h('div', { className: 'sc-sub' }, img ? 'Ảnh · ' : 'Chữ · ', 'ID ' + p.id.split('_').pop()))),
-        h('div', { className: 'sc-cell sc-page' }, App.avatar(p.page.name, App.pageAvatarUrl(p.page), 24), h('span', { textContent: p.page.name, title: p.page.name })),
+        h('div', { className: 'sc-cell sc-page' }, App.avatar(p.page.name, App.pageAvatarUrl(p.page), 32), h('span', { textContent: p.page.name, title: p.page.name })),
         h('div', { className: 'sc-cell sc-time' },
           editing ? h('form', { className: 'sc-resched', onsubmit: e => { e.preventDefault(); this.reschedule(p, e.target.elements.at.value); } },
               h('input', { type: 'datetime-local', name: 'at', value: toInput(Math.max(ms, Date.now() + 15 * 60e3)), required: true }),
@@ -181,12 +183,35 @@
     },
     syncSelection() {
       for (const id of [...SC.selected]) if (!SC.posts.some(p => p.id === id)) SC.selected.delete(id);
+      if (!$('scCancelSel')) return;
       $('scCancelSel').hidden = !SC.selected.size; $('scCancelSel').textContent = `Huỷ đã chọn (${SC.selected.size})`;
       $('scList').querySelectorAll('.sc-row').forEach(r => r.classList.toggle('is-selected', !!r.querySelector('.sc-check input:checked')));
       const all = $('scList').querySelector('.sc-headrow input'); if (all) { const v = this.visible(); all.checked = !!v.length && v.every(p => SC.selected.has(p.id)); }
     },
+    // Lịch tuần kiểu Business Suite: 7 cột ngày, mỗi bài là thẻ có ảnh bài, avatar Page, giờ đăng và 2 dòng nội dung.
+    drawWeek(list) {
+      const start = new Date(); start.setHours(0, 0, 0, 0); start.setDate(start.getDate() + SC.week * 7);
+      const days = Array.from({ length: 7 }, (_, i) => new Date(start.getTime() + i * 864e5));
+      const end = days[6].getTime() + 864e5;
+      const inWeek = list.filter(p => p.scheduled_publish_time * 1000 >= start.getTime() && p.scheduled_publish_time * 1000 < end);
+      const card = p => { const ms = p.scheduled_publish_time * 1000, img = App.scheduledPostImage(p);
+        return h('button', { type: 'button', className: 'sc-wcard', title: `${p.page.name}\n${hhmm(ms)} · ${p.message || ''}`.slice(0, 300), onclick: () => { SC.view = 'list'; local.set('scView', 'list'); SC.open.add(p.id); this.draw(); $('scList').querySelector(`[data-post="${p.id}"]`)?.scrollIntoView({ block: 'center' }); } },
+          h('div', { className: 'sc-wmedia' }, img ? h('img', { src: img, alt: '', loading: 'lazy' }) : h('div', { className: 'sc-thumb-empty', textContent: 'Aa' }),
+            h('span', { className: 'sc-wavatar' }, App.avatar(p.page.name, App.pageAvatarUrl(p.page), 22))),
+          h('div', { className: 'sc-wbody' }, h('strong', { textContent: hhmm(ms) }), h('span', { className: 'sc-wpage', textContent: p.page.name }), h('span', { className: 'sc-wtext', textContent: p.message || '(Bài chỉ có ảnh)' }))); };
+      const label = d => `${d.getDate()}/${d.getMonth() + 1}`;
+      return [h('div', { className: 'sc-weeknav' },
+          h('button', { className: 'btn btn-ghost btn-sm', textContent: '‹ Tuần trước', disabled: SC.week <= 0, onclick: () => { SC.week--; this.draw(); } }),
+          h('strong', { textContent: `${label(days[0])} – ${label(days[6])} · ${inWeek.length} bài` }),
+          h('button', { className: 'btn btn-ghost btn-sm', textContent: 'Tuần sau ›', onclick: () => { SC.week++; this.draw(); } })),
+        h('div', { className: 'sc-week' }, ...days.map(d => { const items = inWeek.filter(p => new Date(p.scheduled_publish_time * 1000).toDateString() === d.toDateString()).sort((a, b) => a.scheduled_publish_time - b.scheduled_publish_time);
+          const today = d.toDateString() === new Date().toDateString();
+          return h('div', { className: 'sc-wday' + (today ? ' is-today' : '') }, h('div', { className: 'sc-wdayhead' }, h('span', { textContent: WD[d.getDay()] }), h('strong', { textContent: label(d) })),
+            ...(items.length ? items.map(card) : [h('span', { className: 'sc-wempty', textContent: '—' })])); }))];
+    },
     draw() {
       if (!$('scList')) return;
+      $('scList').closest('.sc-card')?.querySelectorAll('.sc-seg button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.view === SC.view)));
       const pages = [...new Map(SC.posts.map(p => [p.page.id, p.page])).values()];
       $('scPage').replaceChildren(h('option', { value: '', textContent: `Tất cả Page (${SC.posts.length})` }), ...pages.map(pg => h('option', { value: pg.id, selected: pg.id === SC.page, textContent: `${pg.name} (${SC.posts.filter(p => p.page.id === pg.id).length})` })));
       const list = this.visible().sort((a, b) => a.scheduled_publish_time - b.scheduled_publish_time);
@@ -199,6 +224,7 @@
         h('div', { className: 'sc-cell sc-check' }, h('input', { type: 'checkbox', 'aria-label': 'Chọn tất cả bài đang hiện', onchange: e => { list.forEach(p => e.target.checked ? SC.selected.add(p.id) : SC.selected.delete(p.id)); this.draw(); } })),
         ...['Bài viết', 'Trang', 'Thời gian đăng', ''].map(t => h('div', { className: 'sc-cell', role: 'columnheader', textContent: t })));
       const section = (label, items, cls = '') => [h('div', { className: 'sc-day ' + cls }, h('span', { textContent: label }), h('span', { className: 'sc-day-count', textContent: `${items.length} bài` })), ...items.map(p => this.row(p))];
+      if (SC.view === 'week') { $('scList').replaceChildren(...SC.errors.map(e => h('div', { className: 'status err', textContent: e })), ...this.drawWeek(upcoming)); return this.syncSelection(); }
       $('scList').replaceChildren(
         ...SC.errors.map(e => h('div', { className: 'status err', textContent: e })),
         ...(list.length ? [head, ...[...groups].flatMap(([k, items]) => section(k, items)),
