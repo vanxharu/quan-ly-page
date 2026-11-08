@@ -301,10 +301,19 @@ App.publish = async (page, text, imageData, when = 0) => {
     if(!image.size||!/^image\//.test(image.type))throw Error('Không đọc được ảnh bài viết. Chưa gửi bài lên Facebook.');
     const form = new FormData();form.append('source',image,'bai-viet.'+(image.type.split('/')[1]||'jpg'));
     if(when){
-      form.append('published','false');
+      // Meta: ảnh dùng cho bài hẹn giờ phải tải lên với published=false VÀ temporary=true; thiếu temporary thì đến giờ đăng bài có thể mất ảnh.
+      form.append('published','false');form.append('temporary','true');
       const upload=await api(`/${page.id}/photos`,form,'POST',page.access_token);
       if(!upload.id)throw Error('Facebook chưa trả mã ảnh; chưa tạo bài hẹn.');
-      return api(`/${page.id}/feed`,{message:text||'',attached_media:[{media_fbid:String(upload.id)}],...sched},'POST',page.access_token);
+      const post=await api(`/${page.id}/feed`,{message:text||'',attached_media:[{media_fbid:String(upload.id)}],...sched},'POST',page.access_token);
+      // Đọc lại bài hẹn: nếu Facebook không giữ ảnh thì huỷ ngay, không để bài tự đăng thiếu ảnh.
+      const postId=post.post_id||post.id;
+      let check=null;try{check=await api(`/${postId}`,{fields:'full_picture,attachments{media,subattachments{media}}'},'GET',page.access_token);}catch{}
+      if(check&&!App.scheduledPostImage(check)){
+        await api(`/${postId}`,{},'DELETE',page.access_token).catch(()=>{});
+        throw Error('Facebook tạo bài hẹn nhưng không giữ ảnh, nên đã huỷ bài đó để không đăng thiếu ảnh. Bấm hẹn lại giúp bạn.');
+      }
+      return post;
     }
     if(text)form.append('caption',text);
     return api(`/${page.id}/photos`,form,'POST',page.access_token);
