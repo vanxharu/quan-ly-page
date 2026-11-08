@@ -59,3 +59,5 @@ body:has([data-panel=inbox]:not([hidden])) main{padding-top:12px;padding-bottom:
 .planner-ai-action{gap:8px}.planner-composer{padding:20px}.planner-composer-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px}.planner-composer .field textarea{width:100%;min-height:150px}.planner-composer .form-grid{margin:14px 0}.planner-composer-target{display:grid;gap:8px;margin:16px 0}.planner-composer-target>.btn{justify-self:start}.logo-badge:has(img){background:transparent;overflow:hidden}.logo-badge img{display:block;width:100%;height:100%;object-fit:contain;border-radius:10px}
 
 .planner-composer{scroll-margin-top:calc(var(--workspace-header-height,76px) + 12px)}
+
+.planner-delete-choice{display:grid;gap:8px;margin:6px 0 4px}.planner-delete-choice label{display:flex;gap:8px;align-items:flex-start;font-size:13px;line-height:1.45;cursor:pointer}.planner-meta-links{flex-wrap:wrap;gap:6px;margin-top:6px}

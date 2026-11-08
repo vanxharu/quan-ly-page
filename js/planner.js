@@ -35,6 +35,7 @@
             h('span', { className: 'grow' }),
             h('button', { className: 'btn btn-soft', onclick: () => autoTime() }, icon('i-cal'), 'Xếp giờ tự động'),
             h('button', { className: 'btn btn-ghost', onclick: () => approveAll() }, '✓ Duyệt tất cả nháp'),
+            h('button', { className: 'btn btn-danger', id: 'plDeleteAll', onclick: () => deleteAll() }, 'Xoá tất cả bài'),
             h('button', { className: 'btn btn-primary', id: 'plGo', onclick: () => scheduleAll() }, icon('i-send'), 'Lên lịch tất cả bài đã duyệt')),
           h('div', { className: 'log', id: 'plLog' }),
           h('div', { id: 'plList', className: 'section-gap' })));
@@ -115,12 +116,62 @@
         !i.aiGenerating&&(!i.imageRequired||!!i.imageData)&&['draft', 'error', 'missed'].includes(i.status) ? h('button', { className: 'btn btn-soft btn-sm', textContent: '✓ Duyệt', onclick: () => patch(i.id, { status: 'approved', error: '' }).then(refresh) }) : null,
         i.status === 'approved' ? h('button', { className: 'btn btn-ghost btn-sm', textContent: 'Bỏ duyệt', onclick: () => patch(i.id, { status: 'draft' }).then(refresh) }) : null,
         i.status === 'approved' ? h('button', { className: 'btn btn-primary btn-sm', textContent: 'Lên lịch', onclick: () => scheduleOne(i).then(refresh) }) : null,
-        h('button', { className: 'btn btn-danger btn-sm', textContent: 'Xoá', onclick: async () => {
-          if (!confirm(i.status === 'scheduled' ? 'Xoá khỏi hàng chờ và huỷ bài hẹn trên Facebook?' : 'Xoá bài khỏi hàng chờ?')) return;
-          if (i.status === 'scheduled' && i.fbPostId && page) await api(`/${i.fbPostId}`, {}, 'DELETE', page.access_token).catch(e => toast(e.message));
-          await DB.set(QUEUE, (await DB.get(QUEUE, [])).filter(x => x.id !== i.id)); refresh();
-        } })));
+        i.status === 'scheduled' && page ? App.metaLink(App.metaScheduledUrl(page.id)) : null,
+        i.status === 'posted' && i.fbPostId ? App.metaLink(App.metaPostUrl(i.fbPostId), 'Xem bài ↗') : null,
+        h('button', { className: 'btn btn-danger btn-sm', textContent: 'Xoá', onclick: () => askDelete([i]) })));
   }
+
+  // Sau khi hẹn: link mở lịch hẹn của từng Page trên Meta Business Suite để kiểm tra trực tiếp.
+  function logLinks(pages) {
+    const unique = [...new Map(pages.map(p => [p.id, p])).values()];
+    if (unique.length) $('plLog').append(h('div', { className: 'row planner-meta-links' }, h('span', { className: 'hint', textContent: 'Xem lịch hẹn trên Meta:' }),
+      ...unique.map(p => App.metaLink(App.metaScheduledUrl(p.id), p.name + ' ↗'))));
+  }
+  // ── Xoá bài ───────────────────────────────────────────────
+  // Bài đã hẹn trên Facebook: cho chọn chỉ xoá khỏi danh sách (bài vẫn tự đăng) hay huỷ luôn trên Facebook.
+  // Bài đã đăng không bao giờ bị xoá khỏi Facebook ở đây.
+  function askDelete(items) {
+    if (!items.length) return;
+    document.querySelector('.planner-delete-dialog')?.close();
+    const onFb = items.filter(i => i.status === 'scheduled' && i.fbPostId);
+    let busy = false;
+    const choice = h('div', { className: 'planner-delete-choice' },
+      h('label', {}, h('input', { type: 'radio', name: 'plDelMode', value: 'fb', checked: true }), ` Huỷ luôn ${onFb.length} bài đã hẹn trên Facebook (bài sẽ không được đăng)`),
+      h('label', {}, h('input', { type: 'radio', name: 'plDelMode', value: 'list' }), ' Chỉ xoá khỏi danh sách này (bài đã hẹn vẫn tự đăng trên Facebook)'));
+    const error = h('p', { className: 'status err', hidden: true, role: 'alert' });
+    const go = h('button', { type: 'button', className: 'btn btn-danger', textContent: `Xoá ${items.length} bài`, onclick: async () => {
+      if (busy) return; busy = true; go.disabled = true; go.textContent = 'Đang xoá…';
+      const cancelFb = onFb.length > 0 && dialog.querySelector('input[name=plDelMode]:checked')?.value === 'fb';
+      const result = await deleteItems(items, cancelFb);
+      busy = false; dialog.close();
+      log(result.failed.length ? 'err' : 'ok', `Đã xoá ${result.removed} bài khỏi danh sách${cancelFb ? `, huỷ ${result.cancelled} bài hẹn trên Facebook` : ''}.${result.failed.length ? ' Chưa huỷ được: ' + result.failed.join('; ') + '. Các bài này vẫn giữ trong danh sách.' : ''}`);
+      refresh();
+    } });
+    const dialog = h('dialog', { className: 'planner-page-dialog planner-delete-dialog', 'aria-label': 'Xoá bài', onclose: () => dialog.remove() },
+      h('div', { className: 'planner-page-dialog-head' }, h('h3', { textContent: items.length > 1 ? `Xoá ${items.length} bài?` : 'Xoá bài này?' }),
+        h('button', { type: 'button', className: 'icon-btn', 'aria-label': 'Đóng', textContent: '×', onclick: () => dialog.close() })),
+      h('p', { className: 'hint', textContent: onFb.length ? `${onFb.length} bài đã được hẹn trên Facebook. Chọn cách xoá:` : 'Bài chưa được hẹn trên Facebook, chỉ xoá khỏi danh sách.' }),
+      onFb.length ? choice : null, error,
+      h('div', { className: 'row', style: 'justify-content:flex-end;margin-top:14px' }, h('button', { type: 'button', className: 'btn btn-ghost', textContent: 'Huỷ', onclick: () => dialog.close() }), go));
+    document.body.append(dialog); dialog.showModal();
+  }
+  async function deleteItems(items, cancelFb) {
+    const failed = [], keep = new Set(); let cancelled = 0;
+    if (cancelFb) await pool(items.filter(i => i.status === 'scheduled' && i.fbPostId), 3, async i => {
+      const page = pageOf(i);
+      try { if (!page) throw Error('Page chưa kết nối'); await api(`/${i.fbPostId}`, {}, 'DELETE', page.access_token); cancelled++; }
+      catch (e) { failed.push(`${page?.name || i.pageName || 'Page'}: ${e.message}`); keep.add(i.id); }
+    });
+    const ids = new Set(items.map(i => i.id).filter(id => !keep.has(id)));
+    await DB.set(QUEUE, (await DB.get(QUEUE, [])).filter(x => !ids.has(x.id)));
+    return { removed: ids.size, cancelled, failed };
+  }
+  async function deleteAll() {
+    const items = (await DB.get(QUEUE, [])).filter(i => inSel(i) && (!filterStatus || i.status === filterStatus) && i.status !== 'scheduling');
+    if (!items.length) return log('err', 'Không có bài nào để xoá trong danh sách đang hiện.');
+    askDelete(items);
+  }
+  App.planner.deleteItems = deleteItems;
 
   async function scheduleOne(i) {
     if(i.aiGenerating)return patch(i.id,{status:'draft',error:'Chờ AI tạo và lưu ảnh xong trước khi duyệt.'});
@@ -144,6 +195,7 @@
     for (const i of list) { if (await scheduleOne(i)) ok++; }
     $('plGo').disabled = false;
     log(ok === list.length ? 'ok' : 'err', `Đã hẹn ${ok}/${list.length} bài trên Facebook.${ok < list.length ? ' Bài lỗi ghi rõ lý do bên dưới.' : ''}`);
+    if (ok) logLinks(list.map(i => pageOf(i)).filter(Boolean));
     refresh();
   }
   async function approveAll() {

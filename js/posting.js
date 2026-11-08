@@ -78,7 +78,8 @@
       if(!text&&!file)return log('err','Chưa có nội dung hoặc ảnh.');
       if(!list.length)return log('err','Chưa chọn Page hoặc Page của bản nháp chưa kết nối.');
       if(when&&(!Number.isFinite(when)||when<Date.now()+600e3))return log('err','Giờ hẹn phải sau hiện tại ít nhất 10 phút.');
-      for(const page of list){try{const result=await App.publish(page,text,file,when?Math.floor(when/1000):0);log('ok',`✓ ${page.name}: ${when?'đã hẹn '+fmtTime(when):'đã đăng'} (${result.post_id||result.id})`);}catch(e){log('err',`✗ ${page.name}: ${e.message}`);}}
+      for(const page of list){try{const result=await App.publish(page,text,file,when?Math.floor(when/1000):0);log('ok',`✓ ${page.name}: ${when?'đã hẹn '+fmtTime(when):'đã đăng'} (${result.post_id||result.id})`);
+        $('poLog').append(h('div',{className:'row'},App.metaLink(when?App.metaScheduledUrl(page.id):App.metaPostUrl(result.post_id||result.id),when?'Xem lịch hẹn trên Meta ↗':'Xem bài ↗')));}catch(e){log('err',`✗ ${page.name}: ${e.message}`);}}
     }catch(e){log('err','Chưa gửi được bài: '+e.message);}finally{publishing=false;refresh();}
   }
   async function toQueue(){
@@ -94,12 +95,31 @@
     }catch(e){log('err','Chưa lưu được bản nháp: '+e.message);}finally{queueing=false;refresh();}
   }
 
+  // Bài hẹn đã huỷ trên Facebook: bỏ khỏi danh sách Lịch đăng để hai nơi khớp nhau.
+  async function syncQueue(ids) {
+    const gone = new Set(ids.map(String));
+    const queue = await DB.get(QUEUE, []);
+    if (queue.some(i => gone.has(String(i.fbPostId)))) { await DB.set(QUEUE, queue.filter(i => !gone.has(String(i.fbPostId)))); App.tabs.planner?.refresh?.(); }
+  }
   App.tab('scheduled', {
     mount(el) {
       el.append(h('div', { className: 'card' },
         h('div', { className: 'card-head' }, h('h3', { className: 'card-title', textContent: 'Bài Facebook đang giữ để tự đăng (các Page đang chọn)' }),
-          h('button', { className: 'btn btn-soft', onclick: () => this.refresh() }, icon('i-sync'), 'Tải lại')),
+          h('div', { className: 'row' }, h('button', { className: 'btn btn-danger', id: 'scCancelAll', onclick: () => this.cancelAll() }, 'Huỷ tất cả bài hẹn'),
+            h('button', { className: 'btn btn-soft', onclick: () => this.refresh() }, icon('i-sync'), 'Tải lại'))),
         h('div', { className: 'list', id: 'scList' })));
+    },
+    // Huỷ (xoá) mọi bài đang hẹn trên Facebook của các Page đang chọn; đồng bộ lại danh sách Lịch đăng.
+    async cancelAll() {
+      const posts = this.posts || [];
+      if (!posts.length) return toast('Không có bài hẹn nào để huỷ.');
+      if (!confirm(`Huỷ và xoá ${posts.length} bài đang hẹn trên Facebook của các Page đang chọn? Bài sẽ không được đăng và không khôi phục được.`)) return;
+      $('scCancelAll').disabled = true; let ok = 0; const failed = [];
+      await pool(posts, 3, async p => { try { await api(`/${p.id}`, {}, 'DELETE', p.page.access_token); ok++; } catch (e) { failed.push(`${p.page.name}: ${e.message}`); } });
+      await syncQueue(posts.map(p => p.id));
+      $('scCancelAll').disabled = false;
+      toast(`Đã huỷ ${ok}/${posts.length} bài hẹn.${failed.length ? ' Lỗi: ' + failed.slice(0, 3).join('; ') : ''}`, 6000);
+      await this.refresh();
     },
     refresh() {
       return guard($('scList'), async () => {
@@ -109,10 +129,11 @@
           .then(r => r.data.map(x => ({ ...x, page }))).catch(e => [{ error: `${page.name}: ${e.message}` }]));
         const all = lists.flat(), errors = all.filter(x => x.error);
         const res = { data: all.filter(x => !x.error) };
+        this.posts = res.data;
         $('scList').replaceChildren(...errors.map(e => h('div', { className: 'status err', textContent: e.error })), ...(res.data.length ? res.data.sort((a, b) => a.scheduled_publish_time - b.scheduled_publish_time).map(p => h('div', { className: 'item', style: 'cursor:default' },
           App.scheduledPostImage(p) ? h('img', { className: 'thumb', src: App.scheduledPostImage(p), alt: '' }) : null,
           h('div', { className: 'body' },
-            h('div', { className: 'top' }, h('span', { className: 'status pending', textContent: '⏰ ' + fmtTime(p.scheduled_publish_time) }), App.pageTag(p.page)),
+            h('div', { className: 'top' }, h('span', { className: 'status pending', textContent: '⏰ ' + fmtTime(p.scheduled_publish_time) }), App.pageTag(p.page), App.metaLink(App.metaScheduledUrl(p.page.id))),
             h('div', { className: 'snippet', style: 'margin-top:6px', textContent: p.message || '(chỉ có ảnh)' })),
           h('div', { style: 'display:flex;flex-direction:column;gap:4px' },
             h('button', { className: 'btn btn-ghost btn-sm', textContent: 'Đăng ngay', onclick: async e => {
@@ -121,7 +142,7 @@
             } }),
             h('button', { className: 'btn btn-danger btn-sm', textContent: 'Huỷ lịch', onclick: async e => {
               if (!confirm('Huỷ và xoá bài hẹn này trên Facebook?')) return; e.target.disabled = true;
-              await guard($('scList'), async () => { await api(`/${p.id}`, {}, 'DELETE', p.page.access_token); await this.refresh(); });
+              await guard($('scList'), async () => { await api(`/${p.id}`, {}, 'DELETE', p.page.access_token); await syncQueue([p.id]); await this.refresh(); });
             } })))) : [empty('Các Page đang chọn chưa có bài hẹn trên Facebook.')]));
       });
     }

@@ -320,6 +320,10 @@ App.publish = async (page, text, imageData, when = 0) => {
   }
   return api(`/${page.id}/feed`, { message: text, ...sched }, 'POST', page.access_token);
 };
+// Link mở đúng chỗ trên Meta: danh sách bài đã lên lịch của Page trong Meta Business Suite, hoặc bài đã đăng.
+App.metaScheduledUrl=pageId=>`https://business.facebook.com/latest/posts/scheduled_posts?asset_id=${encodeURIComponent(String(pageId||''))}`;
+App.metaPostUrl=postId=>`https://www.facebook.com/${encodeURIComponent(String(postId||''))}`;
+App.metaLink=(href,text='Xem trên Meta ↗')=>h('a',{className:'btn btn-ghost btn-sm',href,target:'_blank',rel:'noopener noreferrer',textContent:text});
 App.scheduledPostImage=post=>{
   if(post.full_picture)return post.full_picture;
   const find=items=>{for(const item of items||[]){if(item.media?.image?.src)return item.media.image.src;const nested=find(item.subattachments?.data);if(nested)return nested;}return '';};
