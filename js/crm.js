@@ -37,7 +37,9 @@
     const key = App.crmKey(ctx.page.id, ctx.name);
     const base = { pageId: ctx.page.id, pageName: ctx.page.name, name: ctx.name, psid: ctx.psid };
     const c = await crm.get(key);
-    const orders = (await DB.get(ORDERS, [])).filter(o => o.customerKey === key || (o.source !== 'inbox' && norm(o.customer?.name) === norm(ctx.name)));
+    // Đơn nhập tay chỉ ghép theo tên khi có tên, và chỉ đơn không gắn Page hoặc cùng Page (tránh ghép nhầm khách trùng tên ở Page khác).
+    const sameName = o => !!norm(ctx.name) && norm(o.customer?.name) === norm(ctx.name) && (!o.pageKey || String(o.pageKey) === String(ctx.page.id));
+    const orders = (await DB.get(ORDERS, [])).filter(o => o.customerKey === key || (o.source !== 'inbox' && sameName(o)));
     const appts = (await DB.get(APPT, [])).filter(a => a.key === key && !a.done).sort((a, b) => a.at - b.at);
     const settings = InboxRules.withDefaults(await DB.get(InboxRules.SETTINGS_KEY));
     const suggested = InboxRules.detectAutoLabels(ctx.messages, settings.rules).filter(l => !(c.labels || []).includes(l));
@@ -84,7 +86,8 @@
       const hint = InboxRules.parseOrderHints(ctx.messages);
       const items = h('div', { style: 'display:grid;gap:6px' });
       const addItem = (name = '') => items.append(h('div', { className: 'row' },
-        h('input', { name: 'iname', className: 'grow', placeholder: 'Sản phẩm / gói', value: name, required: true }),
+        // Chỉ dòng đầu bắt buộc: dòng thêm sau để trống không được chặn nút Lưu đơn.
+        h('input', { name: 'iname', className: 'grow', placeholder: 'Sản phẩm / gói', value: name, required: !items.children.length }),
         h('input', { name: 'iqty', type: 'number', min: 1, value: 1, style: 'width:70px', title: 'Số lượng' }),
         h('input', { name: 'iprice', type: 'number', min: 0, step: 1000, placeholder: 'Giá', style: 'width:110px' }),
         h('input', { name: 'icost', type: 'number', min: 0, step: 1000, placeholder: 'Giá vốn', style: 'width:110px' })));
@@ -119,21 +122,35 @@
   };
 
   // ── Báo nhắc hẹn khi trang đang mở ────────────────────────
-  App.onLogin.push(() => setInterval(async () => {
-    const all = await DB.get(APPT, []);
-    const due = all.filter(a => !a.done && !a.notified && a.at <= Date.now());
-    if (!due.length) return;
-    due.forEach(a => { a.notified = true; App.notify(`⏰ Nhắc hẹn: ${a.name}`, a.text); });
-    await DB.set(APPT, all);
-  }, 30e3));
+  // Một bộ đếm duy nhất: đăng nhập lại (đổi tài khoản, gia hạn token) không được tạo thêm bộ đếm báo trùng.
+  let apptTimer = 0;
+  App.onLogin.push(() => {
+    if (apptTimer) return;
+    apptTimer = setInterval(async () => {
+      const all = await DB.get(APPT, []);
+      const due = all.filter(a => !a.done && !a.notified && a.at <= Date.now());
+      if (!due.length) return;
+      due.forEach(a => { a.notified = true; App.notify(`⏰ Nhắc hẹn: ${a.name}`, a.text); });
+      await DB.set(APPT, all);
+    }, 30e3);
+  });
 
   // ── Tab Khách hàng: Kanban theo giai đoạn ─────────────────
+  let shown = [];
+  async function exportCsv() {
+    if (!shown.length) return toast('Không có khách nào đang hiện để xuất.');
+    const orders = await DB.get(ORDERS, []);
+    csvDownload(`khach-hang-${Pure.dayKeyOf(Date.now())}.csv`, [['Khách', 'Page', 'Giai đoạn', 'Trạng thái đơn', 'Nhãn', 'Số đơn', 'Ghi chú', 'Cập nhật'],
+      ...shown.map(([key, c]) => [c.name, c.pageName, c.stage, c.orderStatus, (c.labels || []).join('; '), orders.filter(o => o.customerKey === key).length,
+        (c.notes || []).map(n => n.text).join(' | '), c.readAt ? fmtTime(c.readAt) : ''])]);
+  }
   App.tab('crm', {
     mount(el) {
       el.append(
         h('div', { className: 'toolbar' },
           h('input', { type: 'search', className: 'grow', id: 'crmSearch', placeholder: '🔍 Tìm khách, nhãn, ghi chú…', oninput: () => this.refresh() }),
-          h('select', { id: 'crmLabel', style: 'width:auto', onchange: () => this.refresh() })),
+          h('select', { id: 'crmLabel', style: 'width:auto', onchange: () => this.refresh() }),
+          h('button', { className: 'btn btn-ghost', textContent: 'Xuất CSV', title: 'Xuất các khách đang hiện', onclick: () => exportCsv() })),
         h('div', { className: 'card', id: 'crmAppts' }),
         h('div', { className: 'kanban', id: 'crmBoard' }),
         h('p', { className: 'hint', textContent: 'Kéo thẻ sang cột khác để đổi giai đoạn. Bấm tên khách để mở hội thoại trong Hộp thư.' }));
@@ -146,7 +163,7 @@
       const labels = await crm.allLabels();
       $('crmLabel').replaceChildren(h('option', { value: '', textContent: 'Mọi nhãn' }), ...labels.map(l => h('option', { value: l, textContent: l, selected: l === lab })));
       const orders = await DB.get(ORDERS, []);
-      const rows = Object.entries(all).filter(([, c]) => inSel(c.pageId) && (!lab || (c.labels || []).includes(lab)) &&
+      const rows = shown = Object.entries(all).filter(([, c]) => inSel(c.pageId) && (!lab || (c.labels || []).includes(lab)) &&
         (!q || norm([c.name, c.pageName, ...(c.labels || []), ...(c.notes || []).map(n => n.text)].join(' ')).includes(q)));
       const cols = [['', 'Chưa phân loại'], ...STAGES.map(s => [s, s])];
       $('crmBoard').replaceChildren(...cols.map(([stage, title]) => {
@@ -158,7 +175,12 @@
           ...list.slice(0, 200).map(([key, c]) => h('div', { className: 'kcard', draggable: true, ondragstart: e => e.dataTransfer.setData('text/plain', key) },
             h('a', { href: '#', className: 'n', textContent: c.name || '(không tên)', onclick: e => { e.preventDefault(); App.openConversation?.(c.pageId, c.name); } }),
             h('div', { className: 'hint', textContent: [c.pageName, c.orderStatus, orders.filter(o => o.customerKey === key).length ? `${orders.filter(o => o.customerKey === key).length} đơn` : ''].filter(Boolean).join(' · ') }),
-            (c.labels || []).length ? h('div', { className: 'tags' }, ...c.labels.map(l => tag(l))) : null)));
+            (c.labels || []).length ? h('div', { className: 'tags' }, ...c.labels.map(l => tag(l))) : null,
+            h('button', { type: 'button', className: 'btn btn-ghost btn-sm', textContent: '×', title: 'Xoá khách khỏi danh sách (không ảnh hưởng hội thoại trên Facebook)', style: 'position:absolute;top:4px;right:4px;padding:0 6px',
+              onclick: async () => {
+                if (!confirm(`Xoá "${c.name || 'khách'}" khỏi danh sách khách? Nhãn, ghi chú của khách này trên trình duyệt sẽ mất.`)) return;
+                const cur = await crm.all(); delete cur[key]; await DB.set(CRM, cur); this.refresh();
+              } }))));
         return col;
       }));
       const appts = (await DB.get(APPT, [])).filter(a => !a.done && inSel(a.pageId)).sort((a, b) => a.at - b.at);

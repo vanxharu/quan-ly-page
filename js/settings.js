@@ -7,7 +7,9 @@
   // Gộp file sao lưu (tiện ích: nút "Xuất dữ liệu sang web", hoặc file sao lưu của chính trang này) vào dữ liệu hiện có.
   App.importData = async json => {
     const data = json?.data && typeof json.data === 'object' ? json.data : json;
-    if (!data || typeof data !== 'object') throw new Error('File không đúng định dạng.');
+    if (!data || typeof data !== 'object' || Array.isArray(data)) throw new Error('File không đúng định dạng.');
+    const known = [...BY_ID, ...MERGE, ...REPLACE, 'settings'];
+    if (!known.some(k => k in data)) throw new Error('File không có dữ liệu của Meta Assistant (mẫu tin, khách, đơn, lịch đăng…).');
     const report = [];
     for (const key of BY_ID) {
       if (!Array.isArray(data[key])) continue;
@@ -19,7 +21,7 @@
       });
       const cur = await DB.get(key, []);
       const map = new Map(cur.map(x => [x.id, x]));
-      incoming.forEach(x => map.set(x?.id ?? uid('x'), x));
+      incoming.filter(x => x && typeof x === 'object').forEach(x => { const id = x.id ?? uid('x'); map.set(id, { ...x, id }); });
       await DB.set(key, [...map.values()]);
       report.push(`${key}: ${incoming.length}`);
     }
@@ -89,10 +91,10 @@
         h('span', { className: 'hint', textContent: perm === 'granted' ? 'Trình duyệt đã cho phép thông báo.' : perm === 'denied' ? 'Trình duyệt đang chặn thông báo: trang sẽ hiện thông báo trong trang.' : '' })));
     $('stRules').onsubmit = async e => {
       e.preventDefault(); const f = new FormData(e.target);
-      const rules = String(f.get('rules')).split('\n').map(l => l.split(':')).filter(([l, w]) => l?.trim() && w?.trim())
+      const rules = String(f.get('rules')).split('\n').map(l => { const i = l.indexOf(':'); return i < 0 ? [] : [l.slice(0, i), l.slice(i + 1)]; }).filter(([l, w]) => l?.trim() && w?.trim())
         .map(([l, w]) => ({ label: l.trim(), words: w.split(',').map(x => x.trim()).filter(Boolean) }));
       if (f.get('phoneRule')) rules.push({ label: String(f.get('phoneLabel')).trim() || 'Có SĐT', phone: true });
-      await DB.set(InboxRules.SETTINGS_KEY, { ...s, waitMinutes: Number(f.get('waitMinutes')) || 30, pollMinutes: Number(f.get('pollMinutes')) || 2,
+      await DB.set(InboxRules.SETTINGS_KEY, { ...s, waitMinutes: Math.max(1, Number(f.get('waitMinutes')) || 30), pollMinutes: Math.max(1, Number(f.get('pollMinutes')) || 2),
         autoTag: !!f.get('autoTag'), webNotify: !!f.get('webNotify'), rules, quiet: !!f.get('quiet'), quietFrom: f.get('quietFrom'), quietTo: f.get('quietTo'), mutedPages: f.getAll('muted').map(String) });
       if (f.get('webNotify') && typeof Notification !== 'undefined' && Notification.permission === 'default') await Notification.requestPermission();
       toast('Đã lưu cài đặt.'); drawRules();

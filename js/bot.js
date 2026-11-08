@@ -42,11 +42,15 @@
           h('thead', {}, h('tr', {}, ...['Tên', 'Từ khoá', 'Page', kind === 'message' ? 'Trả lời' : 'Công khai / Nhắn riêng', 'Lượt', 'Bật', ''].map((t, i) => h('th', { className: i < 4 ? 'left' : '', textContent: t })))),
           h('tbody', {}, ...rules.map(r => h('tr', {},
             h('td', { className: 'left', textContent: r.name || '—' }),
-            h('td', { className: 'left' }, r.keywords.length ? h('div', { className: 'tags' }, ...r.keywords.map(k => h('span', { className: 'tag', textContent: k }))) : h('span', { className: 'hint', textContent: kind === 'message' ? 'mọi tin' : 'mọi bình luận' })),
+            h('td', { className: 'left' }, (r.keywords || []).length ? h('div', { className: 'tags' }, ...r.keywords.map(k => h('span', { className: 'tag', textContent: k }))) : h('span', { className: 'hint', textContent: kind === 'message' ? 'mọi tin' : 'mọi bình luận' })),
             h('td', { className: 'left', textContent: pageName(r.page_id) + (r.post_id ? ` · bài ${r.post_id}` : '') }),
             h('td', { className: 'left', textContent: (r.flow_id ? `▶ ${flowsCache.find(f => f.id === r.flow_id)?.name || 'kịch bản'}` : '') + [r.public_reply, r.reply].filter(Boolean).join(' / ').slice(0, 90) }),
             h('td', { textContent: r.hits }),
-            h('td', {}, h('input', { type: 'checkbox', checked: r.enabled, onchange: async e => { await q(sb().from('rules').update({ enabled: e.target.checked }).eq('id', r.id)); } })),
+            h('td', {}, h('input', { type: 'checkbox', checked: r.enabled, onchange: async e => {
+              const on = e.target.checked;
+              try { await q(sb().from('rules').update({ enabled: on }).eq('id', r.id)); toast(on ? 'Đã bật quy tắc.' : 'Đã tắt quy tắc.'); }
+              catch (err) { e.target.checked = !on; toast(`Chưa lưu được: ${err.message}`, 6000); }
+            } })),
             h('td', {}, h('button', { className: 'btn btn-ghost btn-sm', textContent: 'Sửa', onclick: () => { editing = r; draw(); } }),
               h('button', { className: 'btn btn-danger btn-sm', style: 'margin-left:4px', textContent: 'Xoá', onclick: async () => {
                 if (!confirm('Xoá quy tắc này?')) return; await q(sb().from('rules').delete().eq('id', r.id)); draw();
@@ -92,12 +96,17 @@
     const settings = await q(sb().from('page_settings').select('*'));
     const top = h('div', { className: 'card' }, h('div', { className: 'card-head' }, h('h3', { className: 'card-title', textContent: 'Với mọi bình luận (các Page đang chọn)' })));
     const rows = App.selected().filter(p => connected.some(c => c.id === p.id));
-    const toggle = (s, key, label) => h('label', { className: 'row', style: 'gap:4px' }, h('input', { type: 'checkbox', checked: s[key], onchange: async e => {
-      await q(sb().from('page_settings').update({ [key]: e.target.checked, updated_at: new Date().toISOString() }).eq('page_id', s.page_id)); toast('Đã lưu.');
+    // Page chưa có dòng cài đặt (vừa kết nối) thì update không ghi gì: dùng upsert theo page_id.
+    const toggle = (s, key, label, pageId) => h('label', { className: 'row', style: 'gap:4px' }, h('input', { type: 'checkbox', checked: !!s[key], onchange: async e => {
+      const on = e.target.checked;
+      // Chưa có dòng: máy chủ đang coi như tắt hết, nên ghi rõ các giá trị tắt (mặc định của bảng là bật, sẽ tự bật bot và ẩn bình luận).
+      const base = s.page_id ? {} : { bot_enabled: false, hide_phone: false, hide_link: false, like_comments: false };
+      try { await q(sb().from('page_settings').upsert({ ...base, page_id: pageId, [key]: on, updated_at: new Date().toISOString() }, { onConflict: 'page_id' })); Object.assign(s, base, { page_id: pageId, [key]: on }); toast('Đã lưu.'); }
+      catch (err) { e.target.checked = !on; toast(`Chưa lưu được: ${err.message}`, 6000); }
     } }), label);
     top.append(rows.length ? h('div', { style: 'display:grid;gap:6px' }, ...rows.map(p => { const s = settings.find(x => x.page_id === p.id) || {};
       return h('div', { className: 'row', style: 'gap:14px' }, h('span', { className: 'row grow', style: 'gap:6px' }, App.avatar(p.name, App.pageAvatarUrl(p), 22), p.name),
-        toggle(s, 'hide_phone', 'Ẩn bình luận có SĐT'), toggle(s, 'hide_link', 'Ẩn bình luận có link'), toggle(s, 'like_comments', 'Tự thích')); }))
+        toggle(s, 'hide_phone', 'Ẩn bình luận có SĐT', p.id), toggle(s, 'hide_link', 'Ẩn bình luận có link', p.id), toggle(s, 'like_comments', 'Tự thích', p.id)); }))
       : h('p', { className: 'hint', textContent: 'Không có Page đang chọn nào đã kết nối máy chủ.' }));
     const list = h('div', { className: 'section-gap' });
     el.replaceChildren(top, list);
@@ -126,7 +135,13 @@
       h('strong', { textContent: f.name }), h('div', { className: 'hint', textContent: `${f.steps.length} bước · ${f.steps.filter(s => s.ask).map(s => ({ name: 'tên', phone: 'SĐT', address: 'địa chỉ' })[s.ask]).join(', ') || 'không hỏi thông tin'}${f.steps.some(s => s.action === 'order') ? ' · tạo đơn' : ''}` }),
       h('div', { className: 'content', textContent: f.steps[0]?.text || '' }),
       h('div', { className: 'actions' }, h('button', { className: 'btn btn-ghost btn-sm', textContent: 'Sửa', onclick: () => { editingFlow = structuredClone(f); draw(el); scrollTo({ top: 0, behavior: 'smooth' }); } }),
-        h('button', { className: 'btn btn-danger btn-sm', textContent: 'Xoá', onclick: async () => { if (!confirm(`Xoá kịch bản "${f.name}"?`)) return; await q(sb().from('flows').delete().eq('id', f.id)); await loadShared(); draw(el); } })))))
+        h('button', { className: 'btn btn-danger btn-sm', textContent: 'Xoá', onclick: async () => {
+          // Quy tắc đang chạy kịch bản này sẽ trỏ vào kịch bản không còn: báo trước và gỡ liên kết để bot không im lặng.
+          const using = await q(sb().from('rules').select('id,name').eq('flow_id', f.id));
+          if (!confirm(`Xoá kịch bản "${f.name}"?${using.length ? `\n${using.length} quy tắc đang dùng kịch bản này (${using.map(r => r.name || 'không tên').join(', ')}) sẽ bị gỡ kịch bản.` : ''}`)) return;
+          if (using.length) await q(sb().from('rules').update({ flow_id: null }).eq('flow_id', f.id));
+          await q(sb().from('flows').delete().eq('id', f.id)); await loadShared(); draw(el);
+        } })))))
       : empty('Chưa có kịch bản. Bấm "Tạo từ mẫu" để có sẵn luồng chào khách → hỏi tên, SĐT, địa chỉ → tạo đơn.'));
   });
   function flowEditor(f, done) {
@@ -166,6 +181,12 @@
             if (!f.name.trim()) return toast('Đặt tên kịch bản.');
             const steps = f.steps.map(s => ({ ...s, buttons: (s.buttons || []).filter(b => b.title) }));
             if (steps.some(s => s.buttons.some(b => !b.url && !b.next))) return toast('Có nút chưa chọn bước đích.');
+            // Bước vừa xoá có thể vẫn được bước/nút khác trỏ tới: bot sẽ dừng giữa chừng.
+            const known = new Set(steps.map(s => s.id));
+            const broken = steps.filter(s => (s.next && !known.has(s.next)) || s.buttons.some(b => b.next && !known.has(b.next))).map(s => s.id);
+            if (broken.length) return toast(`Bước ${broken.join(', ')} đang trỏ tới bước đã xoá: chọn lại bước đích.`, 6000);
+            if (steps.some(s => !String(s.text || '').trim())) return toast('Có bước chưa có nội dung bot nói.');
+            if (steps.some(s => s.buttons.some(b => b.url && !/^https?:\/\/\S+\.\S+/.test(b.url)))) return toast('Có nút "mở link" chưa có link hợp lệ.');
             const row = { name: f.name.trim(), steps };
             if (f.id) await q(sb().from('flows').update(row).eq('id', f.id)); else await q(sb().from('flows').insert(row));
             toast('Đã lưu kịch bản.'); done();
@@ -321,7 +342,8 @@
     const ids = App.selected().map(p => p.id);
     const [orders, logs] = await Promise.all([
       q(sb().from('bot_orders').select('*').in('page_id', ids).order('created_at', { ascending: false }).limit(100)),
-      q(sb().from('logs').select('*').order('created_at', { ascending: false }).limit(150))]);
+      // Lọc theo Page ngay trên máy chủ: lấy 150 dòng chung rồi mới lọc thì Page ít việc bị Page nhiều việc che mất.
+      q(sb().from('logs').select('*').or(ids.length ? `page_id.is.null,page_id.in.(${ids.map(id => `"${id}"`).join(',')})` : 'page_id.is.null').order('created_at', { ascending: false }).limit(150))]);
     const KIND = { keyword: ['Từ khoá', 'blue'], order: ['Đơn', 'green'], comment: ['Bình luận', 'purple'], comment_reply: ['Trả lời bình luận', 'teal'], error: ['Lỗi', 'red'] };
     const detail = d => [d.name, d.rule, d.text, (d.done || []).join(', '), d.message, d.phone].filter(Boolean).join(' · ');
     el.replaceChildren(

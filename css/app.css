@@ -195,7 +195,7 @@ body.dark-mode .toast { background: #F9FAFB; color: #0F172A; }
 .kcol { background: var(--bg-hover); border-radius: var(--radius-lg); padding: 8px; min-height: 200px; }
 .kcol.over { outline: 2px dashed var(--primary); }
 .kcol h4 { margin: 2px 4px 8px; font: 700 12px var(--font-heading); display: flex; justify-content: space-between; }
-.kcard { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); padding: 8px 10px; margin-bottom: 6px; cursor: grab; }
+.kcard { position: relative; background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); padding: 8px 26px 8px 10px; margin-bottom: 6px; cursor: grab; }
 .kcard .n { font-weight: 700; }
 .cal { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px; }
 .cal .dow { text-align: center; font-size: 11px; font-weight: 700; color: var(--text-secondary); padding: 4px 0; }

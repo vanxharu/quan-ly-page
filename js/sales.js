@@ -3,7 +3,7 @@
 (() => {
   const STORE = 'shopOrdersV1';
   const PERIODS = [['today', 'Hôm nay'], ['7d', '7 ngày'], ['30d', '30 ngày'], ['month', 'Tháng này'], ['lastmonth', 'Tháng trước'], ['all', 'Tất cả']];
-  let period = '30d', statusFilter = '', editing = null, q = '';
+  let period = '30d', statusFilter = '', editing = null, q = '', shown = [];
   App.tab('sales', {
     mount(el) {
       el.append(
@@ -11,7 +11,7 @@
           h('div', { className: 'chips', id: 'saPeriod' }),
           h('span', { className: 'grow' }),
           h('button', { className: 'btn btn-primary', onclick: () => { editing = {}; this.refresh(); } }, '+ Đơn mới'),
-          h('button', { className: 'btn btn-ghost', textContent: 'Xuất CSV', onclick: () => exportCsv() })),
+          h('button', { className: 'btn btn-ghost', textContent: 'Xuất CSV', title: 'Xuất các đơn đang hiện (theo khoảng thời gian, trạng thái, ô tìm và Page đang chọn)', onclick: () => exportCsv() })),
         h('div', { id: 'saEditor' }),
         h('div', { className: 'kpis', id: 'saKpis' }),
         h('div', { className: 'card' }, h('div', { className: 'card-head' }, h('h3', { className: 'card-title', textContent: 'Doanh thu theo ngày (đơn đã hoàn thành)' })), h('div', { className: 'bars', id: 'saBars' })),
@@ -46,6 +46,7 @@
         c.orders, money(c.spent), h('span', { style: c.dormant ? 'color:var(--err-text)' : '', title: c.dormant ? 'Quá 60 ngày chưa mua lại: nên chăm sóc' : '', textContent: fmtShort(c.last) })])));
       const list = orders.filter(o => o.at >= from && o.at < to && (!statusFilter || o.status === statusFilter) &&
         (!q || norm(`${o.customer?.name} ${o.customer?.phone} ${(o.items || []).map(i => i.name).join(' ')} ${o.note}`).includes(q))).sort((a, b) => b.at - a.at);
+      shown = list;
       $('saOrders').replaceChildren(list.length ? h('table', {},
         h('thead', {}, h('tr', {}, ...['Ngày', 'Khách', 'Sản phẩm', 'Thu', 'Lời', 'Trạng thái', ''].map((t, i) => h('th', { className: [1, 2].includes(i) ? 'left' : '', textContent: t })))),
         h('tbody', {}, ...list.map(o => { const t = Pure.orderTotals(o); return h('tr', {},
@@ -67,7 +68,7 @@
   function editor(o, close) {
     const items = h('div', { style: 'display:grid;gap:6px' });
     const addItem = (i = {}) => items.append(h('div', { className: 'row' },
-      h('input', { name: 'iname', className: 'grow', placeholder: 'Sản phẩm', value: i.name || '', required: true }),
+      h('input', { name: 'iname', className: 'grow', placeholder: 'Sản phẩm', value: i.name || '', required: !items.children.length }), // chỉ dòng đầu bắt buộc
       h('input', { name: 'iqty', type: 'number', min: 1, value: i.qty || 1, style: 'width:70px', title: 'Số lượng' }),
       h('input', { name: 'iprice', type: 'number', min: 0, step: 1000, value: i.price ?? '', placeholder: 'Giá bán', style: 'width:110px' }),
       h('input', { name: 'icost', type: 'number', min: 0, step: 1000, value: i.cost ?? '', placeholder: 'Giá vốn', style: 'width:110px' })));
@@ -76,6 +77,7 @@
     return h('form', { className: 'card', onsubmit: async e => {
       e.preventDefault(); const f = new FormData(e.target);
       const names = f.getAll('iname'), qty = f.getAll('iqty'), price = f.getAll('iprice'), cost = f.getAll('icost');
+      if (!names.some(n => String(n).trim())) return toast('Nhập ít nhất một sản phẩm.');
       await save({ ...o, id: o.id || uid('ord'), at: f.get('at') ? new Date(f.get('at')).getTime() : Date.now(), updatedAt: Date.now(), source: o.source || 'manual',
         customer: { ...(o.customer || {}), name: String(f.get('name')).trim(), phone: String(f.get('phone')).trim(), address: String(f.get('address')).trim() },
         items: names.map((n, i) => ({ name: n.trim(), qty: Number(qty[i]) || 1, price: Number(price[i]) || 0, cost: Number(cost[i]) || 0 })).filter(i => i.name),
@@ -92,7 +94,8 @@
       h('div', { className: 'row section-gap' }, h('button', { className: 'btn btn-primary', textContent: 'Lưu đơn' }), h('button', { type: 'button', className: 'btn btn-ghost', textContent: 'Huỷ', onclick: close })));
   }
   async function exportCsv() {
-    const orders = await DB.get(STORE, []);
+    const orders = [...shown];
+    if (!orders.length) return toast('Không có đơn nào đang hiện để xuất.');
     csvDownload(`don-hang-${Pure.dayKeyOf(Date.now())}.csv`, [['Ngày', 'Khách', 'SĐT', 'Địa chỉ', 'Sản phẩm', 'Doanh thu', 'Chi phí', 'Lời', 'Trạng thái', 'Ghi chú'],
       ...orders.sort((a, b) => b.at - a.at).map(o => { const t = Pure.orderTotals(o); return [fmtTime(o.at), o.customer?.name, o.customer?.phone, o.customer?.address,
         (o.items || []).map(i => `${i.name} x${i.qty}`).join('; '), t.revenue, t.cost, t.profit, Pure.STATUS[o.status] || o.status, o.note]; })]);

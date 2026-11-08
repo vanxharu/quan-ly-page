@@ -459,13 +459,17 @@ let current = '';
 $('groups').replaceChildren(...Object.entries(App.NAV).map(([g, [label]]) => h('button', { type: 'button', textContent: label, dataset: { g }, onclick: () => showGroup(g) })));
 function showGroup(g, tabId) {
   if(tabId==='post'){g='publishing';tabId='planner';}
+  if(tabId==='calendar'){g='publishing';tabId='scheduled';}
+  if(!App.NAV[g])g='messages';
   [...$('groups').children].forEach(b => b.setAttribute('aria-pressed', b.dataset.g === g));
   $('subnav').replaceChildren(...App.NAV[g][1].map(([id, label, ic]) => h('button', { type: 'button', role: 'tab', dataset: { tab: id }, onclick: () => showTab(id) }, icon(ic), label)));
   showTab(App.NAV[g][1].some(([id]) => id === tabId) ? tabId : App.NAV[g][1][0][0]);
 }
 function showTab(id) {
   if(id==='post')id='planner';
+  if(id==='calendar')id='scheduled'; // Lịch tháng đã gộp vào Lịch nội dung
   const g = Object.keys(App.NAV).find(k => App.NAV[k][1].some(([t]) => t === id));
+  if (!g) return; // tab cũ/không còn: bỏ qua thay vì làm hỏng thanh điều hướng
   if (![...$('subnav').children].some(b => b.dataset.tab === id)) return showGroup(g, id);
   current = id;
   local.set('lastTab', `${g}:${id}`);

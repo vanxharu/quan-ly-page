@@ -49,8 +49,9 @@
     const errors = [];
     const lists = await pool(pages, 5, async page => {
       try {
-        const res = await api(`/${page.id}/conversations`, { platform: 'messenger', limit: 100, fields: 'id,updated_time,participants,messages.limit(25){from,created_time}' }, 'GET', page.access_token);
-        return (res.data || []).map(c => { const other = c.participants?.data.find(u => u.id !== page.id) || {};
+        // Tối đa 3 trang (300 hội thoại gần nhất) mỗi Page: trước đây chỉ lấy 100 nên khách cũ hơn không bao giờ hiện.
+        const data = await apiPaged(`/${page.id}/conversations`, { platform: 'messenger', limit: 100, fields: 'id,updated_time,participants,messages.limit(25){from,created_time}' }, page.access_token, 3);
+        return (data || []).map(c => { const other = c.participants?.data.find(u => u.id !== page.id) || {};
           const lastCustomerAt = Math.max(0, ...(c.messages?.data || []).filter(m => m.from?.id === other.id).map(m => new Date(m.created_time).getTime()).filter(Number.isFinite));
           return { page, other, updated: new Date(c.updated_time).getTime(), lastCustomerAt, key: App.crmKey(page.id, other.name) }; });
       } catch (e) { errors.push(`${page.name}: ${e.message}`); return []; }
@@ -61,6 +62,8 @@
     errors.forEach(e => $('bkList').prepend(h('div', { className: 'status err', style: 'grid-column:1/-1', textContent: e })));
   }
   App.onPageChange.push(() => { S.convs = []; $('bkList')?.replaceChildren(empty('Bấm "Tải khách".')); });
+  // Biết giờ tin cuối của khách mà đã quá 24 giờ: tin RESPONSE chắc chắn bị Meta từ chối.
+  const outside24 = c => !!c.lastCustomerAt && Date.now() - c.lastCustomerAt >= 864e5;
   function visible() {
     const only24 = $('bk24').checked, lab = $('bkLabel').value;
     return S.convs.filter(c => c.other.id && (!only24 || (c.lastCustomerAt && Date.now() - c.lastCustomerAt < 864e5)) && (!lab || (S.crm?.[c.key]?.labels || []).includes(lab)));
@@ -84,27 +87,41 @@
     const text = $('bkText').value.trim();
     if (!targets.length) return log('err', 'Chưa chọn khách nào.');
     if (mode === 'tpl' ? !tpls.length : !text) return log('err', mode === 'tpl' ? 'Chưa chọn mẫu.' : 'Chưa nhập nội dung.');
-    if (!confirm(`Gửi tin cho ${targets.length} khách?`)) return;
+    const stale = targets.filter(outside24).length;
+    if (!confirm(`Gửi tin cho ${targets.length} khách?${stale ? `\n${stale} khách đã quá 24 giờ kể từ tin cuối: Meta sẽ từ chối nên sẽ bỏ qua.` : ''}`)) return;
     const [min, max] = [Math.max(3, +$('bkMin').value || 20), Math.max(3, +$('bkMax').value || 45)].sort((a, b) => a - b);
     const every = Math.max(1, +$('bkEvery').value || 10), pause = Math.max(0, +$('bkPause').value || 0);
     S.running = true; S.stop = false; $('bkStart').disabled = true; $('bkStop').hidden = false;
-    let ok = 0, fail = 0;
+    let ok = 0, fail = 0, skipped = 0, sent = 0;
+    const blockedPages = new Set();
     for (let i = 0; i < targets.length && !S.stop; i++) {
-      const c = targets[i], tpl = mode === 'tpl' ? tpls[i % tpls.length] : null;
+      const c = targets[i], tpl = mode === 'tpl' ? tpls[sent % tpls.length] : null;
       const body = App.resolveVars(tpl ? tpl.content : text, { name: c.other.name || '', pageName: c.page.name });
+      $('bkBar').style.width = `${Math.round((i + 1) / targets.length * 100)}%`;
+      // Khung 24 giờ có thể hết trong lúc đang gửi một danh sách dài: kiểm lại ngay trước khi gửi từng khách.
+      if (outside24(c)) { skipped++; log('pending', `↷ ${c.other.name}: đã quá 24 giờ từ tin cuối của khách, bỏ qua.`); continue; }
+      if (blockedPages.has(c.page.id)) { skipped++; continue; }
+      sent++;
       try {
         await App.sendMessage(c.page, c.other.id, body, tpl?.imageData);
         if (tpl) await App.recordTemplateUse(tpl, c.key);
         await App.crm.update(c.key, { pageId: c.page.id, pageName: c.page.name, name: c.other.name, psid: c.other.id, lastBulkAt: Date.now() });
         ok++; log('ok', `✓ ${c.other.name}${tpl ? ' · ' + tpl.title : ''}`);
-      } catch (e) { fail++; log('err', `✗ ${c.other.name}: ${e.message}`); }
-      $('bkBar').style.width = `${Math.round((i + 1) / targets.length * 100)}%`;
+      } catch (e) {
+        fail++; log('err', `✗ ${c.other.name}: ${e.message}`);
+        // Meta đang giới hạn: gửi tiếp chỉ làm khoá lâu hơn. Giới hạn của một Page → bỏ các khách còn lại của Page đó; của ứng dụng → dừng hẳn.
+        if (e.rateLimited) {
+          if (e.pageId) { blockedPages.add(String(e.pageId)); log('pending', `Tạm dừng gửi cho ${c.page.name} tới khi Meta mở lại.`); }
+          else { log('err', 'Meta đang giới hạn ứng dụng: dừng gửi để tránh bị khoá lâu hơn.'); S.stop = true; }
+          continue;
+        }
+      }
       if (i < targets.length - 1 && !S.stop) {
         const wait = (i + 1) % every === 0 ? pause : min + Math.random() * (max - min);
         if (wait) { log('pending', `Nghỉ ${Math.round(wait)} giây…`); for (let t = 0; t < wait * 10 && !S.stop; t++) await sleep(100); }
       }
     }
-    log(S.stop ? 'pending' : 'ok', `${S.stop ? 'Đã dừng' : 'Xong'}: ${ok} thành công, ${fail} lỗi.`);
+    log(S.stop ? 'pending' : 'ok', `${S.stop ? 'Đã dừng' : 'Xong'}: ${ok} thành công, ${fail} lỗi${skipped ? `, ${skipped} bỏ qua` : ''}.`);
     S.running = false; $('bkStart').disabled = false; $('bkStop').hidden = true;
   }
 })();

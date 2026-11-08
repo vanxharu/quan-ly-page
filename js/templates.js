@@ -58,14 +58,28 @@
     },
     async refresh() {
       const [tpls, cats] = [await T.list(), await T.categories()];
+      if (cat && !cats.some(c => c.id === cat)) cat = ''; // nhóm vừa bị xoá
       const q = norm($('tplSearch').value);
+      const current = cats.find(c => c.id === cat);
       $('tplCats').replaceChildren(...[{ id: '', name: 'Tất cả' }, ...cats].map(c => h('button', { type: 'button', className: 'chip', textContent: `${c.icon || ''} ${c.name}`.trim(),
         'aria-pressed': String(cat === c.id), onclick: () => { cat = c.id; this.refresh(); } })),
         h('button', { type: 'button', className: 'chip', textContent: '+ Nhóm', onclick: async () => {
           const name = prompt('Tên nhóm mẫu mới:'); if (!name?.trim()) return;
           await DB.set('categories', [...cats, { id: uid('cat'), name: name.trim(), icon: '📁', color: '#5B4FD8' }]); this.refresh();
-        } }));
-      const catName = id => cats.find(c => c.id === id)?.name || '';
+        } }),
+        // Đổi tên / xoá nhóm đang chọn. Xoá nhóm không xoá mẫu: mẫu chuyển sang "Không nhóm".
+        current ? h('button', { type: 'button', className: 'chip', textContent: '✎ Đổi tên nhóm', onclick: async () => {
+          const name = prompt('Tên mới của nhóm:', current.name); if (!name?.trim()) return;
+          await DB.set('categories', (await T.categories()).map(c => c.id === current.id ? { ...c, name: name.trim() } : c)); this.refresh();
+        } }) : null,
+        current ? h('button', { type: 'button', className: 'chip', textContent: '🗑 Xoá nhóm', onclick: async () => {
+          const used = (await T.list()).filter(t => t.category === current.id).length;
+          if (!confirm(`Xoá nhóm "${current.name}"?${used ? ` ${used} mẫu trong nhóm sẽ chuyển sang "Không nhóm".` : ''}`)) return;
+          await DB.set('categories', (await T.categories()).filter(c => c.id !== current.id));
+          await DB.set('templates', (await T.list()).map(t => t.category === current.id ? { ...t, category: '' } : t));
+          cat = ''; this.refresh();
+        } }) : null);
+      const catName = id => cats.find(c => c.id === id)?.name || 'Không nhóm';
       const rows = tpls.filter(t => (!cat || t.category === cat) && (!q || norm(`${t.title} ${t.shortcut} ${t.content}`).includes(q)));
       $('tplCards').replaceChildren(...(rows.length ? rows.map(t => h('div', { className: 'tpl-card' },
         h('div', { className: 'row' }, h('strong', { className: 'grow', textContent: t.title }), t.shortcut ? h('span', { className: 'tag', textContent: '/' + t.shortcut.replace(/^\//, '') }) : null),
@@ -75,10 +89,14 @@
         h('div', { className: 'actions' },
           h('button', { className: 'btn btn-ghost btn-sm', textContent: 'Chép', onclick: () => navigator.clipboard.writeText(App.resolveVars(t.content)).then(() => toast('Đã chép nội dung mẫu.')) }),
           h('button', { className: 'btn btn-ghost btn-sm', textContent: 'Sửa', onclick: () => { editing = t; this.refresh(); scrollTo({ top: 0, behavior: 'smooth' }); } }),
+          h('button', { className: 'btn btn-ghost btn-sm', textContent: 'Nhân bản', onclick: () => {
+            const { id, shortcut, ...rest } = t; editing = { ...rest, title: `${t.title} (bản sao)` }; this.refresh(); scrollTo({ top: 0, behavior: 'smooth' });
+          } }),
+          // Đọc lại danh sách lúc bấm: danh sách lúc vẽ có thể đã cũ (vừa thêm/sửa ở chỗ khác) và ghi đè làm mất mẫu.
           h('button', { className: 'btn btn-danger btn-sm', textContent: 'Xoá', onclick: async () => {
-            if (!confirm(`Xoá mẫu "${t.title}"?`)) return; await DB.set('templates', tpls.filter(x => x.id !== t.id)); this.refresh();
+            if (!confirm(`Xoá mẫu "${t.title}"?`)) return; await DB.set('templates', (await T.list()).filter(x => x.id !== t.id)); this.refresh();
           } })))) : [empty('Không có mẫu khớp.')]));
-      $('tplEditor').replaceChildren(editing ? editor(editing, cats, () => { editing = null; this.refresh(); }) : '');
+      $('tplEditor').replaceChildren(editing ? editor(editing.id || editing.category != null ? editing : { ...editing, category: cat }, cats, () => { editing = null; this.refresh(); }) : '');
       // Biến mặc định
       const settings = await DB.get('settings', {});
       const vars = settings.templateVars || {};
@@ -109,13 +127,15 @@
       const item = { id: t.id || uid('tpl'), title: String(f.get('title')).trim(), category: String(f.get('category')), shortcut: String(f.get('shortcut')).trim().replace(/^\//, ''),
         content: String(f.get('content')), ...(image ? { imageData: image } : {}) };
       const list = await T.list();
+      const clash = item.shortcut && list.find(x => x.id !== item.id && String(x.shortcut || '').replace(/^\//, '').toLowerCase() === item.shortcut.toLowerCase());
+      if (clash && !confirm(`Phím tắt /${item.shortcut} đang dùng cho mẫu "${clash.title}". Gõ /${item.shortcut} sẽ ra mẫu nào trước thì khó đoán. Vẫn lưu?`)) return;
       await DB.set('templates', t.id ? list.map(x => x.id === t.id ? item : x) : [...list, item]);
       toast('Đã lưu mẫu.'); close();
     } },
       h('div', { className: 'card-head' }, h('h3', { className: 'card-title', textContent: t.id ? 'Sửa mẫu' : 'Mẫu mới' })),
       h('div', { className: 'form-grid' },
         h('label', { className: 'field' }, 'Tiêu đề', h('input', { type: 'text', name: 'title', required: true, value: t.title || '' })),
-        h('label', { className: 'field' }, 'Nhóm', h('select', { name: 'category' }, ...cats.map(c => h('option', { value: c.id, textContent: c.name, selected: c.id === t.category })))),
+        h('label', { className: 'field' }, 'Nhóm', h('select', { name: 'category' }, h('option', { value: '', textContent: 'Không nhóm', selected: !t.category }), ...cats.map(c => h('option', { value: c.id, textContent: c.name, selected: c.id === t.category })))),
         h('label', { className: 'field' }, 'Phím tắt (gõ /…)', h('input', { type: 'text', name: 'shortcut', value: t.shortcut || '' })),
         h('label', { className: 'field wide' }, 'Nội dung', h('textarea', { name: 'content', required: true, value: t.content || '' })),
         h('label', { className: 'field wide' }, 'Ảnh đính kèm (gửi sau chữ)', h('input', { type: 'file', accept: 'image/*', onchange: async e => {

@@ -26,7 +26,7 @@ async function fb(path, token, body, method = body ? 'POST' : 'GET') {
   const url = new URL(GRAPH + path); url.searchParams.set('access_token', token);
   const r = await fetch(url, { method, headers: body ? { 'Content-Type': 'application/json' } : {}, body: body ? JSON.stringify(body) : undefined });
   const j = await r.json().catch(() => ({}));
-  if (j.error) throw new Error(j.error.message);
+  if (j.error) throw Object.assign(new Error(j.error.message), { code: j.error.code });
   return j;
 }
 
@@ -36,7 +36,7 @@ const fold = s => String(s || '').toLowerCase().normalize('NFC').replace(/\s+/g,
 function matchRule(rules, text, { pageId, postId } = {}) {
   const t = fold(text);
   return rules.filter(r => r.enabled && (!r.page_id || r.page_id === pageId) && (!r.post_id || r.post_id === postId))
-    .sort((a, b) => (b.priority - a.priority) || ((b.page_id ? 1 : 0) + (b.post_id ? 1 : 0) - (a.page_id ? 1 : 0) - (a.post_id ? 1 : 0)))
+    .sort((a, b) => ((Number(b.priority) || 0) - (Number(a.priority) || 0)) || ((b.page_id ? 1 : 0) + (b.post_id ? 1 : 0) - (a.page_id ? 1 : 0) - (a.post_id ? 1 : 0)))
     .find(r => !r.keywords?.length || r.keywords.some(k => k && (r.match === 'exact' ? t === fold(k) : t.includes(fold(k))))) || null;
 }
 const fill = (text, data = {}) => String(text || '').replace(/\{(tên|tên_khách|name|sdt|phone|địa_chỉ|address)\}/g, (_, k) =>
@@ -102,6 +102,8 @@ async function onMessaging(pageId, token, settings, ev) {
     await db(`conversations?page_id=eq.${pageId}&psid=eq.${psid}`, { method: 'PATCH', body: { bot_paused_until: new Date(Date.now() + (settings.pause_minutes ?? 30) * 60e3).toISOString(), unread: 0, last_text: ev.message.text || '', last_at: new Date().toISOString() } });
     return;
   }
+  // Chỉ tin nhắn và nút bấm: sự kiện khác (đã gửi, cảm xúc, referral…) không được tạo tin rỗng và tăng số chưa đọc.
+  if (!ev.message && !ev.postback) return;
   const psid = ev.sender?.id; if (!psid || psid === pageId) return;
   const text = ev.message?.text || '';
   const payload = ev.message?.quick_reply?.payload || ev.postback?.payload || '';
@@ -142,7 +144,7 @@ async function onMessaging(pageId, token, settings, ev) {
   const rule = matchRule(rules, payload.startsWith('TEXT:') ? payload.slice(5) : text, { pageId });
   if (rule) {
     await db('rpc/rule_hit', { method: 'POST', body: { rid: rule.id } }).catch(() => {});
-    await log(pageId, 'keyword', { psid, rule: rule.name || rule.keywords.join(', '), text });
+    await log(pageId, 'keyword', { psid, rule: rule.name || (rule.keywords || []).join(', '), text });
     if (rule.flow_id) return runStep(ctx, rule.flow_id, null);
     if (rule.reply) await send(ctx, ruleMessage(rule));
     return sendImage(ctx, rule.image_url);
@@ -189,31 +191,35 @@ async function validSignature(raw, header) {
   const want = header.slice(7);
   return sig.length === want.length && [...sig].reduce((d, c, i) => d | (c.charCodeAt(0) ^ want.charCodeAt(i)), 0) === 0;
 }
-const tokenCache = new Map();
+// Token lưu tạm 10 phút: kết nối lại Page (token mới) có hiệu lực ngay sau đó, không phải chờ hàm khởi động lại.
+const tokenCache = new Map(), TOKEN_TTL = 10 * 60e3;
 async function pageContext(pageId) {
-  if (!tokenCache.has(pageId)) tokenCache.set(pageId, (await one(`page_tokens?page_id=eq.${pageId}&select=token`))?.token || '');
+  const hit = tokenCache.get(pageId);
+  if (!hit || Date.now() - hit.at > TOKEN_TTL) tokenCache.set(pageId, { token: (await one(`page_tokens?page_id=eq.${pageId}&select=token`))?.token || '', at: Date.now() });
   const settings = (await one(`page_settings?page_id=eq.${pageId}&select=*`)) || { bot_enabled: false };
-  return { token: tokenCache.get(pageId), settings };
+  return { token: tokenCache.get(pageId).token, settings };
 }
+// Token hết hạn / bị thu hồi (190): bỏ bản tạm để lần sau đọc lại token mới từ CSDL.
+const dropTokenOn = pageId => e => { if (Number(e?.code) === 190) tokenCache.delete(String(pageId)); throw e; };
 const standbyWarned = new Set();
 async function handle(body) {
   if (body.object !== 'page') return;
   for (const entry of body.entry || []) {
     const { token, settings } = await pageContext(String(entry.id));
     if (!token) { await log(entry.id, 'error', { message: 'Page chưa kết nối với máy chủ (thiếu token).' }); continue; }
-    for (const ev of entry.messaging || []) await onMessaging(String(entry.id), token, settings, ev).catch(e => log(entry.id, 'error', { where: 'message', message: e.message }));
+    for (const ev of entry.messaging || []) await onMessaging(String(entry.id), token, settings, ev).catch(dropTokenOn(entry.id)).catch(e => log(entry.id, 'error', { where: 'message', message: e.message }));
     // App không phải ứng dụng nhận tin mặc định → Facebook chỉ gửi bản "standby". Thử lấy quyền hội thoại (Facebook cho phép khi
     // hội thoại đang rảnh); được thì xử lý như tin thường, không được thì ghi Nhật ký một lần.
     for (const ev of (entry.standby || []).filter(ev => ev.message && !ev.message.is_echo && ev.sender?.id)) {
       if (!settings.bot_enabled) break;
       const took = await fb(`/${entry.id}/take_thread_control`, token, { recipient: { id: ev.sender.id }, metadata: BOT_TAG }).then(() => true, () => false);
-      if (took) { await onMessaging(String(entry.id), token, settings, ev).catch(e => log(entry.id, 'error', { where: 'message', message: e.message })); continue; }
+      if (took) { await onMessaging(String(entry.id), token, settings, ev).catch(dropTokenOn(entry.id)).catch(e => log(entry.id, 'error', { where: 'message', message: e.message })); continue; }
       if (!standbyWarned.has(String(entry.id))) {
         standbyWarned.add(String(entry.id));
         await log(entry.id, 'error', { where: 'standby', message: 'VNPAGE chưa là ứng dụng nhận tin mặc định của Page nên Facebook không chuyển tin cho bot. Đặt VNPAGE làm mặc định ở facebook.com/settings?tab=msgr_conversation_routing (dùng Facebook với tư cách Page).' });
       }
     }
-    for (const ch of entry.changes || []) if (ch.field === 'feed') await onComment(String(entry.id), token, settings, ch.value || {}).catch(e => log(entry.id, 'error', { where: 'comment', message: e.message }));
+    for (const ch of entry.changes || []) if (ch.field === 'feed') await onComment(String(entry.id), token, settings, ch.value || {}).catch(dropTokenOn(entry.id)).catch(e => log(entry.id, 'error', { where: 'comment', message: e.message }));
   }
 }
 async function serve(req) {

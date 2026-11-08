@@ -57,7 +57,7 @@ async function profile({ pageId }) {
   const action = m => m.type === 'url' ? { type: 'web_url', title: m.title.slice(0, 30), url: m.value } : { type: 'postback', title: m.title.slice(0, 30), payload: m.type === 'flow' ? `FLOW:${m.value}` : `TEXT:${m.value || m.title}` };
   const body = { get_started: { payload: 'GET_STARTED' } };
   if (s.greeting) body.greeting = [{ locale: 'default', text: s.greeting.slice(0, 160) }];
-  const menu = (s.persistent_menu || []).filter(m => m.title).slice(0, 20);
+  const menu = (s.persistent_menu || []).filter(m => m.title && m.value).slice(0, 20); // giống trang web: mục chưa có đích bị Facebook từ chối cả menu
   if (menu.length) body.persistent_menu = [{ locale: 'default', composer_input_disabled: false, call_to_actions: menu.map(action) }];
   const ice = (s.ice_breakers || []).filter(q => q.question).slice(0, 4);
   if (ice.length) body.ice_breakers = [{ locale: 'default', call_to_actions: ice.map(q => ({ question: q.question.slice(0, 80), payload: q.flow_id ? `FLOW:${q.flow_id}` : `TEXT:${q.text || q.question}` })) }];
@@ -65,7 +65,7 @@ async function profile({ pageId }) {
   try { await fb('/me/messenger_profile', token, body); }
   catch (e) {
     // Menu cố định cần app là "ứng dụng chính" của Page: vẫn áp lời chào, nút Bắt đầu, câu hỏi gợi ý.
-    if (!body.persistent_menu || !/ứng dụng chính|primary|default app|chưa đặt ứng dụng/i.test(e.message)) throw e;
+    if (!body.persistent_menu || !/ứng dụng chính|primary|default app|chưa đặt ứng dụng|not.*(primary|default).*app|thread owner/i.test(e.message)) throw e;
     delete body.persistent_menu; menuBlocked = true;
     await fb('/me/messenger_profile', token, body);
   }
