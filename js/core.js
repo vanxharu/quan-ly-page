@@ -293,9 +293,18 @@ App.recordTemplateUse = async (tpl, customerKey) => {
   if (customerKey && !s.customers.includes(customerKey)) s.customers.push(customerKey);
   await DB.set('templateStatsV1', stats);
 };
-// Đăng (hoặc hẹn) một bài lên Page. when: giây Unix, 0 = đăng ngay.
-App.publish = async (page, text, imageData, when = 0) => {
+// Nút "Gửi tin nhắn": bài chữ gắn nút Messenger thật (call_to_action MESSAGE_PAGE). Bài có ảnh: Facebook bỏ mất ảnh khi
+// gắn nút qua API, nên thay bằng link m.me ở cuối nội dung (khách bấm vẫn mở Messenger của Page).
+App.messengerLink = page => `https://m.me/${encodeURIComponent(String(page.id))}`;
+App.withMessengerLine = (page, text) => { const link = App.messengerLink(page); return String(text || '').includes(link) ? String(text || '') : `${String(text || '').trimEnd()}${text ? '\n\n' : ''}💬 Nhắn tin cho Page: ${link}`; };
+// Đăng (hoặc hẹn) một bài lên Page. when: giây Unix, 0 = đăng ngay. options.messageButton: thêm nút/link Gửi tin nhắn.
+App.publish = async (page, text, imageData, when = 0, options = {}) => {
   const sched = when ? { published: false, scheduled_publish_time: when, unpublished_content_type:'SCHEDULED' } : {};
+  if (options.messageButton && imageData) text = App.withMessengerLine(page, text);
+  if (options.messageButton && !imageData) {
+    const link = App.messengerLink(page);
+    return api(`/${page.id}/feed`, { message: text, link, call_to_action: { type: 'MESSAGE_PAGE', value: { app_destination: 'MESSENGER', link } }, ...sched }, 'POST', page.access_token);
+  }
   if (imageData) {
     const image=imageData instanceof Blob?imageData:await (await fetch(imageData)).blob();
     if(!image.size||!/^image\//.test(image.type))throw Error('Không đọc được ảnh bài viết. Chưa gửi bài lên Facebook.');

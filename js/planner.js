@@ -50,6 +50,7 @@
       if (queue.some(i => i.status === 'scheduled' && i.at < Date.now())) {
         queue = queue.map(i => i.status === 'scheduled' && i.at < Date.now() ? { ...i, status: 'posted' } : i); await DB.set(QUEUE, queue);
       }
+      App.planner.messageButtonDefault = !!s.messageButton;
       drawCfg(s); drawDays(s);
       const list = queue.filter(i => inSel(i) && (!filterStatus || i.status === filterStatus))
         .sort((a, b) => (a.at || 0) - (b.at || 0));
@@ -108,6 +109,8 @@
           h('input', { type: 'datetime-local', value: toLocalInput(i.at), disabled: locked, onchange: e => patch(i.id, { at: e.target.value ? new Date(e.target.value).getTime() : 0 }).then(refresh) }),
           h('span', { className: 'status ' + tone, textContent: i.aiGenerating?'Đang tạo ảnh…':label }),
           i.imageRequired&&!i.imageData?h('span',{className:'status err',textContent:'Thiếu ảnh · Chưa thể lên lịch'}):null,
+          h('label', { className: 'row planner-msg-btn', style: 'gap:6px', title: i.imageData ? 'Bài có ảnh: thêm link m.me cuối bài (Facebook xoá ảnh nếu gắn nút qua API).' : 'Gắn nút Gửi tin nhắn (Messenger) dưới bài.' },
+            h('input', { type: 'checkbox', checked: i.messageButton ?? !!App.planner?.messageButtonDefault, disabled: locked, onchange: e => patch(i.id, { messageButton: e.target.checked }) }), 'Nút Gửi tin nhắn'),
           i.error ? h('span', { className: 'hint', textContent: i.error }) : null),
         i.topicTitle?h('p',{className:'hint',textContent:'Chủ đề: '+i.topicTitle}):null,
         ...MetaAIProtocol.sources(i.sources).map(ref=>h('a',{className:'hint',href:ref.url,target:'_blank',rel:'noopener noreferrer',textContent:'Nguồn Reddit · '+(ref.title||'Xem bài gốc')})),
@@ -181,7 +184,7 @@
     if (!i.at || i.at < Date.now() + 600e3) return patch(i.id, { status: 'error', error: 'Giờ đăng phải sau hiện tại ít nhất 10 phút.' });
     await patch(i.id, { status: 'scheduling' });
     try {
-      const res = await App.publish(page, i.text, i.imageData, Math.floor(i.at / 1000));
+      const res = await App.publish(page, i.text, i.imageData, Math.floor(i.at / 1000), { messageButton: i.messageButton ?? !!App.planner?.messageButtonDefault });
       await patch(i.id, { status: 'scheduled', fbPostId: res.post_id || res.id, pageKey: page.id, pageName: page.name, error: '' });
       return true;
     } catch (e) { await patch(i.id, { status: 'error', error: e.message }); return false; }
@@ -254,6 +257,8 @@
       scope !== 'default' && s.pages[scope] ? h('button', { className: 'btn btn-ghost btn-sm', style: 'margin-top:10px', textContent: 'Bỏ cấu hình riêng (dùng mặc định)', onclick: async () => {
         const next = await getSettings(); delete next.pages[scope]; await DB.set(SETTINGS, next); refresh();
       } }) : null,
+      scope === 'default' ? h('label', { className: 'row', style: 'gap:8px;margin-top:10px' }, h('input', { type: 'checkbox', checked: !!s.messageButton, onchange: async e => { const next = await getSettings(); next.messageButton = e.target.checked; await DB.set(SETTINGS, next); refresh(); } }),
+        'Mặc định thêm nút Gửi tin nhắn cho bài mới lên lịch') : null,
       h('p', { className: 'hint', textContent: 'Giờ đăng chọn ngẫu nhiên trong khung, bước 5 phút; cùng Page cách nhau ≥ 1 giờ, khác Page cách nhau ≥ 15 phút (giống tiện ích).' }));
   }
   function drawDays(s) {
