@@ -104,49 +104,119 @@
     const queue = await DB.get(QUEUE, []);
     if (queue.some(i => gone.has(String(i.fbPostId)))) { await DB.set(QUEUE, queue.filter(i => !gone.has(String(i.fbPostId)))); App.tabs.planner?.refresh?.(); }
   }
+  // ── Đã hẹn trên FB: giao diện kiểu "Bài viết đã lên lịch" của Meta Business Suite ──
+  // Bảng theo ngày, lọc Page / tìm nội dung, chọn nhiều để huỷ, đổi giờ, đăng ngay, mở trên Meta. Bài quá giờ mà Facebook
+  // chưa đăng được tách riêng để dọn.
+  const SC = { posts: [], errors: [], selected: new Set(), q: '', page: '', open: new Set(), editing: '' };
+  const WD = ['Chủ Nhật', 'Thứ Hai', 'Thứ Ba', 'Thứ Tư', 'Thứ Năm', 'Thứ Sáu', 'Thứ Bảy'];
+  const dayLabel = ms => { const d = new Date(ms), t = new Date(); t.setHours(0, 0, 0, 0); const diff = Math.round((new Date(d).setHours(0, 0, 0, 0) - t) / 864e5);
+    return (diff === 0 ? 'Hôm nay · ' : diff === 1 ? 'Ngày mai · ' : '') + `${WD[d.getDay()]}, ${d.getDate()} tháng ${d.getMonth() + 1}${d.getFullYear() !== t.getFullYear() ? ', ' + d.getFullYear() : ''}`; };
+  const hhmm = ms => new Date(ms).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
+  const until = ms => { const m = Math.round((ms - Date.now()) / 60e3); if (m < 0) return 'đã quá giờ'; if (m < 60) return `còn ${m} phút`; const hh = Math.round(m / 60); return hh < 48 ? `còn ${hh} giờ` : `còn ${Math.round(hh / 24)} ngày`; };
+  const toInput = ms => { const d = new Date(ms - new Date(ms).getTimezoneOffset() * 60e3); return d.toISOString().slice(0, 16); };
   App.tab('scheduled', {
     mount(el) {
-      el.append(h('div', { className: 'card' },
-        h('div', { className: 'card-head' }, h('h3', { className: 'card-title', textContent: 'Bài Facebook đang giữ để tự đăng (các Page đang chọn)' }),
-          h('div', { className: 'row' }, h('button', { className: 'btn btn-danger', id: 'scCancelAll', onclick: () => this.cancelAll() }, 'Huỷ tất cả bài hẹn'),
+      el.append(h('div', { className: 'card sc-card' },
+        h('div', { className: 'sc-head' },
+          h('div', {}, h('h3', { className: 'card-title', id: 'scTitle', textContent: 'Bài viết đã lên lịch' }), h('p', { className: 'hint', id: 'scSub', textContent: 'Các bài Facebook đang giữ để tự đăng trên các Page đang chọn.' })),
+          h('div', { className: 'row', style: 'gap:8px' },
+            h('button', { className: 'btn btn-danger', id: 'scCancelSel', hidden: true, onclick: () => this.cancelSelected() }, 'Huỷ đã chọn'),
+            h('button', { className: 'btn btn-ghost', id: 'scCancelAll', onclick: () => this.cancelAll() }, 'Huỷ tất cả'),
             h('button', { className: 'btn btn-soft', onclick: () => this.refresh() }, icon('i-sync'), 'Tải lại'))),
-        h('div', { className: 'list', id: 'scList' })));
+        h('div', { className: 'sc-toolbar' },
+          h('input', { type: 'search', id: 'scSearch', placeholder: 'Tìm theo nội dung bài viết…', 'aria-label': 'Tìm bài', oninput: e => { SC.q = e.target.value; this.draw(); } }),
+          h('select', { id: 'scPage', 'aria-label': 'Lọc theo Page', onchange: e => { SC.page = e.target.value; this.draw(); } }),
+          h('span', { className: 'grow' }), h('span', { className: 'hint', id: 'scCount' })),
+        h('div', { className: 'sc-table', id: 'scList', role: 'table', 'aria-label': 'Bài viết đã lên lịch' })));
     },
-    // Huỷ (xoá) mọi bài đang hẹn trên Facebook của các Page đang chọn; đồng bộ lại danh sách Lịch đăng.
-    async cancelAll() {
-      const posts = this.posts || [];
+    async cancelPosts(posts, label) {
       if (!posts.length) return toast('Không có bài hẹn nào để huỷ.');
-      if (!confirm(`Huỷ và xoá ${posts.length} bài đang hẹn trên Facebook của các Page đang chọn? Bài sẽ không được đăng và không khôi phục được.`)) return;
-      $('scCancelAll').disabled = true; let ok = 0; const failed = [];
+      if (!confirm(`Huỷ và xoá ${posts.length} ${label} trên Facebook? Bài sẽ không được đăng và không khôi phục được.`)) return;
+      let ok = 0; const failed = [];
       await pool(posts, 3, async p => { try { await api(`/${p.id}`, {}, 'DELETE', p.page.access_token); ok++; } catch (e) { failed.push(`${p.page.name}: ${e.message}`); } });
-      await syncQueue(posts.map(p => p.id));
-      $('scCancelAll').disabled = false;
+      await syncQueue(posts.map(p => p.id)); SC.selected.clear();
       toast(`Đã huỷ ${ok}/${posts.length} bài hẹn.${failed.length ? ' Lỗi: ' + failed.slice(0, 3).join('; ') : ''}`, 6000);
       await this.refresh();
     },
+    cancelAll() { return this.cancelPosts(this.visible(), 'bài đang hiện'); },
+    cancelSelected() { return this.cancelPosts(SC.posts.filter(p => SC.selected.has(p.id)), 'bài đã chọn'); },
+    visible() {
+      const q = norm(SC.q);
+      return SC.posts.filter(p => (!SC.page || p.page.id === SC.page) && (!q || norm(p.message || '').includes(q)));
+    },
+    async reschedule(p, value) {
+      const at = new Date(value).getTime();
+      if (!Number.isFinite(at) || at < Date.now() + 600e3) return toast('Giờ mới phải sau hiện tại ít nhất 10 phút.');
+      await guard($('scList'), async () => {
+        await api(`/${p.id}`, { scheduled_publish_time: Math.floor(at / 1000) }, 'POST', p.page.access_token);
+        const queue = await DB.get(QUEUE, []);
+        if (queue.some(i => String(i.fbPostId) === String(p.id))) { await DB.set(QUEUE, queue.map(i => String(i.fbPostId) === String(p.id) ? { ...i, at } : i)); App.tabs.planner?.refresh?.(); }
+        SC.editing = ''; toast('Đã đổi giờ đăng: ' + fmtTime(at)); await this.refresh();
+      });
+    },
+    row(p) {
+      const ms = p.scheduled_publish_time * 1000, img = App.scheduledPostImage(p), late = ms < Date.now(), opened = SC.open.has(p.id), editing = SC.editing === p.id;
+      const check = h('input', { type: 'checkbox', checked: SC.selected.has(p.id), 'aria-label': 'Chọn bài', onchange: e => { e.target.checked ? SC.selected.add(p.id) : SC.selected.delete(p.id); this.syncSelection(); } });
+      return h('div', { className: 'sc-row' + (SC.selected.has(p.id) ? ' is-selected' : '') + (late ? ' is-late' : ''), role: 'row' },
+        h('div', { className: 'sc-cell sc-check' }, check),
+        h('div', { className: 'sc-cell sc-post' },
+          img ? h('img', { className: 'sc-thumb', src: img, alt: '', loading: 'lazy' }) : h('div', { className: 'sc-thumb sc-thumb-empty', textContent: 'Aa' }),
+          h('div', { className: 'sc-post-copy' },
+            h('div', { className: 'sc-text' + (opened ? ' is-open' : ''), title: opened ? '' : 'Bấm để xem đầy đủ', textContent: p.message || '(Bài chỉ có ảnh)', onclick: () => { opened ? SC.open.delete(p.id) : SC.open.add(p.id); this.draw(); } }),
+            h('div', { className: 'sc-sub' }, img ? 'Ảnh · ' : 'Chữ · ', 'ID ' + p.id.split('_').pop()))),
+        h('div', { className: 'sc-cell sc-page' }, App.avatar(p.page.name, App.pageAvatarUrl(p.page), 24), h('span', { textContent: p.page.name, title: p.page.name })),
+        h('div', { className: 'sc-cell sc-time' },
+          editing ? h('form', { className: 'sc-resched', onsubmit: e => { e.preventDefault(); this.reschedule(p, e.target.elements.at.value); } },
+              h('input', { type: 'datetime-local', name: 'at', value: toInput(Math.max(ms, Date.now() + 15 * 60e3)), required: true }),
+              h('button', { className: 'btn btn-primary btn-sm', textContent: 'Lưu' }), h('button', { type: 'button', className: 'btn btn-ghost btn-sm', textContent: 'Huỷ', onclick: () => { SC.editing = ''; this.draw(); } }))
+            : [h('strong', { textContent: hhmm(ms) }), h('span', { className: 'sc-sub' + (late ? ' sc-late' : ''), textContent: late ? 'Quá giờ · Facebook chưa đăng' : until(ms) })]),
+        h('div', { className: 'sc-cell sc-actions' },
+          App.metaLink(App.metaScheduledUrl(p.page.id), 'Xem ↗'),
+          editing ? null : h('button', { className: 'btn btn-ghost btn-sm', textContent: 'Đổi giờ', onclick: () => { SC.editing = p.id; this.draw(); } }),
+          h('button', { className: 'btn btn-soft btn-sm', textContent: 'Đăng ngay', onclick: async e => {
+            if (!confirm('Đăng bài này ngay bây giờ?')) return; e.target.disabled = true;
+            await guard($('scList'), async () => { await api(`/${p.id}`, { is_published: true }, 'POST', p.page.access_token); await syncQueue([p.id]); toast('Đã đăng.'); await this.refresh(); });
+          } }),
+          h('button', { className: 'btn btn-danger btn-sm', textContent: 'Huỷ', onclick: () => this.cancelPosts([p], 'bài hẹn này') })));
+    },
+    syncSelection() {
+      for (const id of [...SC.selected]) if (!SC.posts.some(p => p.id === id)) SC.selected.delete(id);
+      $('scCancelSel').hidden = !SC.selected.size; $('scCancelSel').textContent = `Huỷ đã chọn (${SC.selected.size})`;
+      $('scList').querySelectorAll('.sc-row').forEach(r => r.classList.toggle('is-selected', !!r.querySelector('.sc-check input:checked')));
+      const all = $('scList').querySelector('.sc-headrow input'); if (all) { const v = this.visible(); all.checked = !!v.length && v.every(p => SC.selected.has(p.id)); }
+    },
+    draw() {
+      if (!$('scList')) return;
+      const pages = [...new Map(SC.posts.map(p => [p.page.id, p.page])).values()];
+      $('scPage').replaceChildren(h('option', { value: '', textContent: `Tất cả Page (${SC.posts.length})` }), ...pages.map(pg => h('option', { value: pg.id, selected: pg.id === SC.page, textContent: `${pg.name} (${SC.posts.filter(p => p.page.id === pg.id).length})` })));
+      const list = this.visible().sort((a, b) => a.scheduled_publish_time - b.scheduled_publish_time);
+      const late = list.filter(p => p.scheduled_publish_time * 1000 < Date.now()), upcoming = list.filter(p => !late.includes(p));
+      $('scTitle').textContent = `Bài viết đã lên lịch (${upcoming.length})`;
+      $('scCount').textContent = list.length !== SC.posts.length ? `Đang hiện ${list.length}/${SC.posts.length} bài` : '';
+      const groups = new Map();
+      for (const p of upcoming) { const k = dayLabel(p.scheduled_publish_time * 1000); (groups.get(k) || groups.set(k, []).get(k)).push(p); }
+      const head = h('div', { className: 'sc-row sc-headrow', role: 'row' },
+        h('div', { className: 'sc-cell sc-check' }, h('input', { type: 'checkbox', 'aria-label': 'Chọn tất cả bài đang hiện', onchange: e => { list.forEach(p => e.target.checked ? SC.selected.add(p.id) : SC.selected.delete(p.id)); this.draw(); } })),
+        ...['Bài viết', 'Trang', 'Thời gian đăng', ''].map(t => h('div', { className: 'sc-cell', role: 'columnheader', textContent: t })));
+      const section = (label, items, cls = '') => [h('div', { className: 'sc-day ' + cls }, h('span', { textContent: label }), h('span', { className: 'sc-day-count', textContent: `${items.length} bài` })), ...items.map(p => this.row(p))];
+      $('scList').replaceChildren(
+        ...SC.errors.map(e => h('div', { className: 'status err', textContent: e })),
+        ...(list.length ? [head, ...[...groups].flatMap(([k, items]) => section(k, items)),
+          ...(late.length ? section('Quá giờ nhưng Facebook chưa đăng · nên Huỷ hoặc Đổi giờ', late, 'sc-day-late') : [])]
+          : [h('div', { className: 'sc-empty' }, h('div', { className: 'sc-empty-icon', textContent: '🗓' }), h('strong', { textContent: SC.posts.length ? 'Không có bài khớp bộ lọc' : 'Chưa có bài nào được lên lịch' }),
+              h('span', { className: 'hint', textContent: SC.posts.length ? 'Đổi Page hoặc xoá từ khoá tìm kiếm.' : 'Soạn bài hoặc dùng Lịch đăng để hẹn giờ; bài sẽ hiện ở đây.' }))]));
+      this.syncSelection();
+    },
     refresh() {
       return guard($('scList'), async () => {
-        $('scList').replaceChildren(empty('Đang tải…'));
+        $('scList').replaceChildren(h('div', { className: 'sc-empty' }, h('span', { className: 'hint', textContent: 'Đang tải bài đã lên lịch…' })));
         const lists = await pool(App.selected(), 5, page => api(`/${page.id}/scheduled_posts`, { fields: 'id,message,scheduled_publish_time,full_picture,attachments{media,subattachments{media}}', limit: 100 }, 'GET', page.access_token)
           .catch(()=>api(`/${page.id}/scheduled_posts`,{fields:'id,message,scheduled_publish_time,full_picture',limit:100},'GET',page.access_token))
           .then(r => r.data.map(x => ({ ...x, page }))).catch(e => [{ error: `${page.name}: ${e.message}` }]));
-        const all = lists.flat(), errors = all.filter(x => x.error);
-        const res = { data: all.filter(x => !x.error) };
-        this.posts = res.data;
-        $('scList').replaceChildren(...errors.map(e => h('div', { className: 'status err', textContent: e.error })), ...(res.data.length ? res.data.sort((a, b) => a.scheduled_publish_time - b.scheduled_publish_time).map(p => h('div', { className: 'item', style: 'cursor:default' },
-          App.scheduledPostImage(p) ? h('img', { className: 'thumb', src: App.scheduledPostImage(p), alt: '' }) : null,
-          h('div', { className: 'body' },
-            h('div', { className: 'top' }, h('span', { className: 'status pending', textContent: '⏰ ' + fmtTime(p.scheduled_publish_time) }), App.pageTag(p.page), App.metaLink(App.metaScheduledUrl(p.page.id))),
-            h('div', { className: 'snippet', style: 'margin-top:6px', textContent: p.message || '(chỉ có ảnh)' })),
-          h('div', { style: 'display:flex;flex-direction:column;gap:4px' },
-            h('button', { className: 'btn btn-ghost btn-sm', textContent: 'Đăng ngay', onclick: async e => {
-              if (!confirm('Đăng bài này ngay bây giờ?')) return; e.target.disabled = true;
-              await guard($('scList'), async () => { await api(`/${p.id}`, { is_published: true }, 'POST', p.page.access_token); toast('Đã đăng.'); await this.refresh(); });
-            } }),
-            h('button', { className: 'btn btn-danger btn-sm', textContent: 'Huỷ lịch', onclick: async e => {
-              if (!confirm('Huỷ và xoá bài hẹn này trên Facebook?')) return; e.target.disabled = true;
-              await guard($('scList'), async () => { await api(`/${p.id}`, {}, 'DELETE', p.page.access_token); await syncQueue([p.id]); await this.refresh(); });
-            } })))) : [empty('Các Page đang chọn chưa có bài hẹn trên Facebook.')]));
+        const all = lists.flat();
+        SC.errors = all.filter(x => x.error).map(x => x.error); SC.posts = all.filter(x => !x.error);
+        if (SC.page && !SC.posts.some(p => p.page.id === SC.page)) SC.page = '';
+        this.posts = SC.posts; this.draw();
       });
     }
   });
