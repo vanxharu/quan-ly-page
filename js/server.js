@@ -14,6 +14,21 @@
     }
     return data;
   };
+  // Token Page lưu trên máy chủ bị Facebook huỷ (đổi mật khẩu, Facebook reset phiên…): làm mới bằng phiên đăng nhập
+  // Facebook hiện tại trên web (gọi lại "connect" cho đúng Page đó), rồi chạy lại thao tác một lần.
+  S.tokenExpired = err => /validating access token|session has been invalidated|session is invalid|has expired|token.*(invalid|expired)|code 190|OAuthException/i.test(String(err?.message || err || ''));
+  S.refreshPageToken = async pageId => {
+    if (!App.userToken) throw new Error('Token Page trên máy chủ đã hết hiệu lực. Đăng nhập Facebook lại trên trang này rồi thử lại.');
+    const r = await S.call('connect', { userToken: App.userToken, pageIds: [String(pageId)] });
+    const row = (r?.pages || []).find(p => String(p.id) === String(pageId));
+    if (!row) throw new Error('Tài khoản Facebook đang đăng nhập không còn quản lý Page này, nên không làm mới được token.');
+    if (!row.ok) throw new Error('Không làm mới được token Page: ' + row.error);
+  };
+  // Trả { data, refreshed }: refreshed = đã phải làm mới token Page trên máy chủ.
+  S.callWithFreshToken = async (action, body) => {
+    try { return { data: await S.call(action, body), refreshed: false }; }
+    catch (e) { if (!S.tokenExpired(e) || !body?.pageId) throw e; await S.refreshPageToken(body.pageId); return { data: await S.call(action, body), refreshed: true }; }
+  };
   // Đọc/ghi bảng; lỗi ném ra Error với lời nhắn dễ hiểu.
   S.q = async promise => { const { data, error } = await promise; if (error) throw new Error(error.message); return data; };
   // Ô báo "cần đăng nhập máy chủ" dùng chung cho các tab Tự động.

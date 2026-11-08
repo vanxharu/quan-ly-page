@@ -216,8 +216,9 @@
       for (const p of pages) {
         try {
           await q(sb().from('page_settings').upsert({ page_id: p.id, ...row }));
-          await S.call('profile', { pageId: p.id });
-          $('bmLog').append(h('div', { className: 'status ok', textContent: `✓ ${p.name}` }));
+          // Token Page trên máy chủ hỏng → tự làm mới bằng phiên Facebook hiện tại rồi áp menu lại.
+          const { refreshed } = await S.callWithFreshToken('profile', { pageId: p.id });
+          $('bmLog').append(h('div', { className: 'status ok', textContent: `✓ ${p.name}${refreshed ? ' (đã làm mới token)' : ''}` }));
         } catch (err) { $('bmLog').append(h('div', { className: 'status err', textContent: `✗ ${p.name}: ${err.message}` })); }
       }
       e.target.disabled = false;
