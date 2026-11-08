@@ -13,4 +13,15 @@ assert.deepEqual(j(P('facebook.com/page/photos/a.1/444555666/')),{post:'44455566
 assert.equal(P('xin chào'),null);
 assert.deepEqual(j(App.scannerPhones('Em lấy 2 cái, sđt 0899.779.488 hoặc +84 912 345 678, gọi 0899779488')),['0899779488','0912345678']);
 assert.deepEqual(j(App.scannerPhones('giá bao nhiêu')),[]);
-console.log('PASS: scanner parses post IDs and links (posts, permalink story_fbid, pfbid, photo fbid, videos, album photos) and extracts/normalises Vietnamese phone numbers from comments.');
+const C=App.cleanFbLink;
+assert.equal(C('https://www.facebook.com/tangfollow/posts/pfbid02ABC?__cft__[0]=xyz&__tn__=%2CO%2CP-R'),'https://www.facebook.com/tangfollow/posts/pfbid02ABC','tracking params removed');
+assert.equal(C('/permalink.php?story_fbid=123&id=456&__cft__=a'),'https://www.facebook.com/permalink.php?story_fbid=123&id=456');
+assert.equal(C('https://m.facebook.com/photo.php?fbid=999&set=a.1&type=3'),'https://www.facebook.com/photo/?fbid=999');
+assert.equal(C('https://www.facebook.com/reel/1234567890/?s=fb'),'https://www.facebook.com/reel/1234567890');
+assert.equal(C('https://www.facebook.com/share/p/1AbCdEf/'),'https://www.facebook.com/share/p/1AbCdEf');
+assert.equal(C('https://www.facebook.com/groups/123/posts/456/'),'https://www.facebook.com/groups/123/posts/456');
+assert.equal(C('https://www.facebook.com/abc/photos/a.1/777/'),'https://www.facebook.com/abc/photos/a.1/777');
+for(const bad of ['https://www.facebook.com/tangfollow','https://www.facebook.com/profile.php?id=1','https://google.com/posts/1','#','javascript:void(0)','https://www.facebook.com/hashtag/abc'])assert.equal(C(bad),'',bad);
+const src=fs.readFileSync(__dirname+'/../../js/scanner.js','utf8');const bm=vm.runInNewContext('('+src.slice(src.indexOf('const bookmarklet = ')+'const bookmarklet = '.length,src.indexOf("  App.cleanFbLink = cleanFbLink;")).trim().replace(/;$/,'')+')',{encodeURIComponent,cleanFbLink:App.cleanFbLink});
+const bmS=bm();assert.ok(bmS.startsWith('javascript:'));const code=decodeURIComponent(bmS.slice(11));new Function(code);assert.ok(!/\n/.test(code.replace(/\\n/g,'')),'single line');assert.ok(code.length<8000,'bookmarklet size ok: '+code.length);
+console.log('PASS: scanner parses post IDs and links (posts, permalink story_fbid, pfbid, photo fbid, videos, album photos) and extracts/normalises Vietnamese phone numbers from comments; cleans Facebook post links (tracking params, photo/reel/share/group/permalink) and the link-collector bookmarklet is valid single-line JavaScript.');

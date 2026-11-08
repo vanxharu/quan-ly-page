@@ -16,6 +16,32 @@
       reactions: x.reactions?.summary?.total_count || 0, comments: x.comments?.summary?.total_count || 0, shares: x.shares?.count || 0 };
     r.total = r.reactions + r.comments + r.shares; return r;
   };
+  // ── Link bài của Page bất kỳ: bookmarklet chép link + làm sạch ──
+  // Hàm đứng riêng (không dùng biến ngoài) để nhúng nguyên văn vào bookmarklet chạy trên facebook.com.
+  function cleanFbLink(raw) {
+    let u; try { u = new URL(String(raw || '').trim(), 'https://www.facebook.com'); } catch (e) { return ''; }
+    if (!/(^|\.)facebook\.com$|(^|\.)fb\.com$|(^|\.)fb\.watch$/i.test(u.hostname)) return '';
+    const p = u.pathname.replace(/\/+$/, ''), q = u.searchParams, base = 'https://www.facebook.com';
+    if (/^\/(permalink|story)\.php$/.test(p) && q.get('story_fbid')) return `${base}/permalink.php?story_fbid=${q.get('story_fbid')}${q.get('id') ? '&id=' + q.get('id') : ''}`;
+    if (/^\/photo(\.php)?$/.test(p) && q.get('fbid')) return `${base}/photo/?fbid=${q.get('fbid')}`;
+    if (/^\/watch$/.test(p) && q.get('v')) return `${base}/watch/?v=${q.get('v')}`;
+    if (/^\/[^/]+\/(posts|videos)\/[^/]+$/.test(p) || /^\/(reel|share\/[prv])\/[^/]+$/.test(p) || /^\/[^/]+\/photos\/[^/]+\/\d+$/.test(p) || /^\/groups\/[^/]+\/(posts|permalink)\/\d+$/.test(p)) return base + p;
+    return '';
+  }
+  const bookmarklet = () => 'javascript:' + encodeURIComponent(`(function(){var clean=${cleanFbLink};var S=window.__maLinks=window.__maLinks||new Set();var before=S.size;
+var act=document.activeElement;document.querySelectorAll('[aria-posinset] a, [role=article] a').forEach(function(a){var h=a.getAttribute('href')||'';if(h&&h.charAt(0)!=='?'&&h!=='#')return;['pointerover','pointerenter','mouseover','mouseenter'].forEach(function(t){try{a.dispatchEvent(new (window.PointerEvent&&t.indexOf('pointer')===0?PointerEvent:MouseEvent)(t,{bubbles:true}));}catch(e){}});try{a.dispatchEvent(new FocusEvent('focusin',{bubbles:true}));a.focus({preventScroll:true});}catch(e){}});try{if(act&&act.focus)act.focus({preventScroll:true});else document.activeElement.blur();}catch(e){}
+setTimeout(function(){document.querySelectorAll('a[href]').forEach(function(a){var c=clean(a.getAttribute('href'));if(c&&!/comment_id=/.test(a.href))S.add(c);});
+var old=document.getElementById('__maBox');if(old)old.remove();var mk=function(t,css,txt){var e=document.createElement(t);if(css)e.style.cssText=css;if(txt!=null)e.textContent=txt;return e;};
+var list=Array.from(S),box=mk('div','position:fixed;z-index:2147483647;right:16px;bottom:16px;width:380px;max-width:92vw;background:#fff;color:#111;border-radius:12px;box-shadow:0 10px 40px rgba(0,0,0,.35);padding:12px;font:13px/1.4 system-ui,sans-serif');box.id='__maBox';
+var head=mk('div');head.appendChild(mk('b','', 'Meta Assistant · Link bài '));head.appendChild(mk('span','color:#666',list.length+' link (+'+(list.length-before)+' mới)'));box.appendChild(head);
+box.appendChild(mk('div','color:#666;margin:4px 0 6px','Cuộn xuống để hiện thêm bài rồi bấm lại nút để gom tiếp.'));
+var ta=mk('textarea','width:100%;height:150px;font:12px monospace;box-sizing:border-box');ta.value=list.join('\\n');box.appendChild(ta);
+var row=mk('div','display:flex;gap:6px;margin-top:6px'),btn='padding:7px 10px;border:1px solid #ccc;border-radius:8px;background:#fff;cursor:pointer';
+var c=mk('button','flex:1;padding:7px;border:0;border-radius:8px;background:#1877f2;color:#fff;font-weight:600;cursor:pointer','Chép '+list.length+' link');
+c.onclick=function(){ta.select();var done=function(){c.textContent='Đã chép '+list.length+' link';};if(navigator.clipboard)navigator.clipboard.writeText(ta.value).then(done,function(){document.execCommand('copy');done();});else{document.execCommand('copy');done();}};
+var r=mk('button',btn,'Xoá');r.onclick=function(){S.clear();box.remove();};var x=mk('button',btn,'Đóng');x.onclick=function(){box.remove();};
+row.appendChild(c);row.appendChild(r);row.appendChild(x);box.appendChild(row);document.body.appendChild(box);ta.select();},700);})()`.replace(/\n/g, ''));
+  App.cleanFbLink = cleanFbLink;
   App.tab('scanner', {
     mount(el) {
       el.append(h('div', { className: 'card' },
@@ -28,6 +54,15 @@
           h('input', { type: 'text', id: 'snLink', placeholder: 'Dán link hoặc ID một bài viết của Page bạn quản lý…', 'aria-label': 'Link bài viết' }),
           h('button', { className: 'btn btn-soft', id: 'snLinkGo' }, 'Quét bài này'),
           h('span', { className: 'hint', textContent: 'Chỉ đọc được bài của các Page đang kết nối.' })),
+        h('details', { className: 'sn-links' },
+          h('summary', {}, h('strong', { textContent: 'Lấy link bài của Page bất kỳ' }), h('span', { className: 'hint', textContent: ' · Page đối thủ, nhóm, trang cá nhân công khai' })),
+          h('ol', { className: 'sn-steps' },
+            h('li', {}, 'Kéo nút này lên thanh dấu trang (Ctrl+Shift+B để hiện thanh): ', h('a', { className: 'btn btn-soft btn-sm sn-bm', href: bookmarklet(), title: 'Kéo lên thanh dấu trang', onclick: e => { e.preventDefault(); toast('Kéo nút này lên thanh dấu trang, đừng bấm ở đây.'); } }, '📋 Chép link bài FB')),
+            h('li', { textContent: 'Mở Page cần lấy trên facebook.com, tự cuộn xuống tới khi hiện đủ bài.' }),
+            h('li', { textContent: 'Bấm nút “📋 Chép link bài FB” trên thanh dấu trang → bấm Chép. Cuộn thêm rồi bấm lại để gom tiếp (không trùng).' }),
+            h('li', { textContent: 'Dán vào ô dưới để lọc trùng, xuất CSV, hoặc quét số liệu nếu là bài của Page bạn quản lý.' })),
+          h('textarea', { id: 'snPaste', rows: 4, placeholder: 'Dán loạt link bài viết vào đây (mỗi dòng một link, hoặc dán cả đoạn văn có link)…', oninput: () => drawPasted() }),
+          h('div', { id: 'snPasted' })),
         h('div', { className: 'log', id: 'snLog' }),
         h('div', { id: 'snKpis', className: 'sn-kpis' }),
         h('div', { className: 'toolbar', id: 'snFilters', hidden: true },
@@ -97,6 +132,20 @@
     rows = [found, ...rows.filter(r => r.id !== found.id)];
     $('snLog').replaceChildren(h('div', { className: 'status ok', textContent: `Đã tìm thấy bài của ${found.page}.` }));
     draw(); openComments(found);
+  }
+
+  // Dán loạt link: tách link, làm sạch, bỏ trùng; đánh dấu link thuộc Page bạn quản lý để quét số liệu.
+  function drawPasted() {
+    const text = $('snPaste').value, found = String(text).match(/https?:\/\/[^\s"'<>]+|(?:www\.|m\.)?facebook\.com\/[^\s"'<>]+/gi) || [];
+    const links = [...new Set(found.map(cleanFbLink).filter(Boolean))];
+    const own = l => App.pages.find(p => l.includes('/' + p.id + '/') || l.includes('id=' + p.id));
+    $('snPasted').replaceChildren(!text.trim() ? '' : h('div', {},
+      h('div', { className: 'toolbar' }, h('span', { className: 'hint', textContent: `${links.length} link bài hợp lệ (đã bỏ trùng${found.length > links.length ? `, bỏ ${found.length - links.length} link không phải bài/trùng` : ''})` }), h('span', { className: 'grow' }),
+        h('button', { className: 'btn btn-ghost btn-sm', textContent: 'Chép', disabled: !links.length, onclick: () => navigator.clipboard.writeText(links.join('\n')).then(() => toast(`Đã chép ${links.length} link.`)) }),
+        h('button', { className: 'btn btn-ghost btn-sm', textContent: 'Xuất CSV', disabled: !links.length, onclick: () => csvDownload(`link-bai-${Pure.dayKeyOf(Date.now())}.csv`, [['STT', 'Link'], ...links.map((l, i) => [i + 1, l])]) })),
+      links.length ? h('div', { className: 'scroll sn-linklist' }, h('table', { className: 'sn-table' }, h('tbody', {}, ...links.map((l, i) => h('tr', {},
+        h('td', { textContent: i + 1 }), h('td', { className: 'left' }, h('a', { href: l, target: '_blank', rel: 'noopener', textContent: l })),
+        h('td', {}, own(l) ? h('button', { className: 'btn btn-soft btn-sm', textContent: 'Quét số liệu', onclick: () => scanLink(l) }) : h('span', { className: 'hint', textContent: 'Page khác' }))))))) : null));
   }
 
   // ── Bảng bài + tổng quan ──────────────────────────────────
