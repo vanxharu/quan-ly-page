@@ -22,11 +22,11 @@ function caller(fail){const calls=[];return {calls,call:async(path,params,method
   assert.match(admin,/\['persistent_menu', 'PERSISTENT_MENU'\], \['ice_breakers', 'ICE_BREAKERS'\]/);assert.ok(!/\['greeting', 'persistent_menu', 'ice_breakers'\]/.test(admin),'server no longer sends lowercase greeting');
   // Webhook standby
   process.env.SUPABASE_URL='https://db.test';process.env.SUPABASE_SERVICE_ROLE_KEY='k';const logs=[];
-  global.fetch=async(url,opt={})=>{const u=new URL(url),t=u.pathname.split('/').pop();if(t==='logs'){logs.push(JSON.parse(opt.body));}
+  global.fetch=async(url,opt={})=>{const u=new URL(url),t=u.pathname.split('/').pop();if(u.hostname==='graph.facebook.com')return {json:async()=>({error:{message:'(#10) take_thread_control not allowed'}})};if(t==='logs'){logs.push(JSON.parse(opt.body));}
     const out=t==='page_tokens'?[{token:'pt'}]:t==='page_settings'?[{bot_enabled:true}]:[];return {ok:true,text:async()=>JSON.stringify(out),json:async()=>out};};
   const ext=require.extensions['.ts'];require.extensions['.ts']=require.extensions['.js'];const wh=require('../../server/fb-webhook.ts');require.extensions['.ts']=ext;
   const ev={object:'page',entry:[{id:'P',standby:[{sender:{id:'U'},recipient:{id:'P'},message:{mid:'m',text:'giá'}}]}]};
   await wh.handle(ev);await wh.handle(ev);
-  const warn=logs.filter(l=>l.detail?.where==='standby');assert.equal(warn.length,1,'standby warning logged once per Page, not per message');assert.match(warn[0].detail.message,/Primary receiver/);
+  const warn=logs.filter(l=>l.detail?.where==='standby');assert.equal(warn.length,1,'standby warning logged once per Page, not per message');assert.match(warn[0].detail.message,/msgr_conversation_routing/);
   console.log('PASS: Messenger profile deletes with uppercase fields (never greeting), menu blocked by non-primary app falls back without breaking greeting/ice breakers or deleting the old menu, other errors surface, fresh login token used, webhook warns once on standby-only delivery.');
 })().catch(e=>{console.error(e);process.exitCode=1;});
