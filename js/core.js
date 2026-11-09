@@ -263,23 +263,55 @@ App.resolveVars = (text, { name = '', pageName = '' } = {}, vars = App.templateV
   for (const [k, v] of Object.entries(map)) if (v != null && v !== '') out = out.replaceAll(k, v);
   return out;
 };
-// Gửi chữ rồi ảnh (nếu có) vào hội thoại Messenger. Ngoài 24 giờ kể từ tin cuối của khách, Meta sẽ từ chối.
+// Gửi chữ rồi ảnh (nếu có) vào hội thoại Messenger. Ngoài 24 giờ kể từ tin cuối của khách, Meta từ chối tin thường.
 // Hội thoại do app khác (chatbot cũ: Fchat, AhaChat, ManyChat…) giữ quyền: giành lại quyền rồi gửi lại một lần.
-App.sendMessage = async (page, psid, text, imageData) => {
-  try { return await sendRaw(page, psid, text, imageData); } catch (e) {
+// opts.humanAgent: tin do người gõ tay ở Hộp thư. Quá 24 giờ nhưng chưa quá 7 ngày thì gửi lại kèm thẻ HUMAN_AGENT
+// (Meta chỉ cho tin trả lời của nhân viên thật, không cho tin tự động/hàng loạt/quảng cáo; app cần quyền Human Agent được duyệt).
+const MSG_DAY = 864e5;
+App.humanAgent = {
+  KEY: 'humanAgentDeniedUntil',
+  denied: () => Number(local.get('humanAgentDeniedUntil') || 0) > Date.now(),
+  markDenied: () => local.set('humanAgentDeniedUntil', String(Date.now() + MSG_DAY)), // thử lại sau 1 ngày (có thể vừa được duyệt)
+  reset: () => local.set('humanAgentDeniedUntil', '0'),
+  // Trạng thái khung nhắn theo giờ tin cuối của khách: open (<24h), human (24h–7 ngày), closed (>7 ngày), unknown.
+  windowOf: lastCustomerAt => !lastCustomerAt ? 'unknown' : Date.now() - lastCustomerAt < MSG_DAY ? 'open' : Date.now() - lastCustomerAt < 7 * MSG_DAY ? 'human' : 'closed',
+  NEED: 'Đã quá 24 giờ. Muốn trả lời tới 7 ngày, ứng dụng cần quyền "Human Agent" được Meta duyệt (App Review › Human Agent). Trong lúc chờ, trả lời khách trong Hộp thư Meta Business Suite (cho nhân viên trả lời tới 7 ngày).',
+  CLOSED: 'Đã quá 7 ngày kể từ tin cuối của khách: Meta không cho Page nhắn tiếp bằng bất kỳ cách nào. Chờ khách nhắn lại, hoặc chạy quảng cáo tới người từng nhắn Page / dùng Marketing Messages (khách đồng ý nhận tin).'
+};
+App.businessInboxUrl = (pageId, psid) => `https://business.facebook.com/latest/inbox/all?asset_id=${encodeURIComponent(String(pageId || ''))}${psid ? `&selected_item_id=${encodeURIComponent(String(psid))}` : ''}`;
+const outsideWindow = e => Number(e.sub) === 2018278 || (Number(e.code) === 10 && /window|24/i.test(String(e.message)));
+const tagRefused = e => [3, 10, 200, 230].includes(Number(e.code)) || (Number(e.code) === 100 && /tag|human/i.test(String(e.message))) || outsideWindow(e);
+App.sendMessage = async (page, psid, text, imageData, opts = {}) => {
+  try { return await sendOwned(page, psid, text, imageData, ''); } catch (e) {
+    if (!opts.humanAgent || e.partialTextSent || !outsideWindow(e)) throw e;
+    const win = App.humanAgent.windowOf(opts.lastCustomerAt);
+    if (win === 'closed') throw Object.assign(new Error(App.humanAgent.CLOSED), { code: e.code, sub: e.sub, window: 'closed' });
+    if (App.humanAgent.denied()) throw Object.assign(new Error(App.humanAgent.NEED), { code: e.code, sub: e.sub, window: 'human' });
+    try { await sendOwned(page, psid, text, imageData, 'HUMAN_AGENT'); return { humanAgent: true }; }
+    catch (e2) {
+      if (e2.partialTextSent || !tagRefused(e2)) throw e2;
+      App.humanAgent.markDenied();
+      throw Object.assign(new Error(App.humanAgent.NEED), { code: e2.code, sub: e2.sub, window: 'human' });
+    }
+  }
+};
+async function sendOwned(page, psid, text, imageData, tag) {
+  try { return await sendRaw(page, psid, text, imageData, tag); } catch (e) {
     if (e.sub !== 2018300 || e.partialTextSent) throw e;
     try { await api(`/${page.id}/take_thread_control`, { recipient: { id: psid }, metadata: 'mabot' }, 'POST', page.access_token); }
     catch { throw Object.assign(new Error('Hội thoại này đang do một ứng dụng chatbot khác giữ (Fchat, AhaChat, ManyChat…). Vào Cài đặt Page › Nhắn tin nâng cao / Định tuyến cuộc trò chuyện, đặt ứng dụng này làm ứng dụng chính hoặc gỡ ứng dụng kia.'), { code: e.code, sub: e.sub }); }
-    return sendRaw(page, psid, text, imageData);
+    return sendRaw(page, psid, text, imageData, tag);
   }
-};
-async function sendRaw(page, psid, text, imageData) {
-  if (text) await api(`/${page.id}/messages`, { recipient: { id: psid }, messaging_type: 'RESPONSE', message: { text } }, 'POST', page.access_token);
+}
+async function sendRaw(page, psid, text, imageData, tag = '') {
+  const type = tag ? { messaging_type: 'MESSAGE_TAG', tag } : { messaging_type: 'RESPONSE' };
+  if (text) await api(`/${page.id}/messages`, { recipient: { id: psid }, ...type, message: { text } }, 'POST', page.access_token);
   if (imageData) {
     const blob = await (await fetch(imageData)).blob();
     const form = new FormData();
     form.append('recipient', JSON.stringify({ id: psid }));
-    form.append('messaging_type', 'RESPONSE');
+    form.append('messaging_type', type.messaging_type);
+    if (tag) form.append('tag', tag);
     form.append('message', JSON.stringify({ attachment: { type: 'image', payload: { is_reusable: false } } }));
     form.append('filedata', blob, `anh.${(blob.type.split('/')[1] || 'png').replace('jpeg', 'jpg')}`);
     try { await api(`/${page.id}/messages`, form, 'POST', page.access_token); }

@@ -92,6 +92,7 @@
           h('div', { className: 'composer' },
             h('div', { className: 'popover', id: 'ibPicker', hidden: true }, picker.el),
             h('div', { className: 'attach', id: 'ibAttach', hidden: true }),
+            h('div', { id: 'ibWindow', className: 'status', hidden: true, style: 'margin-bottom:6px' }),
             h('div', { className: 'composer-row' },
               h('button', { className: 'tpl-btn', id: 'ibTplBtn', onclick: () => togglePicker() }, icon('i-msg'), 'Mẫu'),
               h('label', { className: 'tpl-btn', title: 'Đính kèm ảnh' }, '📎', h('input', { type: 'file', accept: 'image/*', hidden: true, onchange: async e => {
@@ -102,7 +103,7 @@
               h('textarea', { id: 'ibText', 'aria-label': 'Nội dung trả lời', placeholder: 'Nhập tin trả lời… (gõ / để chọn mẫu)', rows: 1, disabled: true, oninput: onType, onkeydown: onKey }),
               h('button', { className: 'send-btn', id: 'ibSend', disabled: true, 'aria-label': 'Gửi', onclick: send }, icon('i-send'))),
             h('div', { className: 'hint', style: 'margin-top:6px' }, h('kbd', {}, 'Enter'), ' gửi · ', h('kbd', {}, 'Shift'), '+', h('kbd', {}, 'Enter'), ' xuống dòng · ',
-              h('kbd', {}, '/'), ' chọn mẫu · chỉ trả lời được trong 24 giờ kể từ tin cuối của khách')))));
+              h('kbd', {}, '/'), ' chọn mẫu · quá 24 giờ: tự gửi kèm thẻ Nhân viên trả lời (tới 7 ngày)')))));
     },
     refresh() { load(S.convs.length > 0); }
   });
@@ -298,6 +299,21 @@
     $('ibTitle').replaceChildren('Chưa chọn hội thoại'); $('ibReload').hidden = true; $('ibSend').disabled = true; $('ibCrm').hidden = true;
     $('ibThread').replaceChildren(empty('Chọn một hội thoại bên trái để xem tin nhắn.'));
   }
+  // Báo trước khung nhắn của hội thoại đang mở, để không phải gõ xong mới biết Meta từ chối.
+  function drawWindow(c) {
+    const box = $('ibWindow'); if (!box || S.conv !== c) return;
+    const win = App.humanAgent.windowOf(c.lastCustomerAt);
+    if (win === 'open' || win === 'unknown') { box.hidden = true; return box.replaceChildren(); }
+    const left = Math.max(0, 7 - Math.floor((Date.now() - c.lastCustomerAt) / 864e5));
+    const link = App.metaLink(App.businessInboxUrl(c.page.id, c.other.id), 'Mở trong Business Suite ↗');
+    box.hidden = false;
+    if (win === 'closed') { box.className = 'status err'; return box.replaceChildren(App.humanAgent.CLOSED, ' ', link); }
+    box.className = 'status pending';
+    box.replaceChildren(App.humanAgent.denied()
+      ? h('span', {}, `Quá 24 giờ (còn ${left} ngày để nhân viên trả lời). Ứng dụng chưa có quyền Human Agent nên Meta từ chối; trả lời trong Business Suite. `,
+          h('button', { type: 'button', className: 'btn btn-ghost btn-sm', textContent: 'Thử lại', title: 'Đã được Meta duyệt Human Agent? Bấm để thử gửi lại kèm thẻ', onclick: () => { App.humanAgent.reset(); drawWindow(c); } }), ' ', link)
+      : h('span', {}, `Khách nhắn đã quá 24 giờ. Tin bạn gõ sẽ gửi kèm thẻ Nhân viên trả lời (còn ${left} ngày). Chỉ dùng để hỗ trợ khách, không gửi quảng cáo/khuyến mãi. `, link));
+  }
   async function openConv(c, { silent = false } = {}) {
     const switching = draftKey(S.conv) !== draftKey(c) || !S.draftReady;
     if (switching) saveDraft();
@@ -310,6 +326,7 @@
       $('ibText').value = ''; $('ibText').disabled = true; drawAttach();
       $('ibCrm').hidden = true;
       $('ibThread').replaceChildren(empty('Đang tải tin nhắn…'));
+      if ($('ibWindow')) { $('ibWindow').hidden = true; $('ibWindow').replaceChildren(); }
       const draft = await DB.get(draftKey(c), {}).catch(() => ({}));
       if (S.conv !== c) return;
       $('ibText').value = draft.text || ''; S.image = draft.image || '';
@@ -331,6 +348,10 @@
       if (!res) return;
       if (S.conv !== c) return;
       const msgs = (res.messages?.data || []).reverse();
+      // Giờ tin cuối của khách: quyết định khung nhắn (24 giờ / 7 ngày với thẻ Nhân viên trả lời / đã đóng).
+      const lastCust = [...msgs].reverse().find(m => m.from?.id !== c.page.id);
+      c.lastCustomerAt = lastCust ? new Date(lastCust.created_time).getTime() || 0 : 0;
+      drawWindow(c);
       if(App.noteCustomerConversation?.(c.page,{...c,messages:{data:msgs}},c.other))refreshPictureEvidence(c);
       queuePics([c]);
       const thread = $('ibThread'), oldTop = thread.scrollTop;
@@ -445,7 +466,8 @@
     const image = S.image, tpl = S.tpl;
     S.sending = true; updateSendState();
     try {
-      await App.sendMessage(c.page, c.other.id, text, image);
+      const sent = await App.sendMessage(c.page, c.other.id, text, image, { humanAgent: true, lastCustomerAt: c.lastCustomerAt });
+      if (sent?.humanAgent) toast('Đã gửi kèm thẻ Nhân viên trả lời (khách nhắn đã quá 24 giờ).', 5000);
       // Chỉ xoá đúng bản nháp vừa gửi, không xoá nội dung mới hoặc hội thoại khác.
       const current = S.conv && draftKey(S.conv) === draftKey(c);
       const unchanged = current && $('ibText').value.trim() === text && S.image === image;
@@ -465,9 +487,12 @@
           if ((draft.text || '').trim() === text) await DB.set(draftKey(c), { ...draft, text: '' });
         }
       }
-      const message = (e.partialTextSent ? 'Chữ đã gửi, nhưng ảnh chưa gửi được. Gửi lại ảnh để tránh lặp nội dung. ' : '') + (e.sub === 2018278 ? 'Đã quá 24 giờ kể từ tin cuối của khách, Meta không cho Page nhắn tiếp.' : e.message) + (e.code ? ` (mã ${e.code}${e.sub ? '/' + e.sub : ''})` : '');
-      if (S.conv && draftKey(S.conv) === draftKey(c)) $('ibThread').append(h('div', { className: 'status err', textContent: message }));
-      else toast(`${c.other.name || 'Khách'}: ${message}`, 7000);
+      const message = (e.partialTextSent ? 'Chữ đã gửi, nhưng ảnh chưa gửi được. Gửi lại ảnh để tránh lặp nội dung. ' : '') + (e.window ? e.message : e.sub === 2018278 ? 'Đã quá 24 giờ kể từ tin cuối của khách, Meta không cho Page nhắn tiếp.' : e.message) + (e.code ? ` (mã ${e.code}${e.sub ? '/' + e.sub : ''})` : '');
+      if (S.conv && draftKey(S.conv) === draftKey(c)) {
+        $('ibThread').append(h('div', { className: 'status err' }, message,
+          e.window ? h('div', { style: 'margin-top:6px' }, App.metaLink(App.businessInboxUrl(c.page.id, c.other.id), 'Mở hội thoại trong Business Suite ↗')) : null));
+        if (e.window) drawWindow(c);
+      } else toast(`${c.other.name || 'Khách'}: ${message}`, 7000);
     } finally { S.sending = false; updateSendState(); }
   }
 
