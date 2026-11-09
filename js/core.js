@@ -276,7 +276,7 @@ App.humanAgent = {
   // Trạng thái khung nhắn theo giờ tin cuối của khách: open (<24h), human (24h–7 ngày), closed (>7 ngày), unknown.
   windowOf: lastCustomerAt => !lastCustomerAt ? 'unknown' : Date.now() - lastCustomerAt < MSG_DAY ? 'open' : Date.now() - lastCustomerAt < 7 * MSG_DAY ? 'human' : 'closed',
   NEED: 'Đã quá 24 giờ. Muốn trả lời tới 7 ngày, ứng dụng cần quyền "Human Agent" được Meta duyệt (App Review › Human Agent). Trong lúc chờ, trả lời khách trong Hộp thư Meta Business Suite (cho nhân viên trả lời tới 7 ngày).',
-  CLOSED: 'Đã quá 7 ngày kể từ tin cuối của khách: Meta không cho Page nhắn tiếp bằng bất kỳ cách nào. Chờ khách nhắn lại, hoặc chạy quảng cáo tới người từng nhắn Page / dùng Marketing Messages (khách đồng ý nhận tin).'
+  CLOSED: 'Đã quá 7 ngày kể từ tin cuối của khách: Meta không cho Page trả lời nữa, kể cả kèm thẻ. Cách còn lại: chờ khách nhắn lại, chạy quảng cáo tới người từng nhắn Page, hoặc dùng Marketing Messages (khách phải đồng ý nhận tin, có tính phí).'
 };
 App.businessInboxUrl = (pageId, psid) => `https://business.facebook.com/latest/inbox/all?asset_id=${encodeURIComponent(String(pageId || ''))}${psid ? `&selected_item_id=${encodeURIComponent(String(psid))}` : ''}`;
 const outsideWindow = e => Number(e.sub) === 2018278 || (Number(e.code) === 10 && /window|24/i.test(String(e.message)));
