@@ -1,0 +1,57 @@
+{
+  "name": "meta-assistant",
+  "version": "1.0.0",
+  "description": "Meta Assistant cho Windows: quản lý Page Facebook + Studio AI",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "smoke": "xvfb-run -a electron --no-sandbox test/smoke.js",
+    "dist": "electron-builder --win nsis --publish always"
+  },
+  "author": "Văn",
+  "license": "UNLICENSED",
+  "dependencies": {
+    "electron-chrome-extensions": "4.10.0",
+    "electron-updater": "6.8.11"
+  },
+  "devDependencies": {
+    "electron": "45.3.0",
+    "electron-builder": "26.18.0"
+  },
+  "productName": "Meta Assistant",
+  "private": true,
+  "build": {
+    "appId": "com.vanxharu.metaassistant",
+    "productName": "Meta Assistant",
+    "files": [
+      "main.js",
+      "icon.png",
+      "package.json",
+      "node_modules/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "../extension/chatgpt-connector",
+        "to": "extension",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
+    "win": {
+      "target": "nsis",
+      "icon": "icon.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "shortcutName": "Meta Assistant"
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "vanxharu",
+      "repo": "quan-ly-page",
+      "releaseType": "release"
+    }
+  }
+}

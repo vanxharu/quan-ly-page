@@ -1,0 +1,21 @@
+# Đóng gói app Windows (Meta Assistant Setup x.y.z.exe) và đăng lên GitHub Releases; app đã cài tự cập nhật từ đây.
+# Chạy: tăng "version" trong desktop/package.json, push lên main (hoặc bấm Run workflow ở tab Actions).
+name: Desktop app
+on:
+  push:
+    branches: [main]
+    paths: ['desktop/package.json', 'extension/chatgpt-connector/**']
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  windows:
+    runs-on: windows-latest
+    defaults: { run: { working-directory: desktop } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: npx electron-builder --win nsis --publish always
+        env: { GH_TOKEN: '${{ secrets.GITHUB_TOKEN }}' }
