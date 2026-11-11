@@ -701,6 +701,22 @@ App.customerPics = async (page, psids, { force = false, onResult, onIdentity } =
   await Promise.all(publicTasks);await Promise.all(writes);
   return out;
 };
+// Ảnh khách theo UID Facebook bạn nhập tay (Meta không trả ảnh khách khi app chưa Live).
+// Lấy link ảnh bằng token của bạn (redirect=0) để token không nằm trong img.src; không được thì dùng link công khai.
+App.customerUidKey = 'customerUidV1';
+App.parseFacebookUid = text => {
+  const v = String(text || '').trim();
+  if (/^\d{5,30}$/.test(v)) return v;
+  try { const id = new URL(v.startsWith('http') ? v : 'https://' + v).searchParams.get('id'); if (/^\d{5,30}$/.test(id || '')) return id; } catch {}
+  return '';
+};
+App.uidPicture = async uid => {
+  if (App.userToken) try {
+    const r = await api(`/${uid}/picture`, { redirect: 0, width: 160, height: 160 }, 'GET', App.userToken);
+    if (r?.data?.url && !r.data.is_silhouette) return r.data.url;
+  } catch {}
+  return `https://graph.facebook.com/${uid}/picture?width=160&height=160`;
+};
 // Dòng Page nhỏ: ảnh + tên (dùng trong danh sách bài, bình luận…).
 App.pageTag = p => h('span', { className: 'page-chip', style: 'display:inline-flex;align-items:center;gap:4px', title: p?.name || '' }, App.avatar(p?.name, App.pageAvatarUrl(p), 14), p?.name || 'Page không rõ');
 

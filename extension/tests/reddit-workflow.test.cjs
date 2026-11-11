@@ -26,7 +26,7 @@ const panel={id:'studio',url:chrome.runtime.getURL('sidepanel.html')},web={url:'
   assert.equal(local.pageCatalog.pages[0].topics,undefined,'old Page prompts cannot override common workflow');
   const generated=await send({type:'PANEL_GENERATE',payload:{items:[{key:'one',pageId:'p1'},{key:'two',pageId:'p1'}],images:true}});assert.equal(generated.ok,true);
   const gpt={url:'https://chatgpt.com/',tab:{id:session.job.gptTab}},g=m=>send({id:session.job.id,nonce:session.job.nonce,...m},gpt);
-  let claim=await g({type:'CLAIM',agentVersion:'2.5.2'});assert.equal(claim.job.input.workflow,P.WORKFLOW);
+  let claim=await g({type:'CLAIM',agentVersion:'2.5.3'});assert.equal(claim.job.input.workflow,P.WORKFLOW);
   assert.deepEqual(claim.job.input.items[0].recentPosts.map(x=>x.topicTitle),['SEO','Email marketing']);
   assert.ok(!P.prompt(claim.job.input).includes('Another Page only'));
   await g({type:'START'});
@@ -42,7 +42,7 @@ const panel={id:'studio',url:chrome.runtime.getURL('sidepanel.html')},web={url:'
   assert.equal(local.marketingHistoryV1.p2[0].text,'Another Page only');
   session.job=null;local.panelJob.posts.forEach(post=>post.transferredAt=1);
   const again=await send({type:'PANEL_GENERATE',payload:{items:[{key:'three',pageId:'p1'}],images:false}});assert.equal(again.ok,true);
-  claim=await send({type:'CLAIM',agentVersion:'2.5.2'},{url:'https://chatgpt.com/',tab:{id:session.job.gptTab}});
+  claim=await send({type:'CLAIM',agentVersion:'2.5.3'},{url:'https://chatgpt.com/',tab:{id:session.job.gptTab}});
   assert.ok(claim.job.input.items[0].recentPosts.some(x=>x.topicTitle==='Landing pages'),'history survives a new session');
   assert.ok(local.panelJob.input.items[0].brief===P.POST_PROMPT);
   console.log('PASS: one common prompt; old custom prompts ignored; Reddit source validation and separate metadata; shared image prompt; Page-specific durable history across steps and sessions.');

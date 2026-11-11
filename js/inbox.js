@@ -1,7 +1,7 @@
 /* Hộp thư (giống inbox-tab.js của tiện ích, nhưng đọc qua Graph API): một hoặc tất cả Page, lọc, thời gian khách chờ,
  * tự gắn nhãn theo lời khách (InboxRules), mẫu tin bằng nút "Mẫu" hoặc gõ "/", ảnh đính kèm, khung CRM, báo tin mới. */
 (() => {
-  const S = { filter: 'all', convs: [], conv: null, tpl: null, image: '', loading: 0, pics: new Map(), identities: new Map(), sending: false, more: new Map(), extra: new Map() };
+  const S = { filter: 'all', convs: [], conv: null, tpl: null, image: '', loading: 0, pics: new Map(), identities: new Map(), sending: false, more: new Map(), extra: new Map(), manual: {} };
   const draftKey = c => c?.other.id ? `inboxDraft:${c.page.id}|${c.other.id}` : '';
   function saveDraft(c = S.conv) {
     const key = draftKey(c);
@@ -12,6 +12,29 @@
     if ($('ibSend')) $('ibSend').disabled = S.sending || !S.conv?.other.id || !S.draftReady || (!($('ibText').value.trim()) && !S.image);
   }
 
+  // Ảnh theo UID nhập tay: ưu tiên hơn ảnh Meta trả về. Link ảnh fbcdn hết hạn sau vài ngày nên lấy lại sau 2 ngày.
+  DB.get(App.customerUidKey, {}).then(all => { S.manual = all || {}; for (const [key, v] of Object.entries(S.manual)) S.pics.set(key, v.url); }).catch(() => {});
+  App.onLogin.push(async () => {
+    const old = Object.entries(S.manual).filter(([, v]) => Date.now() - (v.at || 0) > 2 * 864e5);
+    for (const [key, v] of old) { S.manual[key] = { ...v, url: await App.uidPicture(v.uid), at: Date.now() }; S.pics.set(key, S.manual[key].url); }
+    if (old.length) { await DB.set(App.customerUidKey, S.manual); paintPictures(); }
+  });
+  async function setCustomerUid(c) {
+    const key = pictureKey(c), cur = S.manual[key]?.uid || '';
+    const text = prompt(`UID Facebook hoặc link trang cá nhân của ${c.other.name || 'khách'} (để trống để bỏ):`, cur);
+    if (text === null) return;
+    const all = await DB.get(App.customerUidKey, {});
+    if (!text.trim()) { delete all[key]; delete S.manual[key]; S.pics.delete(key); pictureChecked.delete(key); }
+    else {
+      const uid = App.parseFacebookUid(text);
+      if (!uid) return toast('Cần UID dạng số hoặc link có ?id=… (link dạng facebook.com/ten-rieng không đọc được UID).', 6000);
+      all[key] = S.manual[key] = { uid, url: await App.uidPicture(uid), at: Date.now() };
+      S.pics.set(key, all[key].url);
+    }
+    await DB.set(App.customerUidKey, all);
+    paintPictures(); drawHead(c);
+    if (!text.trim()) queuePics([c]);
+  }
   const settings = async () => InboxRules.withDefaults(await DB.get(InboxRules.SETTINGS_KEY));
   const normalizeConversation = (page, c) => {
     const other = c.participants?.data?.find(u => String(u.id) !== String(page.id)) || {};
@@ -176,6 +199,7 @@
     toast('Đã tải báo lỗi ảnh khách.');
   }
   const pictureKey = c => c.page.id + ':' + c.other.id;
+
   const failedPictures = new Set(), pictureLoads = new Map(), pictureChecked = new Map();
   let picturePaintTimer;
   function paintPictures() {
@@ -191,7 +215,7 @@
   async function loadPics(convs, force = false) {
     const byPage = new Map(), waiting = new Set(), tasks = [];
     for (const c of convs) {
-      if (!c.other.id) continue;
+      if (!c.other.id || S.manual?.[pictureKey(c)]) continue;
       const key = pictureKey(c), pending = pictureLoads.get(key);
       if (pending) { waiting.add(pending); continue; }
       const ttl = S.pics.has(key) ? 5 * 60e3 : 60e3;
@@ -202,6 +226,7 @@
     for (const { page, ids } of byPage.values()) {
       const update = (id, url) => {
         const key = page.id + ':' + id, before = S.pics.get(key) || '';
+        if (S.manual?.[key]) return;
         if (url) S.pics.set(key, url); else S.pics.delete(key);
         pictureChecked.set(key, Date.now());
         if (before !== url) paintPictures();
@@ -229,7 +254,7 @@
   function retryPicture(c, url) {
     if(url)App.noteCustomerAvatarImageError?.(c.page,c.other.id);
     const key = pictureKey(c) + ':' + url;
-    if (!url || failedPictures.has(key)) return;
+    if (!url || failedPictures.has(key) || S.manual?.[pictureKey(c)]) return;
     failedPictures.add(key); S.pics.delete(pictureKey(c)); pictureChecked.delete(pictureKey(c));
     loadPics([c], true).catch(() => {});
   }
@@ -259,7 +284,9 @@
     const identity=S.identities.get(pictureKey(c));
     $('ibTitle').replaceChildren(h('span', { className: 'thread-head' }, custAvatar(c, 32),
       h('span', { style: 'min-width:0' }, h('div', { className: 'card-title', textContent: c.other.name || 'Khách' }), h('div', { className: 'hint', textContent: c.page.name }),
-        identity?h('a',{className:'hint',href:identity.profileUrl,target:'_blank',rel:'noopener noreferrer',textContent:'UID '+identity.uid}):null)));
+        S.manual?.[pictureKey(c)] ? h('a',{className:'hint',href:'https://www.facebook.com/profile.php?id='+S.manual[pictureKey(c)].uid,target:'_blank',rel:'noopener noreferrer',textContent:'UID '+S.manual[pictureKey(c)].uid})
+          : identity?h('a',{className:'hint',href:identity.profileUrl,target:'_blank',rel:'noopener noreferrer',textContent:'UID '+identity.uid}):null),
+      h('button',{type:'button',className:'btn btn-ghost btn-sm',title:'Nhập UID Facebook của khách để hiện ảnh đại diện',textContent:S.manual?.[pictureKey(c)]?'Đổi UID':'Gắn UID',onclick:()=>setCustomerUid(c)})));
   }
   async function drawList() {
     const st = await settings();

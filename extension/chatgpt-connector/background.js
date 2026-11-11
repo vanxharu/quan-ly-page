@@ -1,5 +1,5 @@
 importScripts('protocol.js','embed-rules.js','studio-storage.js');
-const P=MetaAIProtocol,WORKER_VERSION='2.5.2';
+const P=MetaAIProtocol,WORKER_VERSION='2.5.3';
 let updatingExtension=false;
 
 // Sau khi nạp lại tiện ích, content script ở tab web cũ đã bị Chrome vô hiệu hoá.
@@ -175,6 +175,8 @@ async function handle(m,sender) {
   if(m?.type==='CUSTOMER_PROFILES'&&fromWeb){const ids=(Array.isArray(m.payload?.ids)?m.payload.ids:[]).map(String).filter(id=>/^\d{5,30}$/.test(id)).slice(0,50);return {ok:true,profiles:await localCustomerProfiles(ids)};}
   if(m?.type==='CUSTOMER_PROFILE'&&fromWeb)return {ok:true,profile:await lookupPublicProfile(m.payload)};
   if(m?.type==='CATALOG_SYNC'&&fromWeb){const catalog=cleanCatalog(m.payload);await StudioStorage.local.set({pageCatalog:catalog,studioTheme:catalog.theme});return {ok:true};}
+  if(m?.type==='SETTINGS_GET'&&fromWeb)return {ok:true,settings:P.settings((await StudioStorage.local.get('studioSettings')).studioSettings),defaults:{postPrompt:P.POST_PROMPT,imagePrompt:P.IMAGE_PROMPT}};
+  if(m?.type==='SETTINGS_SAVE'&&fromWeb){const job=await getJob();if(updatingExtension||job&&['opening','running'].includes(job.status))throw Error('Chờ lượt tạo hoặc cập nhật hoàn tất trước khi đổi lệnh.');const current=P.settings((await StudioStorage.local.get('studioSettings')).studioSettings);const settings=P.settings({...current,postPrompt:m.payload?.postPrompt,imagePrompt:m.payload?.imagePrompt});await StudioStorage.local.set({studioSettings:settings});return {ok:true,settings};}
   if(m?.type==='THEME_SYNC'&&fromWeb){await StudioStorage.local.set({studioTheme:m.payload?.theme==='dark'?'dark':'light'});return {ok:true};}
   if(m?.type==='TRANSFER_PULL'&&fromWeb){const transfer=(await StudioStorage.local.get('pendingTransfer')).pendingTransfer;return {ok:true,transfer:transfer?.webTab===sender.tab.id?transferBatch(transfer):null};}
   if(m?.type==='TRANSFER_ACK'&&fromWeb){const transfer=(await StudioStorage.local.get('pendingTransfer')).pendingTransfer,batch=transferBatch(transfer);if(!batch||batch.id!==m.payload?.id||transfer.webTab!==sender.tab.id)throw Error('Xác nhận chuyển bài không hợp lệ.');const live=await getJob(),job=live?.id===transfer.sourceJobId?live:(await StudioStorage.local.get('panelJob')).panelJob;if(job?.id===transfer.sourceJobId){for(const post of job.posts)if(batch.posts.some(p=>p.key===post.key))post.transferredAt=Date.now();if(live?.id===job.id)await save(job);else await StudioStorage.local.set({panelJob:job});}transfer.cursor=(transfer.cursor||0)+batch.posts.length;if(transfer.cursor<transfer.posts.length)await StudioStorage.local.set({pendingTransfer:transfer});else await StudioStorage.local.remove('pendingTransfer');return {ok:true};}
@@ -202,7 +204,7 @@ async function handle(m,sender) {
     if(job.frameClaimed&&!job.frameDocumentId&&sender.documentId){job.frameDocumentId=sender.documentId;job.frameBindingInfo={...job.frameBindingInfo,documentIdAvailableLater:true};await save(job);}
     if(!job.frameClaimed){if(!['START','FRAME_CLAIM'].includes(m.type))return {ok:true,job:null,cancelled:true};job.frameClaimed=true;job.frameDocumentId=sender.documentId||null;job.frameBindingInfo={hasDocumentId:!!sender.documentId,hasTab:!!sender.tab,frameId:Number.isInteger(sender.frameId)?sender.frameId:null};await save(job);}
   }else if(job.gptTab!==sender.tab?.id)return {ok:true,job:null,cancelled:true};
-  if(m.type==='CLAIM'&&m.agentVersion!=='2.5.2'){await finish(job,'Tab ChatGPT đang dùng tiện ích cũ. Cập nhật tiện ích và tải lại cả trang Meta Assistant lẫn tab ChatGPT.');return {ok:false,error:'Phiên bản tiện ích trong tab ChatGPT chưa đồng bộ.'};}
+  if(m.type==='CLAIM'&&m.agentVersion!=='2.5.3'){await finish(job,'Tab ChatGPT đang dùng tiện ích cũ. Cập nhật tiện ích và tải lại cả trang Meta Assistant lẫn tab ChatGPT.');return {ok:false,error:'Phiên bản tiện ích trong tab ChatGPT chưa đồng bộ.'};}
   if(m.type==='CLAIM')return {ok:true,job:{id:job.id,nonce:job.nonce,input:inputFor(job),index:job.currentIndex||0,total:job.input.items.length,status:job.status}};
   if(m.nonce!==job.nonce||m.id!==job.id)throw Error('Lượt tạo không hợp lệ.');
   if(m.type==='FRAME_CLAIM')return {ok:true};
