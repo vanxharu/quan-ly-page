@@ -1,0 +1,15 @@
+<!doctype html><html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Đăng nhập Meta Assistant</title>
+<style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#F8FAFC;color:#0F172A;font:16px/1.6 system-ui,sans-serif;text-align:center;padding:16px}a{display:inline-block;margin-top:12px;padding:10px 18px;border-radius:10px;background:#6D28D9;color:#fff;text-decoration:none}
+@media (prefers-color-scheme:dark){body{background:#0B0F19;color:#F9FAFB}}</style></head><body><main><h1 id="t">Đang mở lại app Meta Assistant…</h1><p id="m">Có thể đóng tab này sau khi app hiện lên.</p><a id="go" hidden>Mở app Meta Assistant</a></main>
+<script>
+// Facebook trả token ở phần #… của link (không gửi lên máy chủ nào); chuyển nguyên cho app Windows qua metaassistant://.
+const q = new URLSearchParams(location.hash.slice(1)), err = new URLSearchParams(location.search).get('error_description');
+history.replaceState(null, '', location.pathname); // xoá token khỏi thanh địa chỉ / lịch sử
+if (q.get('access_token')) {
+  const link = 'metaassistant://login?' + new URLSearchParams({ access_token: q.get('access_token'), state: q.get('state') || '' });
+  const go = document.getElementById('go'); go.href = link; go.hidden = false; location.href = link;
+} else {
+  document.getElementById('t').textContent = 'Chưa đăng nhập được';
+  document.getElementById('m').textContent = err || 'Quay lại app và bấm Đăng nhập Facebook lần nữa.';
+}
+</script></body></html>

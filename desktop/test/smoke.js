@@ -9,6 +9,7 @@ app.whenReady().then(() => session.defaultSession.protocol.handle('https', req =
   if (req.url.includes('graph.facebook.com')) return Response.json({ data: [] });
   return new Response('', { status: 404 });
 }));
+const electron = require('electron'), opened = []; electron.shell.openExternal = url => { opened.push(url); return Promise.resolve(); };
 require('../main.js');
 setTimeout(async () => {
   const win = BrowserWindow.getAllWindows()[0], out = {};
@@ -20,6 +21,16 @@ setTimeout(async () => {
     out.pages = await win.webContents.executeJavaScript('App.pages.length');
     out.studio = await win.webContents.executeJavaScript('App.ai.getSettings().then(r=>"ok "+r.settings.postPrompt.slice(0,30)).catch(e=>"ERR "+e.message)');
     out.save = await win.webContents.executeJavaScript('App.ai.saveSettings({postPrompt:"Lệnh thử",imagePrompt:"Ảnh thử"}).then(r=>"ok "+r.settings.postPrompt).catch(e=>"ERR "+e.message)');
+    await win.webContents.executeJavaScript("window.open('https://www.facebook.com/v25.0/dialog/oauth?app_id=1062977306762250&client_id=1062977306762250&config_id=99&redirect_uri=x'); 1");
+    await new Promise(r => setTimeout(r, 500));
+    const oauth = new URL(opened.find(u => u.includes('dialog/oauth')));
+    out.oauth = oauth.searchParams.get('redirect_uri') + ' cfg=' + oauth.searchParams.get('config_id');
+    app.emit('second-instance', {}, ['x', 'metaassistant://login?access_token=BAD&state=wrong']);
+    app.emit('second-instance', {}, ['x', 'metaassistant://login?access_token=TOK123&state=' + oauth.searchParams.get('state')]);
+    await new Promise(r => setTimeout(r, 2500));
+    out.token = await win.webContents.executeJavaScript("localStorage.getItem('fbTok')");
+    const panel = app.openStudio(); await new Promise(r => setTimeout(r, 3000));
+    out.panel = await panel.webContents.executeJavaScript('document.body.innerText.slice(0,80)');
   } catch (e) { out.error = e.message; }
-  console.log('SMOKE', JSON.stringify(out)); process.exit(out.studio?.startsWith('ok') && out.ext?.length ? 0 : 1);
+  console.log('SMOKE', JSON.stringify(out)); process.exit(out.studio?.startsWith('ok') && out.ext?.length && out.panel && out.token === 'TOK123' ? 0 : 1);
 }, 6000);
