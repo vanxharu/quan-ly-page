@@ -17,5 +17,8 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: 22 }
       - run: npm ci
+      # GitHub chỉ cho đăng bản phát hành có tag sẵn.
+      - shell: bash
+        run: v=v$(node -p "require('./package.json').version"); git tag -f $v; git push -f origin $v
       - run: npx electron-builder --win nsis --publish always
         env: { GH_TOKEN: '${{ secrets.GITHUB_TOKEN }}' }
