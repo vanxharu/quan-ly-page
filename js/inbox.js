@@ -156,7 +156,7 @@
           h('button', { type: 'button', className: 'btn btn-ghost btn-sm', id: 'ibMore', hidden: true, textContent: 'Tải thêm hội thoại', onclick: loadMore })),
         h('div', { className: 'card' },
           h('div', { className: 'card-head' }, h('h3', { className: 'card-title', id: 'ibTitle', textContent: 'Chưa chọn hội thoại' }),
-            h('button', { className: 'btn btn-ghost', id: 'ibReload', hidden: true, textContent: 'Đọc lại', onclick: () => S.conv && openConv(S.conv) })),
+            h('button', { className: 'btn btn-ghost', id: 'ibReload', hidden: true, textContent: 'Đọc lại', onclick: () => S.conv && (S.conv.bs ? openBs(S.conv, { silent: true }) : openConv(S.conv)) })),
           h('div', { className: 'thread', id: 'ibThread' }, empty('Chọn một hội thoại bên trái để xem tin nhắn.')),
           h('div', { id: 'ibCrm', className: 'crm', hidden: true }),
           h('div', { className: 'composer' },
@@ -193,7 +193,7 @@
     let m = t.match(/^(\d+)\s*(giây|phút|giờ|ngày|tuần|tháng|năm|[smhdwy])$/);
     if (m) return now - m[1] * ({ 'giây': 1, s: 1, 'phút': 60, m: 60, 'giờ': 3600, h: 3600, 'ngày': 86400, d: 86400, 'tuần': 604800, w: 604800, 'tháng': 2592000, 'năm': 31536000, y: 31536000 }[m[2]]) * 1000;
     const d = new Date(now);
-    if ((m = t.match(/^(\d{1,2}):(\d{2})$/))) { d.setHours(+m[1], +m[2], 0, 0); return d.getTime(); }
+    if ((m = t.match(/^(\d{1,2}):(\d{2})$/))) { d.setHours(+m[1], +m[2], 0, 0); return d.getTime() > now ? d.getTime() - 864e5 : d.getTime(); }
     if ((m = t.match(/^(?:th\s?([2-7])|(cn))$/))) { const want = m[2] ? 0 : m[1] - 1; d.setHours(12, 0, 0, 0); d.setDate(d.getDate() - (((d.getDay() - want) + 7) % 7 || 7)); return d.getTime(); }
     if ((m = t.match(/^(\d{1,2})(?:\s*thg\s*|\/)(\d{1,2})(?:\/(\d{2,4}))?$/))) {
       const y = m[3] ? (m[3].length === 2 ? 2000 + +m[3] : +m[3]) : d.getFullYear();
@@ -231,13 +231,51 @@
     bsCache.set(p.id, { at: Date.now(), list });
     return list;
   }
-  function openBs(c) {
-    saveDraft(); S.conv = null; resetThread(); // hội thoại này không đọc qua Graph: khung bên phải chỉ ghi chú
-    $('ibTitle').replaceChildren(c.other.name);
-    $('ibThread').replaceChildren(empty(`Đang mở hội thoại với ${c.other.name} (${c.page.name}) trong cột Meta bên phải — đọc và trả lời ở đó, kể cả tin đã quá 7 ngày.`));
-    S.bsActive = c.id; c.unread_count = 0; drawList();
-    window.metaDesktop.openThread({ pageId: String(c.page.id), uid: c.uid })
-      .then(ok => { if (!ok) toast(`Đã mở hộp thư ${c.page.name} trong cột Meta, bấm vào ${c.other.name} để xem.`, 6000); }).catch(() => {});
+  // Hội thoại từ Business Suite: app đọc tin trong khung ẩn và hiện ngay trong khung chat; gửi tin cũng qua khung ẩn
+  // (giống bạn gõ trong Business Suite), nên không vướng giới hạn của API.
+  async function openBs(c, { silent = false, older = false } = {}) {
+    if (!silent) {
+      saveDraft(); S.conv = c; resetThread(); drawHead(c);
+      $('ibReload').hidden = false;
+      $('ibThread').replaceChildren(empty('Đang đọc tin từ Business Suite…'));
+      c.unread_count = 0; drawList();
+      const draft = await DB.get(draftKey(c), {}).catch(() => ({}));
+      if (S.conv !== c) return;
+      $('ibText').value = draft.text || ''; S.draftReady = true; $('ibText').disabled = false; updateSendState();
+    } else S.conv = c;
+    const r = await window.metaDesktop.readThread({ pageId: String(c.page.id), uid: c.uid, older }).catch(e => ({ error: e.message }));
+    if (S.conv !== c) return;
+    if (r.error) return $('ibThread').replaceChildren(h('div', { className: 'status err' },
+      r.error === 'login' ? 'Chưa đăng nhập Business Suite trong app (menu "Hộp thư Meta").' : `${r.error} Menu Xem › "Lưu chẩn đoán Business Suite" rồi gửi file "an" cho người hỗ trợ.`, ' ',
+      h('button', { type: 'button', className: 'btn btn-ghost btn-sm', textContent: 'Mở trong cột Meta ↗', onclick: () => window.metaDesktop.openThread({ pageId: String(c.page.id), uid: c.uid }) })));
+    drawBs(c, r, { silent, older });
+  }
+  function drawBs(c, r, { silent = false, older = false } = {}) {
+    const thread = $('ibThread'), atBottom = thread.scrollHeight - thread.clientHeight - thread.scrollTop < 70;
+    const msgs = r.messages || [];
+    thread.replaceChildren(
+      h('div', { style: 'text-align:center;margin:4px 0' }, h('button', { type: 'button', className: 'btn btn-ghost btn-sm', textContent: 'Tải tin cũ hơn', onclick: () => openBs(c, { silent: true, older: true }) })),
+      ...msgs.map((m, i) => m.sep ? h('div', { className: 'hint', style: 'text-align:center;margin:8px 0', textContent: m.sep })
+        : h('div', { className: 'msgrow' + (m.mine ? ' me' : '') },
+          msgs[i + 1] && !msgs[i + 1].sep && msgs[i + 1].mine === m.mine ? h('span', { style: 'width:24px;flex:none' })
+            : m.mine ? App.avatar(c.page.name, App.pageAvatarUrl(c.page), 24) : messageAvatar(c),
+          h('div', { className: 'msg' + (m.mine ? ' me' : '') }, m.text || null,
+            m.pic ? h('img', { src: m.pic, alt: '', style: 'display:block;max-width:220px;border-radius:10px;margin-top:4px' }) : null))),
+      msgs.length ? null : empty('Chưa đọc được tin nào.'));
+    thread.scrollTop = older ? 0 : !silent || atBottom ? thread.scrollHeight : thread.scrollTop;
+  }
+  async function sendBs(c, text) {
+    if (S.image) return toast('Gửi ảnh qua Business Suite chưa hỗ trợ — gửi chữ trước, ảnh gửi trong cột Meta.', 7000);
+    S.sending = true; updateSendState();
+    try {
+      const r = await window.metaDesktop.sendThread({ pageId: String(c.page.id), uid: c.uid, text });
+      if (r.error) throw new Error(r.error === 'login' ? 'Chưa đăng nhập Business Suite trong app.' : r.error);
+      if (S.conv === c) { if ($('ibText').value.trim() === text) { $('ibText').value = ''; await saveDraft(); } drawBs(c, r); }
+      bsCache.delete(c.page.id);
+    } catch (e) {
+      if (S.conv === c) $('ibThread').append(h('div', { className: 'status err' }, e.message));
+      else toast(`${c.other.name}: ${e.message}`, 7000);
+    } finally { S.sending = false; updateSendState(); }
   }
   const listInterval = page => App.server?.livePages?.has?.(String(page.id)) ? 5 * 60e3 : App.selected().length > 5 ? 120e3 : 60e3;
   async function load(silent, { force = false } = {}) {
@@ -275,7 +313,7 @@
     S.errorPages = errorPages; S.errors = errors;
     // Hội thoại đang mở có tin mới → đọc lại luôn.
     const fresh = S.conv && S.convs.find(c => c.id === S.conv.id);
-    if (fresh && fresh.updated_time !== S.conv.updated_time) { fresh.unread_count = 0; openConv(fresh, { silent: true }); }
+    if (fresh && (fresh.bs ? fresh.snippet !== S.conv.snippet : fresh.updated_time !== S.conv.updated_time)) { fresh.unread_count = 0; fresh.bs ? openBs(fresh, { silent: true }) : openConv(fresh, { silent: true }); }
     queuePics(S.convs);
     if (S.pending) { $('ibSearch').value = S.pending; const hit = S.convs.find(c => norm(c.other.name) === norm(S.pending)); S.pending = ''; if (hit) openConv(hit); }
     drawList();
@@ -391,6 +429,10 @@
     return h('span', { className: 'avwrap' }, App.avatar(c.other.name, S.pics.get(pictureKey(c)), size, () => retryPicture(c, S.pics.get(pictureKey(c)))), pg);
   };
   function drawHead(c) {
+    if (c.bs) return $('ibTitle').replaceChildren(h('span', { className: 'thread-head' }, custAvatar(c, 32),
+      h('span', { style: 'min-width:0' }, h('div', { className: 'card-title', textContent: c.other.name }), h('div', { className: 'hint', textContent: `${c.page.name} · qua Business Suite` }),
+        h('a', { className: 'hint', href: 'https://www.facebook.com/profile.php?id=' + c.uid, target: '_blank', rel: 'noopener noreferrer', textContent: 'UID ' + c.uid })),
+      h('button', { type: 'button', className: 'btn btn-ghost btn-sm', textContent: 'Mở trong cột Meta ↗', onclick: () => window.metaDesktop.openThread({ pageId: String(c.page.id), uid: c.uid }) })));
     const identity=S.identities.get(pictureKey(c));
     $('ibTitle').replaceChildren(h('span', { className: 'thread-head' }, custAvatar(c, 32),
       h('span', { style: 'min-width:0' }, h('div', { className: 'card-title', textContent: c.other.name || 'Khách' }), h('div', { className: 'hint', textContent: c.page.name }),
@@ -420,7 +462,7 @@
       ...(list.length ? list.map(c => {
         const wait = c.fromCustomer ? (Date.now() - c.lastAt) / 60e3 : null;
         const labels = S.crm?.[c.key]?.labels || [];
-        return h('div', { className: 'item' + (c.unread_count ? ' unread' : '') + ((c.bs ? S.bsActive : S.conv?.id) === c.id ? ' active' : ''), onclick: () => c.bs ? openBs(c) : openConv(c) },
+        return h('div', { className: 'item' + (c.unread_count ? ' unread' : '') + (S.conv?.id === c.id ? ' active' : ''), onclick: () => c.bs ? openBs(c) : openConv(c) },
           custAvatar(c),
           h('div', { className: 'body' },
             h('div', { className: 'top' }, h('span', { className: 'name', textContent: c.other.name || 'Khách' }),
@@ -615,6 +657,7 @@
   async function send() {
     const c = S.conv, text = $('ibText').value.trim();
     if (S.sending || !S.draftReady || !c?.other.id || (!text && !S.image)) return;
+    if (c.bs) return sendBs(c, text);
     const image = S.image, tpl = S.tpl;
     S.sending = true; updateSendState();
     try {

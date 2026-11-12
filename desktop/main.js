@@ -225,6 +225,8 @@ app.whenReady().then(async () => {
   worker.webContents.setAudioMuted(true);
   worker.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   ipcMain.handle('meta-lookup', (e, args) => fromPage(e) ? auto.lookupProfile(args || {}) : { error: 'denied' });
+  ipcMain.handle('meta-thread-read', (e, args) => fromPage(e) ? auto.readThread(args || {}) : { error: 'denied' });
+  ipcMain.handle('meta-thread-send', (e, args) => fromPage(e) ? auto.sendThread(args || {}) : { error: 'denied' });
   ipcMain.handle('meta-threads', (e, args) => fromPage(e) ? auto.listThreads(args || {}) : { error: 'denied' });
   // Mở đúng hội thoại trong cột Meta: tải hộp thư của Page rồi bấm vào dòng của khách (UID).
   ipcMain.handle('meta-open-thread', async (e, { pageId, uid } = {}) => {

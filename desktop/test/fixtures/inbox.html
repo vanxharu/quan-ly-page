@@ -1,8 +1,20 @@
-<!doctype html><meta charset="utf-8"><body><div id="list" style="height:100px;overflow-y:auto">
+<!doctype html><meta charset="utf-8"><body style="margin:0;display:flex"><div id="list" style="height:100px;width:300px;overflow-y:auto">
 <div data-maiba-contact-id="100000000000001" data-maiba-contact-type="fb_user" style="height:60px"><img src="https://scontent.xx.fbcdn.net/v/sample.jpg"><img alt="Messenger" src="https://static.xx.fbcdn.net/rsrc.php/x.svg"><span data-surface="/bizweb:inbox/x/thread_row0/lib:thread_title"><div>Khách Mẫu</div></span><div><span style="font-weight:700">Cho mình hỏi giá ạ</span><span>·</span><span>5 phút</span></div></div>
 <div data-maiba-contact-id="100099" data-maiba-contact-type="fb_user" style="height:60px"><img src="https://scontent.xx.fbcdn.net/v/other.jpg"><span data-surface="/x/thread_row1/lib:thread_title"><div>Người Khác</div></span><div><span>Cảm ơn shop</span><span>Th 3</span></div></div>
 </div>
+<div data-surface="/x/lib:inbox:detail_column" style="width:600px">
+  <div data-surface="/x/lib:inbox:detail_view_header"><div dir="auto">Tên khách</div></div>
+  <div id="msgs" style="height:400px;overflow-y:auto"></div>
+  <div contenteditable="true" id="box" style="height:30px;border:1px solid"></div>
+</div>
 <script>
+const bubble = (t, mine) => `<div style="display:flex;justify-content:${mine ? 'flex-end' : 'flex-start'};height:60px"><div dir="auto" style="width:150px">${t}</div></div>`;
+document.addEventListener('click', e => { if (!e.target.closest('[data-maiba-contact-id]')) return;
+  document.getElementById('msgs').innerHTML = '<div style="text-align:center"><div dir="auto" style="display:inline-block;width:100px">Hôm nay</div></div>' + bubble('Shop ơi còn hàng không', false) + bubble('Dạ còn ạ', true)
+    + '<div style="display:flex;height:120px"><img src="https://scontent.xx.fbcdn.net/v/anh-khach.jpg" style="width:100px;height:100px"></div>' + bubble('Giá sao ạ', false); });
+document.getElementById('box').addEventListener('keydown', e => { if (e.key !== 'Enter' || e.shiftKey) return; e.preventDefault();
+  const b = e.target; document.getElementById('msgs').insertAdjacentHTML('beforeend', bubble(b.innerText.trim(), true)); b.innerHTML = ''; });
+
 document.addEventListener('click', e => { const r = e.target.closest('[data-maiba-contact-id]'); if (r) document.title = 'open:' + r.getAttribute('data-maiba-contact-id'); });
 // Giả lập tải thêm khi cuộn: dòng Nguyễn Thảo chỉ xuất hiện sau khi cuộn.
 document.getElementById('list').addEventListener('scroll', () => { if (document.getElementById('thao')) return;

@@ -89,6 +89,35 @@ function readThreads(scroll) {
   return rows;
 }
 
+// Chạy trong trang Business Suite: tin của hội thoại đang mở. Không dựa vào tên class (Meta đổi liên tục) mà dựa vào bố cục:
+// vùng cuộn lớn nhất trong cột hội thoại; bong bóng lệch phải = Page gửi, lệch trái = khách, nằm giữa = mốc giờ.
+// scrollUp=true thì cuộn lên đầu để Business Suite tải tin cũ hơn.
+function readMessages(scrollUp) {
+  const col = document.querySelector('[data-surface$="lib:inbox:detail_column"]');
+  if (!col) return null;
+  const scroller = [...col.querySelectorAll('div')].filter(d => d.clientHeight > 80 && /auto|scroll/.test(getComputedStyle(d).overflowY))
+    .sort((a, b) => b.clientHeight - a.clientHeight)[0];
+  if (!scroller) return null;
+  if (scrollUp) { scroller.scrollTop = 0; return { scrolled: true }; }
+  const box = scroller.getBoundingClientRect(), mid = box.left + box.width / 2;
+  const items = [];
+  for (const el of scroller.querySelectorAll('[dir="auto"], img')) {
+    if (el.closest('[contenteditable="true"],[role="textbox"],[role="button"],button')) continue;
+    const r = el.getBoundingClientRect(); if (r.width < 2 || r.height < 2) continue;
+    const center = r.left + r.width / 2, mine = center > mid, centered = Math.abs(center - mid) < box.width * 0.08 && r.width < box.width * 0.6;
+    if (el.tagName === 'IMG') {
+      const src = el.currentSrc || el.src;
+      if (Math.max(r.width, r.height) >= 60 && /scontent|fbcdn\.net\/v\//.test(src)) items.push({ y: r.top, mine, pic: src });
+      continue;
+    }
+    if (el.querySelector('[dir="auto"]')) continue; // chỉ lấy lớp chữ trong cùng
+    const text = (el.innerText || '').trim(); if (!text) continue;
+    items.push(centered ? { y: r.top, sep: text } : { y: r.top, mine, text });
+  }
+  items.sort((a, b) => a.y - b.y);
+  return { messages: items.map(({ y, ...m }) => m), atTop: scroller.scrollTop === 0 };
+}
+
 // Chạy trong trang: tìm phần tử hiện trên màn hình theo selector / role / chữ / nhãn (aria-labelledby), cuộn vào giữa, trả toạ độ tâm.
 function findTarget({ selector, role, text, label, enabled }) {
   const re = s => s ? new RegExp(s, 'i') : null, tRe = re(text), lRe = re(label);
@@ -112,6 +141,7 @@ function createMetaAuto({ worker, composer, metaView, showMeta = () => () => {},
 
   // Danh sách hội thoại Business Suite: mỗi dòng có data-maiba-contact-id (UID Facebook thật của khách), tên và ảnh.
   // Đọc cả danh sách của một Page một lần (lưu 10 phút), rồi so tên với khách trong app.
+  let openedThread = ''; // hội thoại đang mở trong khung ẩn (pageId:uid); tải lại trang thì xoá
   const pageRows = new Map(); // pageId -> { at, rows: Map(nameKey -> [{uid,name,pic}]) }
   const key = s => String(s || '').normalize('NFC').replace(/\s+/g, ' ').trim().toLowerCase();
   const loadRows = async (pageId, wantName) => {
@@ -119,6 +149,7 @@ function createMetaAuto({ worker, composer, metaView, showMeta = () => () => {},
     if (cached && Date.now() - cached.at < 10 * 60e3 && (!wantName || cached.rows.has(key(wantName)) || cached.full)) return cached;
     const wc = worker.webContents;
     if (!cached || !wc.getURL().includes(`asset_id=${pageId}`)) {
+      openedThread = '';
       await wc.loadURL(`https://business.facebook.com/latest/inbox/messenger?asset_id=${pageId}&mailbox_id=${pageId}`).catch(() => {});
       await sleep(2500);
     }
@@ -152,6 +183,7 @@ function createMetaAuto({ worker, composer, metaView, showMeta = () => () => {},
   const listThreads = ({ pageId, max = 40 }) => queue(async () => {
     if (!/^\d+$/.test(String(pageId))) return { error: 'Thiếu Page.' };
     const wc = worker.webContents;
+    openedThread = '';
     await wc.loadURL(`https://business.facebook.com/latest/inbox/messenger?asset_id=${pageId}&mailbox_id=${pageId}`).catch(() => {});
     const seen = new Map();
     for (let i = 0, got = 0; i < 12; i++) {
@@ -168,6 +200,70 @@ function createMetaAuto({ worker, composer, metaView, showMeta = () => () => {},
     for (const r of rows) entry.rows.set(key(r.name), [...(entry.rows.get(key(r.name)) || []), r]);
     if (rows.length) pageRows.set(String(pageId), entry);
     return { rows };
+  });
+
+  // Mở hội thoại của khách (UID) trong khung ẩn: tải hộp thư của Page rồi bấm vào dòng của khách.
+  const mouse = async (wc, spec) => {
+    const r = await wc.executeJavaScript(`(${findTarget})(${JSON.stringify(spec)})`).catch(() => null); if (!r) return false;
+    for (const type of ['mouseMoved', 'mousePressed', 'mouseReleased']) await wc.debugger.sendCommand('Input.dispatchMouseEvent', { type, x: r.x, y: r.y, button: 'left', clickCount: 1 });
+    return true;
+  };
+  const openThreadHidden = async (pageId, uid) => {
+    const wc = worker.webContents, id = `${pageId}:${uid}`;
+    if (openedThread === id && wc.getURL().includes(`asset_id=${pageId}`)) return true;
+    openedThread = '';
+    await wc.loadURL(`https://business.facebook.com/latest/inbox/messenger?asset_id=${pageId}&mailbox_id=${pageId}`).catch(() => {});
+    for (let i = 0; i < 20; i++) {
+      await sleep(1000);
+      if (isLogin(wc.getURL())) return 'login';
+      if (await mouse(wc, { selector: `[data-maiba-contact-id="${uid}"]` })) break;
+      if (i === 19) return false;
+    }
+    for (let i = 0; i < 15; i++) {
+      await sleep(800);
+      const r = await wc.executeJavaScript(`(${readMessages})(false)`).catch(() => null);
+      if (r?.messages?.length) { openedThread = id; return true; }
+    }
+    return false;
+  };
+  const threadArgs = ({ pageId, uid }) => /^\d+$/.test(String(pageId)) && /^\d+$/.test(String(uid));
+  const readThread = args => queue(async () => {
+    if (!threadArgs(args)) return { error: 'Thiếu Page hoặc khách.' };
+    const ok = await openThreadHidden(String(args.pageId), String(args.uid));
+    if (ok === 'login') return { error: 'login' };
+    if (!ok) return { error: 'Không mở được hội thoại trong Business Suite.' };
+    const wc = worker.webContents;
+    if (args.older) { await wc.executeJavaScript(`(${readMessages})(true)`).catch(() => {}); await sleep(2500); }
+    return await wc.executeJavaScript(`(${readMessages})(false)`).catch(() => null) || { error: 'Không đọc được tin.' };
+  });
+  // Gửi tin như người dùng gõ trong Business Suite (không qua API → không bị giới hạn của app chưa duyệt).
+  const sendThread = args => queue(async () => {
+    const text = String(args.text || '').trim();
+    if (!threadArgs(args) || !text) return { error: 'Thiếu nội dung.' };
+    const ok = await openThreadHidden(String(args.pageId), String(args.uid));
+    if (ok !== true) return { error: ok === 'login' ? 'login' : 'Không mở được hội thoại trong Business Suite.' };
+    const wc = worker.webContents, dbg = wc.debugger;
+    if (!await mouse(wc, { selector: '[data-surface$="lib:inbox:detail_column"] [contenteditable="true"]' })) return { error: 'Không thấy ô nhập tin của Business Suite.' };
+    await sleep(300);
+    const lines = text.split('\n');
+    for (const [i, line] of lines.entries()) {
+      if (i) { // xuống dòng trong cùng một tin
+        await dbg.sendCommand('Input.dispatchKeyEvent', { type: 'rawKeyDown', key: 'Enter', windowsVirtualKeyCode: 13, modifiers: 8 });
+        await dbg.sendCommand('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Enter', windowsVirtualKeyCode: 13, modifiers: 8 });
+      }
+      if (line) await dbg.sendCommand('Input.insertText', { text: line });
+    }
+    await sleep(300);
+    await dbg.sendCommand('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Enter', windowsVirtualKeyCode: 13, text: '\r', unmodifiedText: '\r' });
+    await dbg.sendCommand('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Enter', windowsVirtualKeyCode: 13 });
+    const tail = lines.filter(Boolean).pop();
+    for (let i = 0; i < 10; i++) {
+      await sleep(800);
+      const r = await wc.executeJavaScript(`(${readMessages})(false)`).catch(() => null);
+      const last = r?.messages?.filter(m => m.mine && m.text).pop();
+      if (last && last.text.includes(tail)) return { done: true, ...r };
+    }
+    return { error: 'Đã bấm gửi nhưng chưa thấy tin trong Business Suite — kiểm tra lại trong cột Meta trước khi gửi lại.' };
   });
 
   // Điền sẵn trình soạn bài Business Suite. Trả về khi người dùng đã đăng/hẹn (trang rời khỏi trình soạn) hoặc sau 15 phút.
@@ -345,6 +441,6 @@ function createMetaAuto({ worker, composer, metaView, showMeta = () => () => {},
     return { done: leftComposer(wc), filled: done };
   });
 
-  return { lookupProfile, listThreads, composePost };
+  return { lookupProfile, listThreads, readThread, sendThread, composePost };
 }
 module.exports = { readThreads, createMetaAuto, extractProfile, findTarget };
