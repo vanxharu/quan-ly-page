@@ -169,7 +169,7 @@ app.whenReady().then(async () => {
     if (metaView.webContents.getURL() !== url) metaView.webContents.loadURL(url);
     show('meta', true);
   };
-  const auto = createMetaAuto({ worker, metaView, showMeta: () => show('meta', true) });
+  const auto = createMetaAuto({ worker, metaView, showMeta: () => show('meta', true), metaShown: () => side === 'meta' });
   worker.webContents.setAudioMuted(true);
   worker.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   ipcMain.handle('meta-lookup', (e, args) => fromPage(e) ? auto.lookupProfile(args || {}) : { error: 'denied' });

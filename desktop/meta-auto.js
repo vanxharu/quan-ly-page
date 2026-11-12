@@ -65,7 +65,7 @@ function readRows(scroll) {
   return { rows, end };
 }
 
-function createMetaAuto({ worker, metaView, showMeta }) {
+function createMetaAuto({ worker, metaView, showMeta, metaShown = () => true }) {
   // Hai hàng chờ riêng: đọc avatar (khung ẩn) không phải chờ trình soạn bài (có thể mở lâu).
   const makeQueue = () => { let chain = Promise.resolve(); return fn => (chain = chain.then(fn, fn)); };
   const queue = makeQueue(), composeQueue = makeQueue();
@@ -146,6 +146,7 @@ function createMetaAuto({ worker, metaView, showMeta }) {
     for (let i = 0; i < 900; i++) {
       await sleep(1000);
       if (wc.isDestroyed() || !/\/composer/.test(wc.getURL())) break;
+      if (!metaShown()) { if (file) fs.rm(file, () => {}); return { error: 'Đã đóng trình soạn Business Suite, bài chưa được đăng.' }; } // bấm ✕ trên cột = huỷ
     }
     if (file) fs.rm(file, () => {});
     return { done: !/\/composer/.test(wc.isDestroyed() ? '' : wc.getURL()) };
