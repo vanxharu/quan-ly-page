@@ -33,6 +33,8 @@ setTimeout(async () => {
     app.emit('second-instance', {}, ['x', 'metaassistant://login?access_token=TOK123&state=' + oauth.searchParams.get('state')]);
     await new Promise(r => setTimeout(r, 2500));
     out.token = await win.webContents.executeJavaScript("localStorage.getItem('fbTok')");
+    await win.webContents.executeJavaScript("metaDesktop.loginFacebook({appId:'1062977306762250',configId:'1092800303751533'}); 1"); await new Promise(r => setTimeout(r, 400));
+    out.loginBtn = new URL(opened.at(-1)).searchParams.get('config_id');
     out.lookup = await win.webContents.executeJavaScript("metaDesktop.lookupProfile({pageId:'123456',psid:'9',name:'Nguyễn Thảo'})");
     const png = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
     const composing = win.webContents.executeJavaScript(`metaDesktop.composePost({pageId:'123456',text:'Xin chào khách',image:'${png}'})`);
@@ -60,6 +62,6 @@ setTimeout(async () => {
     await barWc.executeJavaScript("bar.cmd('close'); 1"); await new Promise(r => setTimeout(r, 300));
     out.hidden = app.views.meta.getBounds().width;
   } catch (e) { out.error = e.message; }
-  console.log('SMOKE', JSON.stringify(out)); process.exit(out.studio?.startsWith('ok') && out.ext?.length && out.panel && out.token === 'TOK123' && out.meta?.[0].includes('asset_id=1') && out.meta[1] > 0 && out.ver?.startsWith('APP ') && out.dev === 'dev' && out.lookup?.uid === '100012345678' && /thao-big/.test(out.lookup?.pic) && out.composer[0] === 'Xin chào khách' && /^file:/.test(out.composer[1]) && out.composeResult?.done && out.wider && out.hidden === 0 && out.msgPanel === 0 && out.widths[1] > 0 ? 0 : 1);
+  console.log('SMOKE', JSON.stringify(out)); process.exit(out.studio?.startsWith('ok') && out.ext?.length && out.panel && out.token === 'TOK123' && out.meta?.[0].includes('asset_id=1') && out.meta[1] > 0 && out.ver?.startsWith('APP ') && out.dev === 'dev' && out.lookup?.uid === '100012345678' && /thao-big/.test(out.lookup?.pic) && out.composer[0] === 'Xin chào khách' && /^file:/.test(out.composer[1]) && out.composeResult?.done && out.loginBtn === '1092800303751533' && out.wider && out.hidden === 0 && out.msgPanel === 0 && out.widths[1] > 0 ? 0 : 1);
 }, 6000);
 // lookup có nghỉ 1.5–3 s; composer chờ tối đa vài giây

@@ -471,6 +471,12 @@ $('saveApp').onclick = () => { local.set('appId', $('appId').value.trim()); load
 $('fbLogin').onclick = () => {
   if(loginInFlight||loginPrompt||App.graphTraffic.until()>Date.now()){syncLoginCooldown();return;}
   local.set('autoLogin', '1');
+  // App Windows: đăng nhập trong trình duyệt mặc định (đã có phiên Facebook), app tự nhận token khi xong.
+  if(window.metaDesktop?.loginFacebook){
+    window.metaDesktop.loginFacebook({appId:$('appId').value.trim()||App.DEFAULT_APP_ID,configId:App.CONFIG_ID});
+    $('loginStatus').textContent='Đã mở Facebook trong trình duyệt. Bấm Tiếp tục ở đó, xong app tự đăng nhập.';
+    return;
+  }
   loginPrompt=true;syncLoginCooldown();
   const finish=r=>{
     loginPrompt=false;
@@ -482,6 +488,8 @@ $('fbLogin').onclick = () => {
     syncLoginCooldown();
   };
   try{FB.login(finish,{config_id:App.CONFIG_ID});}catch(error){finish({error});}
+  // Cửa sổ đăng nhập bị chặn/đóng mà SDK không gọi lại: mở khoá nút sau 20 giây để bấm lại được.
+  setTimeout(()=>{if(loginPrompt){loginPrompt=false;syncLoginCooldown();if(!App.pages.length)$('loginStatus').textContent='Chưa đăng nhập xong. Bấm lại để thử.';}},20000);
 };
 $('useToken').onclick = () => start($('token').value.trim());
 // Chỉ thoát khỏi trang, không gọi FB.logout (sẽ đăng xuất luôn facebook.com).

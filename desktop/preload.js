@@ -5,6 +5,7 @@ contextBridge.exposeInMainWorld('metaDesktop', {
   tabChanged: group => ipcRenderer.send('tab-changed', String(group)),
   lookupProfile: args => ipcRenderer.invoke('meta-lookup', args),
   composePost: args => ipcRenderer.invoke('meta-compose', args),
+  loginFacebook: args => ipcRenderer.send('fb-login', args),
   version: () => ipcRenderer.invoke('app-version'),
   checkUpdate: () => ipcRenderer.invoke('update-check'),
   installUpdate: () => ipcRenderer.invoke('update-install'),

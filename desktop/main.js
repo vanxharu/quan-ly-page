@@ -151,6 +151,10 @@ app.whenReady().then(async () => {
   worker.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   ipcMain.handle('meta-lookup', (e, args) => fromPage(e) ? auto.lookupProfile(args || {}) : { error: 'denied' });
   ipcMain.handle('meta-compose', (e, args) => fromPage(e) ? auto.composePost(args || {}) : { error: 'denied' });
+  ipcMain.on('fb-login', (e, a) => {
+    if (!fromPage(e) || !/^\d+$/.test(String(a?.appId))) return;
+    loginInBrowser(`https://www.facebook.com/dialog/oauth?client_id=${a.appId}${/^\d+$/.test(String(a.configId)) ? `&config_id=${a.configId}` : ''}`);
+  });
   ipcMain.on('tab-changed', (e, g) => { if (e.sender === pageView.webContents) { group = String(g); layout(); } });
   ipcMain.on('open-meta-inbox', (e, url) => { if (e.sender === pageView.webContents) openMetaInbox(url); });
   // Cập nhật: kiểm tra GitHub Releases, tải về, rồi khởi động lại để cài khi người dùng bấm.
