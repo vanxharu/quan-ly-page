@@ -257,7 +257,7 @@ function createMetaAuto({ worker, composer, metaView, showMeta = () => () => {},
       notify('Đăng ngầm chưa xong (Business Suite thiếu bước). Mở cột Meta để bạn hoàn tất…');
       progress({ id: 'reset', state: 'reset' }); // chạy lại các bước trong cột Meta, bảng tiến độ làm mới
       progress({ id: 'publish', state: 'manual', note: 'Mở cột Meta: hoàn tất bước đỏ rồi bấm Đăng / Lên lịch' });
-      wc.loadURL('about:blank').catch(() => {});
+      // Giữ nguyên trang soạn ngầm để "Lưu chẩn đoán" chụp được (xem vì sao thiếu bước).
     }
     const wc = metaView.webContents, restore = showMeta();
     const r = await fill(wc, args);

@@ -252,7 +252,7 @@ app.whenReady().then(async () => {
       { label: 'Lưu chẩn đoán Business Suite', click: async () => {
         const dir = app.getPath('desktop'), stamp = new Date().toISOString().replace(/[:.]/g, '-');
         require('fs').writeFileSync(path.join(dir, `meta-assistant-chan-doan-loi-${stamp}.txt`), consoleLog.join('\n') || '(không có lỗi)');
-        for (const [name, v] of [['an', worker], ['cot-phai', metaView]]) {
+        for (const [name, v] of [['an', worker], ['cot-phai', metaView], ['soan-ngam', composer]]) {
           const wc = v.webContents; if (!wc.getURL()) continue;
           const html = await wc.executeJavaScript('location.href + "\\n" + document.documentElement.outerHTML').catch(e => String(e));
           require('fs').writeFileSync(path.join(dir, `meta-assistant-chan-doan-${name}-${stamp}.html`), html);
