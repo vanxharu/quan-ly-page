@@ -2,7 +2,6 @@
 //  - lookupProfile: mở hội thoại của khách trong một khung ẩn, đọc ảnh đại diện + UID (link trang cá nhân);
 //  - composePost: mở trình soạn bài, điền sẵn nội dung + ảnh (qua debugger), người dùng bật nút Gửi tin nhắn / hẹn giờ rồi bấm Đăng.
 // Mỗi lần chỉ làm một việc, có nghỉ giữa các lượt, để giống thao tác người thật.
-const fs = require('fs'), os = require('os'), path = require('path');
 const { clipboard } = require('electron');
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const isLogin = url => /\/(login|checkpoint)|loginpage|two_step_verification/i.test(url);
@@ -143,7 +142,6 @@ function createMetaAuto({ worker, metaView, showMeta, metaShown = () => true, no
     }
     if (!ready) return { error: 'Không mở được trình soạn bài của Business Suite.' };
     const dbg = wc.debugger, done = { image: !image, text: !text, button: false, schedule: !when };
-    let file = '';
     const click = async spec => {
       const r = await find(spec); if (!r) return false;
       for (const type of ['mouseMoved', 'mousePressed', 'mouseReleased']) await dbg.sendCommand('Input.dispatchMouseEvent', { type, x: r.x, y: r.y, button: 'left', clickCount: 1 });
@@ -152,12 +150,9 @@ function createMetaAuto({ worker, metaView, showMeta, metaShown = () => true, no
     const waitFor = async (spec, ms = 5000) => { for (let t = 0; t < ms; t += 250) { if (await find(spec)) return true; await sleep(250); } return false; };
     try {
       if (!dbg.isAttached()) dbg.attach('1.3');
-      // 1) Ảnh: bắt hộp chọn file của trình duyệt rồi đưa file vào.
-      const m = image && String(image).match(/^data:image\/(\w+);base64,(.+)$/);
-      if (m) {
-        file = path.join(os.tmpdir(), `meta-assistant-${Date.now()}.${m[1] === 'jpeg' ? 'jpg' : m[1]}`);
-        fs.writeFileSync(file, Buffer.from(m[2], 'base64'));
-        await dbg.sendCommand('Page.enable');
+      // 1) Ảnh: bắt hộp chọn file của trình duyệt rồi đưa ảnh thẳng từ bộ nhớ vào ô chọn file (không ghi file ra máy).
+      const m = image && String(image).match(/^data:(image\/(\w+));base64,(.+)$/);
+      if (m) {        await dbg.sendCommand('Page.enable');
         await dbg.sendCommand('Page.setInterceptFileChooserDialog', { enabled: true });
         const chooser = new Promise(resolve => {
           const on = (_e, method, params) => { if (method === 'Page.fileChooserOpened') { dbg.removeListener('message', on); resolve(params); } };
@@ -167,7 +162,20 @@ function createMetaAuto({ worker, metaView, showMeta, metaShown = () => true, no
         await sleep(800);
         await click({ role: 'menuitem', text: /tải.*(lên|máy)|upload|máy tính|computer/i.source }); // nếu hiện menu nguồn ảnh
         const params = await chooser;
-        if (params?.backendNodeId) { await dbg.sendCommand('DOM.setFileInputFiles', { files: [file], backendNodeId: params.backendNodeId }); done.image = true; }
+        if (params?.backendNodeId) {
+          const { object } = await dbg.sendCommand('DOM.resolveNode', { backendNodeId: params.backendNodeId });
+          const r = await dbg.sendCommand('Runtime.callFunctionOn', { objectId: object.objectId, returnByValue: true,
+            arguments: [{ value: m[3] }, { value: m[1] }, { value: `bai-viet.${m[2] === 'jpeg' ? 'jpg' : m[2]}` }],
+            functionDeclaration: `function (b64, type, name) {
+              const bin = atob(b64), bytes = new Uint8Array(bin.length);
+              for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+              const dt = new DataTransfer(); dt.items.add(new File([bytes], name, { type }));
+              this.files = dt.files;
+              this.dispatchEvent(new Event('input', { bubbles: true })); this.dispatchEvent(new Event('change', { bubbles: true }));
+              return this.files.length;
+            }` });
+          done.image = r?.result?.value === 1;
+        }
         await dbg.sendCommand('Page.setInterceptFileChooserDialog', { enabled: false }).catch(() => {});
       }
       // 2) Nội dung: chờ ô văn bản thật của bài (không dùng ô mô tả thước phim ẩn).
@@ -192,9 +200,8 @@ function createMetaAuto({ worker, metaView, showMeta, metaShown = () => true, no
     for (let i = 0; i < 900; i++) {
       await sleep(1000);
       if (wc.isDestroyed() || !/\/composer/.test(wc.getURL())) break;
-      if (!metaShown()) { if (file) fs.rm(file, () => {}); return { error: 'Đã đóng trình soạn Business Suite, bài chưa được đăng.' }; } // bấm ✕ trên cột = huỷ
+      if (!metaShown()) return { error: 'Đã đóng trình soạn Business Suite, bài chưa được đăng.' }; // bấm ✕ trên cột = huỷ
     }
-    if (file) fs.rm(file, () => {});
     return { done: !/\/composer/.test(wc.isDestroyed() ? '' : wc.getURL()), filled: done };
   });
 
