@@ -3,6 +3,7 @@
  * Lưu: fbScheduleQueueV1 (hàng chờ), fbScheduleSettingsV1 (khung giờ, bài/ngày, ngày trong tuần, ngày đăng, cấu hình riêng từng Page). */
 (() => {
   const QUEUE = 'fbScheduleQueueV1', SETTINGS = 'fbScheduleSettingsV1';
+  const running = new Set(); // bài đang lên lịch trong phiên này
   const STATUS = { draft: ['Chờ duyệt', 'pending'], approved: ['Đã duyệt', 'ok'], scheduling: ['Đang lên lịch…', 'pending'], scheduled: ['Đã hẹn trên FB', 'ok'],
     local: ['Chờ đăng (tiện ích)', 'pending'], posted: ['Đã đăng', 'ok'], missed: ['Lỡ giờ', 'err'], error: ['Lỗi', 'err'] };
   const defaults = () => ({ windows: Pure.DEFAULT_WINDOWS, perDay: 1, weekdays: [0, 1, 2, 3, 4, 5, 6], days: [], pages: {} });
@@ -46,6 +47,11 @@
       App.posting?.refresh();
       const s = await getSettings();
       let queue = await DB.get(QUEUE, []);
+      // "Đang lên lịch…" còn lại từ lần trước (app đóng / tải lại giữa chừng): không còn chạy nữa → báo lỗi để bạn kiểm tra rồi lên lịch lại.
+      if (queue.some(i => i.status === 'scheduling' && !running.has(i.id))) {
+        queue = queue.map(i => i.status === 'scheduling' && !running.has(i.id) ? { ...i, status: 'error', error: 'Lần lên lịch trước bị ngắt (app đóng hoặc tải lại). Xem Business Suite › Lịch xem bài đã hẹn chưa; chưa có thì bấm Lên lịch lại.' } : i);
+        await DB.set(QUEUE, queue);
+      }
       // Bài đã hẹn trên FB mà qua giờ → coi như đã đăng.
       if (queue.some(i => i.status === 'scheduled' && i.at < Date.now())) {
         queue = queue.map(i => i.status === 'scheduled' && i.at < Date.now() ? { ...i, status: 'posted' } : i); await DB.set(QUEUE, queue);
@@ -183,11 +189,13 @@
     if (!page) return patch(i.id, { status: 'error', error: 'Không tìm thấy Page. Chọn lại Page cho bài.' });
     if (!i.at || i.at < Date.now() + 600e3) return patch(i.id, { status: 'error', error: 'Giờ đăng phải sau hiện tại ít nhất 10 phút.' });
     await patch(i.id, { status: 'scheduling' });
+    running.add(i.id);
     try {
       const res = await App.publish(page, i.text, i.imageData, Math.floor(i.at / 1000), { messageButton: i.messageButton ?? !!App.planner?.messageButtonDefault });
       await patch(i.id, { status: 'scheduled', fbPostId: res.post_id || res.id, pageKey: page.id, pageName: page.name, error: '' });
       return true;
     } catch (e) { await patch(i.id, { status: 'error', error: e.message }); return false; }
+    finally { running.delete(i.id); }
   }
   async function scheduleAll() {
     $('plLog').replaceChildren();
