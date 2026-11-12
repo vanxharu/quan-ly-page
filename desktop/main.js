@@ -180,6 +180,10 @@ app.whenReady().then(async () => {
     if (metaView.webContents.getURL() !== url) metaView.webContents.loadURL(url);
     show('meta', true);
   };
+  // Ghi lỗi JavaScript của Business Suite (cột Meta + cửa sổ soạn ngầm) để chẩn đoán vì sao ô văn bản không hiện.
+  const consoleLog = [];
+  for (const [name, wc] of [['cot-phai', metaView.webContents], ['soan-ngam', composer.webContents]])
+    wc.on('console-message', (e) => { const lvl = e.level ?? ''; if (!['error', 'warning', 2, 3].includes(lvl)) return; consoleLog.push(`[${new Date().toISOString()}] ${name} ${lvl}: ${String(e.message).slice(0, 500)} (${e.sourceId || ''}:${e.lineNumber || ''})`); if (consoleLog.length > 300) consoleLog.shift(); });
   const auto = createMetaAuto({ worker, composer, metaView, showMeta: showMetaTemp, metaShown: () => side === 'meta',
     progress: data => pageView.webContents.executeJavaScript(`window.App?.composeProgress?.(${JSON.stringify(data)})`).catch(() => {}),
     notify: msg => pageView.webContents.executeJavaScript(`typeof toast === 'function' && toast(${JSON.stringify(msg)}, 30000)`).catch(() => {}) });
@@ -223,6 +227,7 @@ app.whenReady().then(async () => {
       // Lưu trang Business Suite mà app vừa đọc (khung ẩn) + cột Hộp thư Meta ra Desktop, để sửa cách đọc avatar/UID theo giao diện thật.
       { label: 'Lưu chẩn đoán Business Suite', click: async () => {
         const dir = app.getPath('desktop'), stamp = new Date().toISOString().replace(/[:.]/g, '-');
+        require('fs').writeFileSync(path.join(dir, `meta-assistant-chan-doan-loi-${stamp}.txt`), consoleLog.join('\n') || '(không có lỗi)');
         for (const [name, v] of [['an', worker], ['cot-phai', metaView]]) {
           const wc = v.webContents; if (!wc.getURL()) continue;
           const html = await wc.executeJavaScript('location.href + "\\n" + document.documentElement.outerHTML').catch(e => String(e));

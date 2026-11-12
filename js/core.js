@@ -358,6 +358,7 @@ App.composeSteps = (page, { image, text, when }) => {
         h('span', { className: 'cp-icon', textContent: '○', style: 'width:16px;text-align:center;flex:none' }), h('span', { style: 'flex:1' }, label, h('span', { className: 'cp-note hint', style: 'display:block' }))))));
 };
 App.composeProgress = ({ id, state, note = '' }) => {
+  if (state === 'reset') { $('composeProgress')?.querySelectorAll('[data-step]').forEach(li => { li.querySelector('.cp-icon').textContent = '○'; li.querySelector('.cp-icon').style.color = ''; li.querySelector('.cp-note').textContent = ''; }); if ($('cpBar')) $('cpBar').style.width = '0'; return; }
   const box = $('composeProgress'), li = box?.querySelector(`[data-step="${id}"]`); if (!li) return;
   const icon = { run: '⏳', ok: '✓', fail: '✗', manual: '✋' }[state] || '○', color = { ok: 'var(--green,#059669)', fail: 'var(--red,#DC2626)', manual: 'var(--amber,#D97706)' }[state] || '';
   li.querySelector('.cp-icon').textContent = icon; li.querySelector('.cp-icon').style.color = color;

@@ -164,9 +164,11 @@ function createMetaAuto({ worker, composer, metaView, showMeta = () => () => {},
         await sleep(800);
         await click({ role: 'menuitem', text: /tải.*(lên|máy)|upload|máy tính|computer/i.source }); // nếu hiện menu nguồn ảnh
         const params = await chooser;
-        if (params?.backendNodeId) {
-          const { object } = await dbg.sendCommand('DOM.resolveNode', { backendNodeId: params.backendNodeId });
-          const r = await dbg.sendCommand('Runtime.callFunctionOn', { objectId: object.objectId, returnByValue: true,
+        // Không bắt được hộp chọn file (cửa sổ ẩn không có "thao tác người dùng"): dùng ô chọn ảnh có sẵn trong trang.
+        let objectId = params?.backendNodeId ? (await dbg.sendCommand('DOM.resolveNode', { backendNodeId: params.backendNodeId })).object.objectId : '';
+        if (!objectId) objectId = (await dbg.sendCommand('Runtime.evaluate', { expression: `[...document.querySelectorAll('input[type="file"]')].find(i => /image|\\*/.test(i.accept || '*')) || null` })).result?.objectId || '';
+        if (objectId) {
+          const r = await dbg.sendCommand('Runtime.callFunctionOn', { objectId, returnByValue: true,
             arguments: [{ value: m[3] }, { value: m[1] }, { value: `bai-viet.${m[2] === 'jpeg' ? 'jpg' : m[2]}` }],
             functionDeclaration: `function (b64, type, name) {
               const bin = atob(b64), bytes = new Uint8Array(bin.length);
@@ -253,6 +255,7 @@ function createMetaAuto({ worker, composer, metaView, showMeta = () => () => {},
         } catch {} finally { try { dbg.detach(); } catch {} }
       }
       notify('Đăng ngầm chưa xong (Business Suite thiếu bước). Mở cột Meta để bạn hoàn tất…');
+      progress({ id: 'reset', state: 'reset' }); // chạy lại các bước trong cột Meta, bảng tiến độ làm mới
       progress({ id: 'publish', state: 'manual', note: 'Mở cột Meta: hoàn tất bước đỏ rồi bấm Đăng / Lên lịch' });
       wc.loadURL('about:blank').catch(() => {});
     }
