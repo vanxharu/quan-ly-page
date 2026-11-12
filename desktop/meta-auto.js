@@ -134,6 +134,24 @@ function findTarget({ selector, role, text, label, enabled }) {
   return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) };
 }
 
+// Đưa ảnh (data URL) thẳng từ bộ nhớ vào ô chọn file của trang (không ghi file ra máy). Trả true nếu ô nhận đúng 1 file.
+async function putImage(dbg, objectId, image, base) {
+  const m = String(image || '').match(/^data:(image\/(\w+));base64,(.+)$/);
+  if (!m || !objectId) return false;
+  const r = await dbg.sendCommand('Runtime.callFunctionOn', { objectId, returnByValue: true,
+    arguments: [{ value: m[3] }, { value: m[1] }, { value: `${base}.${m[2] === 'jpeg' ? 'jpg' : m[2]}` }],
+    functionDeclaration: `function (b64, type, name) {
+      const bin = atob(b64), bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      const dt = new DataTransfer(); dt.items.add(new File([bytes], name, { type }));
+      this.files = dt.files;
+      const n = this.files.length; // đếm trước: trang thường xoá ô chọn file ngay sau khi nhận ảnh
+      this.dispatchEvent(new Event('input', { bubbles: true })); this.dispatchEvent(new Event('change', { bubbles: true }));
+      return n;
+    }` }).catch(() => null);
+  return r?.result?.value === 1;
+}
+
 function createMetaAuto({ worker, composer, metaView, showMeta = () => () => {}, metaShown = () => true, notify = () => {}, progress = () => {} }) {
   // Hai hàng chờ riêng: đọc avatar (khung ẩn) không phải chờ trình soạn bài (có thể mở lâu).
   const makeQueue = () => { let chain = Promise.resolve(); return fn => (chain = chain.then(fn, fn)); };
@@ -238,14 +256,23 @@ function createMetaAuto({ worker, composer, metaView, showMeta = () => () => {},
   });
   // Gửi tin như người dùng gõ trong Business Suite (không qua API → không bị giới hạn của app chưa duyệt).
   const sendThread = args => queue(async () => {
-    const text = String(args.text || '').trim();
-    if (!threadArgs(args) || !text) return { error: 'Thiếu nội dung.' };
+    const text = String(args.text || '').trim(), image = args.image || '';
+    if (!threadArgs(args) || (!text && !image)) return { error: 'Thiếu nội dung.' };
     const ok = await openThreadHidden(String(args.pageId), String(args.uid));
     if (ok !== true) return { error: ok === 'login' ? 'login' : 'Không mở được hội thoại trong Business Suite.' };
     const wc = worker.webContents, dbg = wc.debugger;
+    const read = () => wc.executeJavaScript(`(${readMessages})(false)`).catch(() => null);
+    const myPics = r => (r?.messages || []).filter(m => m.mine && m.pic).length;
+    const picsBefore = myPics(await read());
+    if (image) { // ô chọn ảnh của khung trả lời (Messenger luôn để sẵn một ô ẩn)
+      const objectId = (await dbg.sendCommand('Runtime.evaluate', { expression: `(() => { const col = document.querySelector('[data-surface$="lib:inbox:detail_column"]');
+        return [...(col || document).querySelectorAll('input[type="file"]')].find(i => /image|\\*/.test(i.accept || '*')) || null; })()` }).catch(() => null))?.result?.objectId;
+      if (!await putImage(dbg, objectId, image, 'anh')) return { error: 'Không đưa được ảnh vào Business Suite.' };
+      await sleep(1500);
+    }
     if (!await mouse(wc, { selector: '[data-surface$="lib:inbox:detail_column"] [contenteditable="true"]' })) return { error: 'Không thấy ô nhập tin của Business Suite.' };
     await sleep(300);
-    const lines = text.split('\n');
+    const lines = text ? text.split('\n') : [];
     for (const [i, line] of lines.entries()) {
       if (i) { // xuống dòng trong cùng một tin
         await dbg.sendCommand('Input.dispatchKeyEvent', { type: 'rawKeyDown', key: 'Enter', windowsVirtualKeyCode: 13, modifiers: 8 });
@@ -257,11 +284,11 @@ function createMetaAuto({ worker, composer, metaView, showMeta = () => () => {},
     await dbg.sendCommand('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Enter', windowsVirtualKeyCode: 13, text: '\r', unmodifiedText: '\r' });
     await dbg.sendCommand('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Enter', windowsVirtualKeyCode: 13 });
     const tail = lines.filter(Boolean).pop();
-    for (let i = 0; i < 10; i++) {
+    for (let i = 0; i < 20; i++) { // ảnh tải lên lâu hơn chữ
       await sleep(800);
-      const r = await wc.executeJavaScript(`(${readMessages})(false)`).catch(() => null);
+      const r = await read();
       const last = r?.messages?.filter(m => m.mine && m.text).pop();
-      if (last && last.text.includes(tail)) return { done: true, ...r };
+      if ((!tail || (last && last.text.includes(tail))) && (!image || myPics(r) > picsBefore)) return { done: true, ...r };
     }
     return { error: 'Đã bấm gửi nhưng chưa thấy tin trong Business Suite — kiểm tra lại trong cột Meta trước khi gửi lại.' };
   });
@@ -336,18 +363,7 @@ function createMetaAuto({ worker, composer, metaView, showMeta = () => () => {},
         let objectId = params?.backendNodeId ? (await dbg.sendCommand('DOM.resolveNode', { backendNodeId: params.backendNodeId })).object.objectId : '';
         if (!objectId) objectId = (await dbg.sendCommand('Runtime.evaluate', { expression: `[...document.querySelectorAll('input[type="file"]')].find(i => /image|\\*/.test(i.accept || '*')) || null` })).result?.objectId || '';
         if (objectId) {
-          const r = await dbg.sendCommand('Runtime.callFunctionOn', { objectId, returnByValue: true,
-            arguments: [{ value: m[3] }, { value: m[1] }, { value: `bai-viet.${m[2] === 'jpeg' ? 'jpg' : m[2]}` }],
-            functionDeclaration: `function (b64, type, name) {
-              const bin = atob(b64), bytes = new Uint8Array(bin.length);
-              for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-              const dt = new DataTransfer(); dt.items.add(new File([bytes], name, { type }));
-              this.files = dt.files;
-              const n = this.files.length; // đếm trước: trang thường xoá ô chọn file ngay sau khi nhận ảnh
-              this.dispatchEvent(new Event('input', { bubbles: true })); this.dispatchEvent(new Event('change', { bubbles: true }));
-              return n;
-            }` });
-          done.image = r?.result?.value === 1;
+          done.image = await putImage(dbg, objectId, image, 'bai-viet');
           step('image', done.image ? 'ok' : 'fail');
         }
         await dbg.sendCommand('Page.setInterceptFileChooserDialog', { enabled: false }).catch(() => {});

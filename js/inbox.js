@@ -214,7 +214,9 @@
     const list = r.rows.map(row => {
       const at = Math.min(bsTime(row.time) ?? prev, prev - 1000); prev = at; // giữ đúng thứ tự Business Suite
       const c = { id: `bs:${p.id}:${row.uid}`, bs: true, uid: row.uid, page: p, other: { id: 'bs' + row.uid, name: row.name },
-        snippet: row.snippet, timeText: row.time, updated_time: new Date(at).toISOString(), unread_count: row.unread ? 1 : 0 };
+        snippet: row.snippet, timeText: row.time, updated_time: new Date(at).toISOString(), unread_count: row.unread ? 1 : 0,
+        // Nhãn CRM ghép theo Page + tên khách (giống hội thoại đọc qua API); tin cuối "Bạn: …" là Page đã trả lời.
+        key: App.crmKey(p.id, row.name), lastAt: at, fromCustomer: !/^(bạn|you)\s*:/i.test(row.snippet) };
       if (row.pic) S.pics.set(pictureKey(c), row.pic);
       return c;
     });
@@ -241,7 +243,7 @@
       c.unread_count = 0; drawList();
       const draft = await DB.get(draftKey(c), {}).catch(() => ({}));
       if (S.conv !== c) return;
-      $('ibText').value = draft.text || ''; S.draftReady = true; $('ibText').disabled = false; updateSendState();
+      $('ibText').value = draft.text || ''; S.image = draft.image || ''; S.draftReady = true; $('ibText').disabled = false; drawAttach();
     } else S.conv = c;
     const r = await window.metaDesktop.readThread({ pageId: String(c.page.id), uid: c.uid, older }).catch(e => ({ error: e.message }));
     if (S.conv !== c) return;
@@ -249,6 +251,8 @@
       r.error === 'login' ? 'Chưa đăng nhập Business Suite trong app (menu "Hộp thư Meta").' : `${r.error} Menu Xem › "Lưu chẩn đoán Business Suite" rồi gửi file "an" cho người hỗ trợ.`, ' ',
       h('button', { type: 'button', className: 'btn btn-ghost btn-sm', textContent: 'Mở trong cột Meta ↗', onclick: () => window.metaDesktop.openThread({ pageId: String(c.page.id), uid: c.uid }) })));
     drawBs(c, r, { silent, older });
+    S.messages = (r.messages || []).filter(m => !m.sep).map(m => ({ isCustomer: !m.mine, text: m.text || '' }));
+    if (!older) await tagAndCrm(c, { render: !silent });
   }
   function drawBs(c, r, { silent = false, older = false } = {}) {
     const thread = $('ibThread'), atBottom = thread.scrollHeight - thread.clientHeight - thread.scrollTop < 70;
@@ -264,13 +268,33 @@
       msgs.length ? null : empty('Chưa đọc được tin nào.'));
     thread.scrollTop = older ? 0 : !silent || atBottom ? thread.scrollHeight : thread.scrollTop;
   }
+  // Ảnh mẫu tin có thể là link: đổi sang data URL để đưa vào Business Suite từ bộ nhớ.
+  const asDataUrl = src => src.startsWith('data:') ? src : fetch(src).then(r => r.blob()).then(b => new Promise((ok, no) => { const f = new FileReader(); f.onload = () => ok(f.result); f.onerror = no; f.readAsDataURL(b); }));
+  // Tự gắn nhãn theo lời khách + khung CRM; dùng chung cho hội thoại API và Business Suite (Business Suite không có PSID).
+  async function tagAndCrm(c, { render }) {
+    const st = await settings();
+    if (S.conv !== c) return;
+    const psid = c.bs ? S.crm?.[c.key]?.psid || '' : c.other.id;
+    if (st.autoTag) {
+      const auto = InboxRules.detectAutoLabels(S.messages, st.rules);
+      if (auto.length) await App.crm.addLabels(c.key, auto, { pageId: c.page.id, pageName: c.page.name, name: c.other.name, psid });
+    }
+    S.crm = await App.crm.all();
+    if (S.conv !== c) return;
+    $('ibCrm').hidden = false;
+    if (render) await App.crm.renderPanel($('ibCrm'), { page: c.page, psid, name: c.other.name || '', messages: S.messages, isCurrent: () => draftKey(S.conv) === draftKey(c) });
+    drawList();
+  }
   async function sendBs(c, text) {
-    if (S.image) return toast('Gửi ảnh qua Business Suite chưa hỗ trợ — gửi chữ trước, ảnh gửi trong cột Meta.', 7000);
+    const image = S.image, tpl = S.tpl;
     S.sending = true; updateSendState();
     try {
-      const r = await window.metaDesktop.sendThread({ pageId: String(c.page.id), uid: c.uid, text });
+      const data = image ? await asDataUrl(image).catch(() => { throw new Error('Không đọc được ảnh đính kèm.'); }) : '';
+      const r = await window.metaDesktop.sendThread({ pageId: String(c.page.id), uid: c.uid, text, image: data });
       if (r.error) throw new Error(r.error === 'login' ? 'Chưa đăng nhập Business Suite trong app.' : r.error);
-      if (S.conv === c) { if ($('ibText').value.trim() === text) { $('ibText').value = ''; await saveDraft(); } drawBs(c, r); }
+      if (tpl) await App.recordTemplateUse(tpl, c.key);
+      c.fromCustomer = false;
+      if (S.conv === c) { if ($('ibText').value.trim() === text && S.image === image) { $('ibText').value = ''; S.image = ''; S.tpl = null; drawAttach(); await saveDraft(); } drawBs(c, r); }
       bsCache.delete(c.page.id);
     } catch (e) {
       if (S.conv === c) $('ibThread').append(h('div', { className: 'status err' }, e.message));
@@ -565,19 +589,8 @@
       thread.scrollTop = !silent || atBottom ? thread.scrollHeight : oldTop;
       c.unread_count = 0;
       S.messages = msgs.map(m => ({ isCustomer: m.from?.id !== c.page.id, text: m.message || '' }));
-      const st = await settings();
-      if (S.conv !== c) return;
-      if (st.autoTag) {
-        const auto = InboxRules.detectAutoLabels(S.messages, st.rules);
-        if (auto.length) await App.crm.addLabels(c.key, auto, { pageId: c.page.id, pageName: c.page.name, name: c.other.name, psid: c.other.id });
-      }
-      S.crm = await App.crm.all();
-      if (S.conv !== c) return;
-      $('ibCrm').hidden = false;
       // Tải tin mới không dựng lại biểu mẫu CRM đang nhập dở.
-      if (!silent || switching) await App.crm.renderPanel($('ibCrm'), { page: c.page, psid: c.other.id, name: c.other.name || '', messages: S.messages,
-        isCurrent: () => draftKey(S.conv) === draftKey(c) });
-      drawList();
+      await tagAndCrm(c, { render: !silent || switching });
     });
   }
 

@@ -5,7 +5,7 @@
 <div data-surface="/x/lib:inbox:detail_column" style="width:600px">
   <div data-surface="/x/lib:inbox:detail_view_header"><div dir="auto">Tên khách</div></div>
   <div id="msgs" style="height:400px;overflow-y:auto"></div>
-  <div contenteditable="true" id="box" style="height:30px;border:1px solid"></div>
+  <input type="file" accept="image/*" id="file" style="display:none"><div contenteditable="true" id="box" style="height:30px;border:1px solid"></div>
 </div>
 <script>
 const bubble = (t, mine) => `<div style="display:flex;justify-content:${mine ? 'flex-end' : 'flex-start'};height:60px"><div dir="auto" style="width:150px">${t}</div></div>`;
@@ -13,7 +13,11 @@ document.addEventListener('click', e => { if (!e.target.closest('[data-maiba-con
   document.getElementById('msgs').innerHTML = '<div style="text-align:center"><div dir="auto" style="display:inline-block;width:100px">Hôm nay</div></div>' + bubble('Shop ơi còn hàng không', false) + bubble('Dạ còn ạ', true)
     + '<div style="display:flex;height:120px"><img src="https://scontent.xx.fbcdn.net/v/anh-khach.jpg" style="width:100px;height:100px"></div>' + bubble('Giá sao ạ', false); });
 document.getElementById('box').addEventListener('keydown', e => { if (e.key !== 'Enter' || e.shiftKey) return; e.preventDefault();
-  const b = e.target; document.getElementById('msgs').insertAdjacentHTML('beforeend', bubble(b.innerText.trim(), true)); b.innerHTML = ''; });
+  const b = e.target, f = document.getElementById('file'), msgs = document.getElementById('msgs');
+  if (b.innerText.trim()) msgs.insertAdjacentHTML('beforeend', bubble(b.innerText.trim(), true)); b.innerHTML = '';
+  if (window.pendingPic) { msgs.insertAdjacentHTML('beforeend', '<div style="display:flex;justify-content:flex-end;height:120px"><img src="https://scontent.xx.fbcdn.net/v/gui-' + window.pendingPic + '.jpg" style="width:100px;height:100px"></div>'); window.pendingPic = ''; }
+  msgs.scrollTop = msgs.scrollHeight; });
+document.getElementById('file').addEventListener('change', e => { window.pendingPic = e.target.files[0]?.name || ''; e.target.value = ''; });
 
 document.addEventListener('click', e => { const r = e.target.closest('[data-maiba-contact-id]'); if (r) document.title = 'open:' + r.getAttribute('data-maiba-contact-id'); });
 // Giả lập tải thêm khi cuộn: dòng Nguyễn Thảo chỉ xuất hiện sau khi cuộn.
