@@ -207,7 +207,12 @@ function createMetaAuto({ worker, composer, metaView, showMeta = () => () => {},
         };
         const typeDigits = async digits => { for (const d of digits) await key(d, 48 + Number(d), d); };
         const dateInput = { selector: 'input[placeholder="dd/mm/yyyy"]' };
-        if (!(await find(dateInput))) await click({ selector: 'label[for]', text: /^Đặt ngày và giờ$|^Set date and time$/i.source });
+        // Công tắc "Đặt ngày và giờ": có tài khoản là <label for>, có tài khoản chỉ là ô switch + chữ rời → thử lần lượt.
+        const SW = /^Đặt ngày và giờ$|^Set date and time$/i.source;
+        for (const spec of [{ selector: 'label[for]', text: SW }, { selector: 'input[role="switch"][aria-label="Đặt ngày và giờ"], input[role="switch"][aria-label="Set date and time"]' }, { text: SW }]) {
+          if (await find(dateInput)) break;
+          if (await click(spec)) await waitFor(dateInput, 2500);
+        }
         if (await waitFor(dateInput, 5000)) {
           await click(dateInput); await sleep(300);
           await key('a', 65, '', 2); // Ctrl+A
