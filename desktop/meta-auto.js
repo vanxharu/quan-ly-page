@@ -132,7 +132,7 @@ function createMetaAuto({ worker, composer, metaView, showMeta = () => () => {},
   const fill = async (wc, { pageId, text, image, when }) => {
     const step = (id, state, note = '') => progress({ id, state, note });
     step('open', 'run');
-    await wc.loadURL(`https://business.facebook.com/latest/composer/?asset_id=${pageId}&context_ref=POSTS&ref=meta_assistant`).catch(() => {});
+    await wc.loadURL(`https://business.facebook.com/latest/composer/?asset_id=${pageId}`).catch(() => {});
     const find = spec => wc.executeJavaScript(`(${findTarget})(${JSON.stringify(spec)})`).catch(() => null);
     let ready = false;
     for (let i = 0; i < 30 && !ready; i++) {
@@ -151,7 +151,19 @@ function createMetaAuto({ worker, composer, metaView, showMeta = () => () => {},
     const waitFor = async (spec, ms = 5000) => { for (let t = 0; t < ms; t += 250) { if (await find(spec)) return true; await sleep(250); } return false; };
     try {
       if (!dbg.isAttached()) dbg.attach('1.3');
-      // 1) Ảnh: bắt hộp chọn file của trình duyệt rồi đưa ảnh thẳng từ bộ nhớ vào ô chọn file (không ghi file ra máy).
+      // 1) Nội dung TRƯỚC ảnh: ô "Văn bản" chỉ có khi trình soạn đang ở dạng bài viết; thêm ảnh trước có lúc làm ô này biến mất.
+      if (text) step('text', 'run');
+      if (text && await waitFor({ selector: '[data-pagelet="BusinessComposerTextEditor"] [contenteditable="true"], [contenteditable="true"][role="textbox"]' }, 15000)) {
+        await click({ selector: '[data-pagelet="BusinessComposerTextEditor"] [contenteditable="true"], [contenteditable="true"][role="textbox"]' });
+        await sleep(300);
+        await dbg.sendCommand('Input.insertText', { text: String(text) });
+        await sleep(500);
+        // Đọc lại: ô thật phải chứa đầu nội dung (tránh gõ nhầm vào ô ẩn).
+        const head = String(text).trim().slice(0, 20);
+        done.text = await wc.executeJavaScript(`[...document.querySelectorAll('[contenteditable="true"]')].some(e => e.innerText.includes(${JSON.stringify(head)}))`).catch(() => false);
+        step('text', done.text ? 'ok' : 'fail');
+      }
+      // 2) Ảnh: bắt hộp chọn file của trình duyệt rồi đưa ảnh thẳng từ bộ nhớ vào ô chọn file (không ghi file ra máy).
       if (image) step('image', 'run');
       const m = image && String(image).match(/^data:(image\/(\w+));base64,(.+)$/);
       if (m) {        await dbg.sendCommand('Page.enable');
@@ -183,14 +195,6 @@ function createMetaAuto({ worker, composer, metaView, showMeta = () => () => {},
           step('image', done.image ? 'ok' : 'fail');
         }
         await dbg.sendCommand('Page.setInterceptFileChooserDialog', { enabled: false }).catch(() => {});
-      }
-      // 2) Nội dung: chờ ô văn bản thật của bài (không dùng ô mô tả thước phim ẩn).
-      if (text) step('text', 'run');
-      if (text && await waitFor({ selector: '[data-pagelet="BusinessComposerTextEditor"] [contenteditable="true"]' }, 15000)) {
-        await click({ selector: '[data-pagelet="BusinessComposerTextEditor"] [contenteditable="true"]' });
-        await sleep(300);
-        await dbg.sendCommand('Input.insertText', { text: String(text) });
-        done.text = true; step('text', 'ok');
       }
       // 3) Nút: combobox "Nút" → "Gửi tin nhắn".
       if (await click({ role: 'combobox', label: /^Nút$|^Button$/i.source })) {
