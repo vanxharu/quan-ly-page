@@ -1,4 +1,5 @@
-META ASSISTANT · STUDIO AI 2.5.5
+META ASSISTANT · STUDIO AI 2.5.6
+2.5.6: chạy được trong app Windows (bảng Studio có ?desktop=1, ẩn nút cập nhật riêng).
 2.5.5: tự bật công cụ "Tạo hình ảnh" của ChatGPT trước khi gửi lệnh ảnh.
 2.5.4: GPT trả lời chữ thay vì tạo ảnh thì dừng và báo lý do (không treo).
 2.5.3: sửa lệnh viết bài / tạo ảnh ngay trên trang web (tab Chủ đề).

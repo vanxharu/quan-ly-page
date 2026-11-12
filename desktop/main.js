@@ -104,7 +104,21 @@ app.whenReady().then(async () => {
     },
     removeWindow: win => { if (!win.isDestroyed()) win.close(); },
   });
-  try { studio = await (ses.extensions || ses).loadExtension(EXT, { allowFileAccess: true }); }
+  try {
+    const exts = ses.extensions || ses;
+    studio = await exts.loadExtension(EXT, { allowFileAccess: true });
+    // Electron giữ service worker cũ của tiện ích nếu cùng số phiên bản → code mới của Studio AI không chạy.
+    // Mã của tiện ích đổi (so băm các file .js) thì xoá service worker đã lưu rồi nạp lại. Dữ liệu chrome.storage (bản nháp) giữ nguyên.
+    const fs = require('fs'), stamp = path.join(app.getPath('userData'), 'studio-code.txt');
+    const digest = require('crypto').createHash('sha1').update(fs.readdirSync(EXT).filter(f => f.endsWith('.js') || f === 'manifest.json').sort().map(f => fs.readFileSync(path.join(EXT, f))).join('\n')).digest('hex');
+    let old = ''; try { old = fs.readFileSync(stamp, 'utf8'); } catch {}
+    if (old !== digest) {
+      exts.removeExtension(studio.id);
+      await ses.clearStorageData({ origin: `chrome-extension://${studio.id}`, storages: ['serviceworkers', 'cachestorage'] }).catch(() => {});
+      studio = await exts.loadExtension(EXT, { allowFileAccess: true });
+      fs.writeFileSync(stamp, digest);
+    }
+  }
   catch (e) { console.error('Không nạp được Studio AI:', e); }
   // Một cửa sổ: trang web bên trái, Studio AI luôn nằm kế bên phải (thay cho bảng bên của Chrome).
   mainWindow = new BaseWindow({ width: 1440, height: 880, icon: ICON, title: `Meta Assistant ${app.getVersion()}` });
