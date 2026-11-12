@@ -145,7 +145,7 @@ create policy "staff read scheduled_posts" on scheduled_posts for select to auth
 -- Khoá cho pg_cron gọi fb-admin; RLS bật, không policy → chỉ service role đọc được.
 create table if not exists app_config (key text primary key, value text not null);
 alter table app_config enable row level security;
-insert into app_config (key, value) values ('cron_key', encode(gen_random_bytes(24), 'hex')) on conflict (key) do nothing;
+insert into app_config (key, value) values ('cron_key', replace(gen_random_uuid()::text || gen_random_uuid()::text, '-', '')) on conflict (key) do nothing;
 create extension if not exists pg_cron;
 create extension if not exists pg_net;
 select cron.unschedule('publish-due-posts') where exists (select 1 from cron.job where jobname = 'publish-due-posts');
