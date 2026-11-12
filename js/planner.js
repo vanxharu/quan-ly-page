@@ -34,6 +34,7 @@
             h('select', { id: 'plStatus', style: 'width:auto', onchange: e => { filterStatus = e.target.value; this.refresh(); } },
               h('option', { value: '', textContent: 'Mọi trạng thái' }), ...Object.entries(STATUS).map(([k, [t]]) => h('option', { value: k, textContent: t }))),
             h('span', { className: 'grow' }),
+            h('button', { className: 'btn btn-ghost', title: 'So danh sách với các bài đã hẹn thật trên Meta (kể cả hẹn trong Business Suite) để tránh đăng trùng', onclick: () => { $('plLog').replaceChildren(); reconcile(); } }, 'Đối chiếu với Meta'),
             h('button', { className: 'btn btn-soft', onclick: () => autoTime() }, icon('i-cal'), 'Xếp giờ tự động'),
             h('button', { className: 'btn btn-ghost', onclick: () => approveAll() }, '✓ Duyệt tất cả nháp'),
             h('button', { className: 'btn btn-danger', id: 'plDeleteAll', onclick: () => deleteAll() }, 'Xoá tất cả bài'),
@@ -57,6 +58,8 @@
         queue = queue.map(i => i.status === 'scheduled' && i.at < Date.now() ? { ...i, status: 'posted' } : i); await DB.set(QUEUE, queue);
       }
       App.planner.messageButtonDefault = !!s.messageButton;
+      // Tự đối chiếu với lịch Meta khi mở tab (tối đa 2 phút/lần, im lặng nếu không có gì đổi).
+      if (Date.now() - (App.planner.lastReconcile || 0) > 120e3) { App.planner.lastReconcile = Date.now(); reconcile({ quiet: true }).catch(() => {}); }
       drawCfg(s); drawDays(s);
       const list = queue.filter(i => inSel(i) && (!filterStatus || i.status === filterStatus))
         .sort((a, b) => (a.at || 0) - (b.at || 0));
@@ -185,17 +188,84 @@
   }
   App.planner.deleteItems = deleteItems;
 
+  // ── Đối chiếu với lịch hẹn thật của Meta ───────────────────
+  // Đọc bài đã hẹn của Page (Graph scheduled_posts, gồm cả bài hẹn qua Business Suite / tay) rồi so nội dung,
+  // để không hẹn trùng bài đã có, và gắn mã bài cho bài hẹn qua Business Suite (huỷ được trên Facebook).
+  const metaCache = new Map(); // pageId -> { at, list }
+  async function metaScheduled(page, { fresh = false } = {}) {
+    const hit = metaCache.get(page.id);
+    if (hit && !fresh && Date.now() - hit.at < 60e3) return hit.list;
+    const r = await api(`/${page.id}/scheduled_posts`, { fields: 'id,message,scheduled_publish_time', limit: 100 }, 'GET', page.access_token);
+    const list = (r.data || []).map(p => ({ id: p.id, message: p.message || '', at: Number(p.scheduled_publish_time) * 1000 || 0 }));
+    metaCache.set(page.id, { at: Date.now(), list });
+    return list;
+  }
+  // Cùng nội dung: bỏ link/khoảng trắng, so 160 ký tự đầu (hoặc một bài là phần đầu của bài kia, đủ dài để không nhầm).
+  const textKey = t => norm(t).replace(/https?:\/\/\S+/g, '').replace(/\s+/g, ' ').trim().slice(0, 160);
+  const sameText = (a, b) => { const x = textKey(a), y = textKey(b); return !!x && !!y && (x === y || (Math.min(x.length, y.length) >= 40 && (x.startsWith(y) || y.startsWith(x)))); };
+  App.planner.sameText = sameText;
+  // Bài trong danh sách khớp bài nào trên Meta (chưa bị bài khác trong danh sách nhận).
+  const matchOnMeta = (i, list, taken) => list.find(p => !taken.has(p.id) && sameText(p.message, i.text));
+
+  async function reconcile({ quiet = false } = {}) {
+    const queue = await DB.get(QUEUE, []);
+    const pages = [...new Map(queue.filter(inSel).map(pageOf).filter(Boolean).map(p => [p.id, p])).values()];
+    if (!pages.length) return quiet ? null : log('err', 'Chưa có bài nào thuộc Page đang chọn.');
+    const changes = new Map(), extra = [], failed = [];
+    let linked = 0, gone = 0;
+    for (const page of pages) {
+      let list; try { list = await metaScheduled(page, { fresh: !quiet }); } catch (e) { failed.push(`${page.name}: ${e.message}`); continue; }
+      const mine = queue.filter(i => pageOf(i)?.id === page.id);
+      const taken = new Set(mine.map(i => i.fbPostId).filter(Boolean));
+      for (const i of mine) {
+        if (i.fbPostId && i.status === 'scheduled') {
+          // Bài đã hẹn (có mã) mà Meta không còn và chưa tới giờ: đã bị huỷ ngoài app.
+          if (i.at > Date.now() + 60e3 && !list.some(p => p.id === i.fbPostId)) { changes.set(i.id, { status: 'error', error: 'Không còn trong lịch hẹn của Meta (đã bị huỷ ngoài app). Duyệt lại nếu muốn hẹn lại.' }); gone++; }
+          continue;
+        }
+        if (!['scheduled', 'approved', 'error', 'missed', 'draft'].includes(i.status) || i.fbPostId) continue;
+        const hit = matchOnMeta(i, list, taken);
+        if (!hit) continue;
+        taken.add(hit.id); linked++;
+        changes.set(i.id, { status: 'scheduled', fbPostId: hit.id, at: hit.at || i.at, viaBusinessSuite: false, pageKey: page.id, pageName: page.name,
+          error: i.status === 'scheduled' ? '' : 'Đã có trên lịch hẹn của Meta — không hẹn lại để tránh đăng trùng.' });
+      }
+      const n = list.filter(p => !taken.has(p.id)).length;
+      if (n) extra.push({ page, n });
+    }
+    if (changes.size) await DB.set(QUEUE, (await DB.get(QUEUE, [])).map(i => changes.has(i.id) ? { ...i, ...changes.get(i.id) } : i));
+    if (!quiet || changes.size) {
+      if (changes.size || !quiet) log(failed.length ? 'err' : 'ok', `Đối chiếu Meta: ${linked} bài khớp bài đã hẹn trên Meta${gone ? `, ${gone} bài đã bị huỷ ngoài app` : ''}.${failed.length ? ' Chưa đọc được: ' + failed.join('; ') : ''}`);
+      if (!quiet && extra.length) { log('pending', `Trên Meta còn bài hẹn không có trong danh sách này: ${extra.map(x => `${x.page.name} (${x.n})`).join(', ')}. Nhớ tránh trùng nội dung với các bài đó.`); logLinks(extra.map(x => x.page)); }
+      if (changes.size) refresh();
+    }
+  }
+  App.planner.reconcile = reconcile;
+
   async function scheduleOne(i) {
     if(i.aiGenerating)return patch(i.id,{status:'draft',error:'Chờ AI tạo và lưu ảnh xong trước khi duyệt.'});
     if(i.imageRequired&&!i.imageData)return patch(i.id,{status:'error',error:'Bài này cần có ảnh nhưng chưa nhận được ảnh. Bổ sung hoặc chuyển lại bản nháp có ảnh trước khi lên lịch.'});
     const page = pageOf(i);
     if (!page) return patch(i.id, { status: 'error', error: 'Không tìm thấy Page. Chọn lại Page cho bài.' });
     if (!i.at || i.at < Date.now() + 600e3) return patch(i.id, { status: 'error', error: 'Giờ đăng phải sau hiện tại ít nhất 10 phút.' });
+    // Chống đăng trùng: bài cùng nội dung đã hẹn trên Meta, hoặc đã hẹn/đăng trong danh sách này cho cùng Page.
+    const queue = await DB.get(QUEUE, []);
+    const twin = queue.find(x => x.id !== i.id && ['scheduled', 'posted', 'scheduling'].includes(x.status) && pageOf(x)?.id === page.id && sameText(x.text, i.text));
+    if (twin) { await patch(i.id, { status: 'error', error: `Trùng nội dung với bài ${STATUS[twin.status][0].toLowerCase()}${twin.at ? ' lúc ' + fmtTime(twin.at) : ''} trong danh sách — sửa nội dung nếu vẫn muốn đăng.` }); return 'dup'; }
+    let onMeta = null;
+    try { onMeta = await metaScheduled(page, { fresh: true }); } catch {} // không đọc được thì vẫn hẹn (đã báo trong nhật ký đối chiếu)
+    const taken = new Set(queue.map(x => x.fbPostId).filter(Boolean));
+    const hit = onMeta && matchOnMeta(i, onMeta, taken);
+    if (hit) {
+      await patch(i.id, { status: 'scheduled', fbPostId: hit.id, at: hit.at || i.at, viaBusinessSuite: false, pageKey: page.id, pageName: page.name, error: 'Đã có trên lịch hẹn của Meta — không hẹn lại để tránh đăng trùng.' });
+      return 'dup';
+    }
     await patch(i.id, { status: 'scheduling' });
     App.plannerRunning?.add(i.id);
     try {
       const res = await App.publish(page, i.text, i.imageData, Math.floor(i.at / 1000), { messageButton: i.messageButton ?? !!App.planner?.messageButtonDefault });
       await patch(i.id, { status: 'scheduled', fbPostId: res.post_id || res.id, viaBusinessSuite: !!res.viaBusinessSuite, pageKey: page.id, pageName: page.name, error: '' });
+      metaCache.delete(page.id);
       return true;
     } catch (e) { await patch(i.id, { status: 'error', error: e.message }); return false; }
     finally { App.plannerRunning?.delete(i.id); }
@@ -205,17 +275,17 @@
     const list = (await DB.get(QUEUE, [])).filter(i => i.status === 'approved' && inSel(i));
     if (!list.length) return log('err', 'Không có bài đã duyệt.');
     $('plGo').disabled = true;
-    let ok = 0;
+    let ok = 0, dup = 0;
     App.batchProgress?.start(list.map(i => ({ id: i.id, label: `${(pageOf(i)?.name || i.pageName || 'Page').slice(0, 40)} · ${i.at ? fmtTime(i.at) : 'chưa có giờ'}` })));
     for (const i of list) {
       App.batchProgress?.set(i.id, 'run');
-      const done = await scheduleOne(i); if (done) ok++;
+      const done = await scheduleOne(i); if (done === true) ok++; else if (done === 'dup') dup++;
       const after = (await DB.get(QUEUE, [])).find(x => x.id === i.id);
-      App.batchProgress?.set(i.id, done ? 'ok' : 'fail', done ? '' : (after?.error || 'Lỗi').slice(0, 140));
+      App.batchProgress?.set(i.id, done === true ? 'ok' : 'fail', done === true ? '' : (after?.error || 'Lỗi').slice(0, 140));
     }
     App.batchProgress?.end();
     $('plGo').disabled = false;
-    log(ok === list.length ? 'ok' : 'err', `Đã hẹn ${ok}/${list.length} bài trên Facebook.${ok < list.length ? ' Bài lỗi ghi rõ lý do bên dưới.' : ''}`);
+    log(ok + dup === list.length ? 'ok' : 'err', `Đã hẹn ${ok}/${list.length} bài trên Facebook.${dup ? ` Bỏ qua ${dup} bài trùng nội dung (đã có trên Meta hoặc trong danh sách).` : ''}${ok + dup < list.length ? ' Bài lỗi ghi rõ lý do bên dưới.' : ''}`);
     if (ok) logLinks(list.map(i => pageOf(i)).filter(Boolean));
     refresh();
   }
