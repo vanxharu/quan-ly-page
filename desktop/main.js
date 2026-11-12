@@ -133,7 +133,7 @@ app.whenReady().then(async () => {
   // Cập nhật: kiểm tra GitHub Releases, tải về, rồi khởi động lại để cài khi người dùng bấm.
   let updater = null, downloaded = '';
   const getUpdater = () => {
-    if (!updater) { updater = require('electron-updater').autoUpdater; updater.on('update-downloaded', info => { downloaded = info.version; }); }
+    if (!updater) { updater = require('electron-updater').autoUpdater; updater.autoInstallOnAppQuit = true; updater.on('update-downloaded', info => { downloaded = info.version; }); }
     return updater;
   };
   ipcMain.handle('app-version', () => app.getVersion());
@@ -147,7 +147,8 @@ app.whenReady().then(async () => {
     await r.downloadPromise;
     return { state: 'ready', version: v };
   });
-  ipcMain.handle('update-install', e => { if (fromPage(e) && downloaded) getUpdater().quitAndInstall(); });
+  // Cài im lặng rồi tự mở lại app: không hiện trình cài đặt, không phải bấm Next.
+  ipcMain.handle('update-install', e => { if (fromPage(e) && downloaded) getUpdater().quitAndInstall(true, true); });
   layout();
   Menu.setApplicationMenu(Menu.buildFromTemplate([
     { label: 'Studio AI', accelerator: 'Ctrl+Shift+A', click: () => toggleStudio() },
