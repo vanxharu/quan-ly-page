@@ -34,7 +34,7 @@
     }
     if (!r.pic) return false;
     const all = await DB.get(App.customerUidKey, {});
-    all[key] = S.manual[key] = { uid: r.uid || '', url: r.pic, at: Date.now(), auto: true };
+    all[key] = S.manual[key] = { uid: r.uid || '', profileUrl: r.profileUrl || '', url: r.pic, at: Date.now(), auto: true };
     await DB.set(App.customerUidKey, all);
     S.pics.set(key, r.pic); paintPictures();
     if (S.conv && pictureKey(S.conv) === key) drawHead(S.conv);
@@ -323,7 +323,8 @@
     const identity=S.identities.get(pictureKey(c));
     $('ibTitle').replaceChildren(h('span', { className: 'thread-head' }, custAvatar(c, 32),
       h('span', { style: 'min-width:0' }, h('div', { className: 'card-title', textContent: c.other.name || 'Khách' }), h('div', { className: 'hint', textContent: c.page.name }),
-        S.manual?.[pictureKey(c)]?.uid ? h('a',{className:'hint',href:'https://www.facebook.com/profile.php?id='+S.manual[pictureKey(c)].uid,target:'_blank',rel:'noopener noreferrer',textContent:'UID '+S.manual[pictureKey(c)].uid})
+        !S.manual?.[pictureKey(c)]?.uid && S.manual?.[pictureKey(c)]?.profileUrl ? h('a',{className:'hint',href:S.manual[pictureKey(c)].profileUrl,target:'_blank',rel:'noopener noreferrer',textContent:'Trang cá nhân ↗'})
+        : S.manual?.[pictureKey(c)]?.uid ? h('a',{className:'hint',href:'https://www.facebook.com/profile.php?id='+S.manual[pictureKey(c)].uid,target:'_blank',rel:'noopener noreferrer',textContent:'UID '+S.manual[pictureKey(c)].uid})
           : identity?h('a',{className:'hint',href:identity.profileUrl,target:'_blank',rel:'noopener noreferrer',textContent:'UID '+identity.uid}):null),
       h('button',{type:'button',className:'btn btn-ghost btn-sm',title:'Nhập UID Facebook của khách để hiện ảnh đại diện',textContent:S.manual?.[pictureKey(c)]?.uid?'Đổi UID':'Gắn UID',onclick:()=>setCustomerUid(c)}),
       App.metaLink(App.businessInboxUrl(c.page.id, c.other.id), 'Hộp thư Meta ↗')));

@@ -6,35 +6,47 @@ const fs = require('fs'), os = require('os'), path = require('path');
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const isLogin = url => /\/(login|checkpoint)|loginpage|two_step_verification/i.test(url);
 
-// Chạy trong trang Business Suite. Tìm tên khách trên trang (ô hội thoại / đầu khung chat), lấy ảnh gần tên đó;
-// UID lấy từ link facebook.com/profile.php?id=… hoặc facebook.com/<số> (bỏ qua Page).
+// Chạy trong trang Business Suite. Ưu tiên khung thông tin khách (có "Xem trang cá nhân" + ảnh lớn cạnh tên):
+// lấy link trang cá nhân (UID nếu link dạng profile.php?id=… / số) và ảnh gần link đó; không có thì tìm ảnh gần tên khách.
 function extractProfile({ pageId, name }) {
   const norm = s => String(s || '').normalize('NFC').replace(/\s+/g, ' ').trim().toLowerCase();
   const want = norm(name);
   const srcOf = el => el.tagName.toLowerCase() === 'img' ? el.currentSrc || el.src : el.getAttribute('xlink:href') || el.getAttribute('href') || '';
   const isPic = el => /fbcdn|fbsbx|scontent/.test(srcOf(el));
   const size = el => { const r = el.getBoundingClientRect(); return Math.max(r.width, r.height) || Number(el.getAttribute('width')) || 0; };
-  let uid = '', profileUrl = '', pic = '';
-  for (const a of document.querySelectorAll('a[href]')) {
-    const m = a.href.match(/^https:\/\/(?:www\.|m\.)?facebook\.com\/(?:profile\.php\?id=(\d{5,})|(\d{5,}))(?:[/?&#]|$)/);
-    const id = m && (m[1] || m[2]);
-    if (id && id !== String(pageId)) { uid = id; profileUrl = `https://www.facebook.com/profile.php?id=${id}`; break; }
+  const unwrap = href => { try { const u = new URL(href, location.href); if (u.hostname.startsWith('l.') || u.pathname === '/l.php') return u.searchParams.get('u') || href; return u.href; } catch { return href || ''; } };
+  const uidOf = href => { const m = unwrap(href).match(/^https?:\/\/(?:www\.|m\.|web\.)?facebook\.com\/(?:profile\.php\?id=(\d{5,})|(\d{5,}))(?:[/?&#]|$)/); const id = m && (m[1] || m[2]); return id && id !== String(pageId) ? id : ''; };
+  const picNear = (el, levels = 6) => {
+    let best = null;
+    for (let box = el, i = 0; i < levels && box; i++, box = box.parentElement) {
+      const pics = [...box.querySelectorAll('img,image')].filter(isPic);
+      if (pics.length) { for (const p of pics) if (!best || size(p) > size(best)) best = p; break; }
+    }
+    return best;
+  };
+  let uid = '', profileUrl = '', best = null;
+  // 1) Link "Xem trang cá nhân" trong khung thông tin khách.
+  const link = [...document.querySelectorAll('a,[role="link"]')].find(a => /xem trang cá nhân|view profile|trang cá nhân|xem hồ sơ/i.test(a.textContent || a.getAttribute('aria-label') || ''));
+  if (link) {
+    const href = link.getAttribute('href') ? unwrap(link.href) : '';
+    if (/facebook\.com\//.test(href)) { profileUrl = href; uid = uidOf(href); if (uid) profileUrl = `https://www.facebook.com/profile.php?id=${uid}`; }
+    best = picNear(link);
   }
-  if (want) {
+  // 2) Link trang cá nhân dạng số ở bất kỳ đâu (bỏ qua Page).
+  if (!uid) for (const a of document.querySelectorAll('a[href]')) { const id = uidOf(a.href); if (id) { uid = id; profileUrl = `https://www.facebook.com/profile.php?id=${id}`; break; } }
+  // 3) Ảnh gần tên khách.
+  if (!best && want) {
     const named = [...document.querySelectorAll('span,div,a,h1,h2,h3,[aria-label],img[alt]')]
       .filter(el => norm(el.getAttribute('aria-label')) === want || norm(el.getAttribute('alt')) === want || (el.childElementCount === 0 && norm(el.textContent) === want));
-    let best = null;
     for (const el of named) {
-      if (el.tagName.toLowerCase() === 'img' && isPic(el)) { if (!best || size(el) > size(best)) best = el; continue; }
-      let box = el;
-      for (let i = 0; i < 6 && box; i++, box = box.parentElement) {
-        const pics = [...box.querySelectorAll('img,image')].filter(isPic);
-        if (pics.length) { for (const p of pics) if (!best || size(p) > size(best)) best = p; break; }
-      }
+      const p = el.tagName.toLowerCase() === 'img' && isPic(el) ? el : picNear(el);
+      if (p && (!best || size(p) > size(best))) best = p;
     }
-    pic = best ? srcOf(best) : '';
   }
-  return { pic, uid, profileUrl, nameSeen: !!want && document.body.innerText.toLowerCase().includes(want) };
+  const nameSeen = !!want && document.body.innerText.toLowerCase().includes(want);
+  // Khung thông tin phải đúng khách (có tên) thì mới tin ảnh/link lấy từ đó.
+  if (want && !nameSeen) return { pic: '', uid: '', profileUrl: '', nameSeen };
+  return { pic: best ? srcOf(best) : '', uid, profileUrl, nameSeen };
 }
 
 function createMetaAuto({ worker, metaView, showMeta }) {
@@ -44,6 +56,12 @@ function createMetaAuto({ worker, metaView, showMeta }) {
 
   const lookupProfile = ({ pageId, psid, name }) => queue(async () => {
     if (!/^\d+$/.test(String(pageId)) || !/^\d+$/.test(String(psid))) return { error: 'Thiếu Page hoặc khách.' };
+    const args = JSON.stringify({ pageId: String(pageId), name: String(name || '') });
+    // Cột Hộp thư Meta đang mở đúng khách: đọc luôn ở đó, khỏi tải khung ẩn.
+    if (/business\.facebook\.com\/latest\/inbox/.test(metaView.webContents.getURL())) {
+      const seen = await metaView.webContents.executeJavaScript(`(${extractProfile})(${args})`).catch(() => ({}));
+      if (seen.pic && seen.profileUrl) return { pic: seen.pic, uid: seen.uid || '', profileUrl: seen.profileUrl };
+    }
     const wc = worker.webContents;
     const url = `https://business.facebook.com/latest/inbox/all?asset_id=${pageId}&mailbox_id=${pageId}&selected_item_id=${psid}&thread_type=FB_MESSAGE`;
     await wc.loadURL(url).catch(() => {});
@@ -51,11 +69,11 @@ function createMetaAuto({ worker, metaView, showMeta }) {
     for (let i = 0; i < 15; i++) {
       await sleep(1000);
       if (isLogin(wc.getURL())) return { error: 'login' };
-      last = await wc.executeJavaScript(`(${extractProfile})(${JSON.stringify({ pageId: String(pageId), name: String(name || '') })})`).catch(() => ({}));
-      if (last.pic && (last.uid || i >= 6)) break;
+      last = await wc.executeJavaScript(`(${extractProfile})(${args})`).catch(() => ({}));
+      if (last.pic && (last.profileUrl || i >= 6)) break;
     }
     await sleep(1500 + Math.random() * 1500); // nghỉ giữa các lượt
-    return last.pic || last.uid ? { pic: last.pic || '', uid: last.uid || '', profileUrl: last.profileUrl || '' } : { error: last.nameSeen ? 'no-picture' : 'not-found' };
+    return last.pic || last.profileUrl ? { pic: last.pic || '', uid: last.uid || '', profileUrl: last.profileUrl || '' } : { error: last.nameSeen ? 'no-picture' : 'not-found' };
   });
 
   // Điền sẵn trình soạn bài Business Suite. Trả về khi người dùng đã đăng/hẹn (trang rời khỏi trình soạn) hoặc sau 15 phút.

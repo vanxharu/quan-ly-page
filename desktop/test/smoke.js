@@ -60,6 +60,6 @@ setTimeout(async () => {
     await barWc.executeJavaScript("bar.cmd('close'); 1"); await new Promise(r => setTimeout(r, 300));
     out.hidden = app.views.meta.getBounds().width;
   } catch (e) { out.error = e.message; }
-  console.log('SMOKE', JSON.stringify(out)); process.exit(out.studio?.startsWith('ok') && out.ext?.length && out.panel && out.token === 'TOK123' && out.meta?.[0].includes('asset_id=1') && out.meta[1] > 0 && out.ver?.startsWith('APP ') && out.dev === 'dev' && out.lookup?.uid === '100012345678' && /thao/.test(out.lookup?.pic) && out.composer[0] === 'Xin chào khách' && /^file:/.test(out.composer[1]) && out.composeResult?.done && out.wider && out.hidden === 0 && out.msgPanel === 0 && out.widths[1] > 0 ? 0 : 1);
+  console.log('SMOKE', JSON.stringify(out)); process.exit(out.studio?.startsWith('ok') && out.ext?.length && out.panel && out.token === 'TOK123' && out.meta?.[0].includes('asset_id=1') && out.meta[1] > 0 && out.ver?.startsWith('APP ') && out.dev === 'dev' && out.lookup?.uid === '100012345678' && /thao-big/.test(out.lookup?.pic) && out.composer[0] === 'Xin chào khách' && /^file:/.test(out.composer[1]) && out.composeResult?.done && out.wider && out.hidden === 0 && out.msgPanel === 0 && out.widths[1] > 0 ? 0 : 1);
 }, 6000);
 // lookup có nghỉ 1.5–3 s; composer chờ tối đa vài giây
