@@ -180,6 +180,7 @@ app.whenReady().then(async () => {
     show('meta', true);
   };
   const auto = createMetaAuto({ worker, composer, metaView, showMeta: showMetaTemp, metaShown: () => side === 'meta',
+    progress: data => pageView.webContents.executeJavaScript(`window.App?.composeProgress?.(${JSON.stringify(data)})`).catch(() => {}),
     notify: msg => pageView.webContents.executeJavaScript(`typeof toast === 'function' && toast(${JSON.stringify(msg)}, 30000)`).catch(() => {}) });
   worker.webContents.setAudioMuted(true);
   worker.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));

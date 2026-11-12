@@ -81,7 +81,7 @@ function findTarget({ selector, role, text, label, enabled }) {
   return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) };
 }
 
-function createMetaAuto({ worker, composer, metaView, showMeta = () => () => {}, metaShown = () => true, notify = () => {} }) {
+function createMetaAuto({ worker, composer, metaView, showMeta = () => () => {}, metaShown = () => true, notify = () => {}, progress = () => {} }) {
   // Hai hàng chờ riêng: đọc avatar (khung ẩn) không phải chờ trình soạn bài (có thể mở lâu).
   const makeQueue = () => { let chain = Promise.resolve(); return fn => (chain = chain.then(fn, fn)); };
   const queue = makeQueue(), composeQueue = makeQueue();
@@ -130,6 +130,8 @@ function createMetaAuto({ worker, composer, metaView, showMeta = () => () => {},
   // Mỗi bước làm riêng, bước nào hỏng thì báo để bạn làm tay; luôn chép sẵn nội dung vào clipboard.
   // Điền trình soạn trong một webContents (cột Meta đang hiện, hoặc cửa sổ vẽ ngầm). Trả về bước nào đã xong.
   const fill = async (wc, { pageId, text, image, when }) => {
+    const step = (id, state, note = '') => progress({ id, state, note });
+    step('open', 'run');
     await wc.loadURL(`https://business.facebook.com/latest/composer/?asset_id=${pageId}&context_ref=POSTS&ref=meta_assistant`).catch(() => {});
     const find = spec => wc.executeJavaScript(`(${findTarget})(${JSON.stringify(spec)})`).catch(() => null);
     let ready = false;
@@ -138,7 +140,8 @@ function createMetaAuto({ worker, composer, metaView, showMeta = () => () => {},
       if (isLogin(wc.getURL())) return { error: 'login' };
       ready = !!(await find({ text: /^Thêm ảnh\/video$|^Add photo\/video$/i.source }));
     }
-    if (!ready) return { error: 'Không mở được trình soạn bài của Business Suite.' };
+    if (!ready) { step('open', 'fail'); return { error: 'Không mở được trình soạn bài của Business Suite.' }; }
+    step('open', 'ok');
     const dbg = wc.debugger, done = { image: !image, text: !text, button: false, schedule: !when };
     const click = async spec => {
       const r = await find(spec); if (!r) return false;
@@ -149,6 +152,7 @@ function createMetaAuto({ worker, composer, metaView, showMeta = () => () => {},
     try {
       if (!dbg.isAttached()) dbg.attach('1.3');
       // 1) Ảnh: bắt hộp chọn file của trình duyệt rồi đưa ảnh thẳng từ bộ nhớ vào ô chọn file (không ghi file ra máy).
+      if (image) step('image', 'run');
       const m = image && String(image).match(/^data:(image\/(\w+));base64,(.+)$/);
       if (m) {        await dbg.sendCommand('Page.enable');
         await dbg.sendCommand('Page.setInterceptFileChooserDialog', { enabled: true });
@@ -173,20 +177,23 @@ function createMetaAuto({ worker, composer, metaView, showMeta = () => () => {},
               return this.files.length;
             }` });
           done.image = r?.result?.value === 1;
+          step('image', done.image ? 'ok' : 'fail');
         }
         await dbg.sendCommand('Page.setInterceptFileChooserDialog', { enabled: false }).catch(() => {});
       }
       // 2) Nội dung: chờ ô văn bản thật của bài (không dùng ô mô tả thước phim ẩn).
+      if (text) step('text', 'run');
       if (text && await waitFor({ selector: '[data-pagelet="BusinessComposerTextEditor"] [contenteditable="true"]' }, 15000)) {
         await click({ selector: '[data-pagelet="BusinessComposerTextEditor"] [contenteditable="true"]' });
         await sleep(300);
         await dbg.sendCommand('Input.insertText', { text: String(text) });
-        done.text = true;
+        done.text = true; step('text', 'ok');
       }
       // 3) Nút: combobox "Nút" → "Gửi tin nhắn".
       if (await click({ role: 'combobox', label: /^Nút$|^Button$/i.source })) {
         await sleep(600);
         done.button = await click({ role: 'option', text: /gửi tin nhắn|send message/i.source });
+        step('button', done.button ? 'ok' : 'fail');
       }
       // 4) Hẹn giờ: bật "Đặt ngày và giờ" → gõ ngày (ô dd/mm/yyyy) và giờ/phút (2 ô spinbutton "giờ", "phút"), rồi đọc lại để chắc đúng.
       if (when) {
@@ -214,10 +221,12 @@ function createMetaAuto({ worker, composer, metaView, showMeta = () => () => {},
           const d = at.getDate(), mo = at.getMonth() + 1, y = at.getFullYear();
           const dateOk = new RegExp(`^0?${d}( Tháng |/0?)${mo}(, |/)${y}$`).test(seen[0].trim());
           done.schedule = dateOk && Number(seen[1]) === at.getHours() && Number(seen[2]) === at.getMinutes();
+          step('schedule', done.schedule ? 'ok' : 'fail', seen[0] + ' ' + seen[1] + ':' + seen[2]);
         }
       }
     } catch (e) { notify(`Business Suite: lỗi khi điền sẵn (${e.message}). Làm tay phần còn lại.`); }
     finally { try { dbg.detach(); } catch {} }
+    for (const k of ['image', 'text', 'button', 'schedule']) if (done[k] !== true) step(k, 'fail');
     return { done, find, click, waitFor };
   };
   const leftComposer = wc => wc.isDestroyed() || !/\/composer/.test(wc.getURL());
@@ -236,13 +245,15 @@ function createMetaAuto({ worker, composer, metaView, showMeta = () => () => {},
         try {
           if (!dbg.isAttached()) dbg.attach('1.3');
           const publish = { role: 'button', text: (when ? /^Lên lịch$|^Schedule$/i : /^Đăng$|^Publish$|^Post$/i).source, enabled: true };
+          progress({ id: 'publish', state: 'run' });
           if (await r.waitFor(publish, 60000) && await r.click(publish)) {
             for (let i = 0; i < 60 && !leftComposer(wc); i++) await sleep(1000);
-            if (leftComposer(wc)) { wc.loadURL('about:blank').catch(() => {}); return { done: true, filled: r.done, hidden: true }; }
+            if (leftComposer(wc)) { progress({ id: 'publish', state: 'ok' }); wc.loadURL('about:blank').catch(() => {}); return { done: true, filled: r.done, hidden: true }; }
           }
         } catch {} finally { try { dbg.detach(); } catch {} }
       }
       notify('Đăng ngầm chưa xong (Business Suite thiếu bước). Mở cột Meta để bạn hoàn tất…');
+      progress({ id: 'publish', state: 'manual', note: 'Mở cột Meta: hoàn tất bước đỏ rồi bấm Đăng / Lên lịch' });
       wc.loadURL('about:blank').catch(() => {});
     }
     const wc = metaView.webContents, restore = showMeta();
@@ -258,6 +269,7 @@ function createMetaAuto({ worker, composer, metaView, showMeta = () => () => {},
       if (!metaShown()) return { error: 'Đã đóng trình soạn Business Suite, bài chưa được đăng.' }; // bấm ✕ trên cột = huỷ (cột đã ẩn sẵn)
     }
     restore();
+    progress({ id: 'publish', state: leftComposer(wc) ? 'ok' : 'fail' });
     return { done: leftComposer(wc), filled: done };
   });
 

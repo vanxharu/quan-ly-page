@@ -342,9 +342,34 @@ App.adAccount = async () => {
 };
 // App Windows: điền sẵn trình soạn bài Business Suite (ảnh + nội dung) ở cột bên; bạn bật "Gửi tin nhắn", chọn giờ và bấm Đăng.
 // Không cần tài khoản quảng cáo. Chờ tới khi bạn đăng xong (trang rời trình soạn) rồi mới sang bài tiếp theo.
+// Thanh tiến độ đăng qua Business Suite (góc dưới phải): từng bước ✓ / đang làm / ✗, app Windows báo về qua App.composeProgress.
+App.composeSteps = (page, { image, text, when }) => {
+  const steps = [['open', 'Mở trình soạn Business Suite'], image && ['image', 'Đưa ảnh vào bài'], text && ['text', 'Điền nội dung'],
+    ['button', 'Chọn Nút › Gửi tin nhắn'], when && ['schedule', `Đặt giờ ${fmtTime(when * 1000)}`], ['publish', when ? 'Bấm Lên lịch' : 'Bấm Đăng']].filter(Boolean);
+  let box = $('composeProgress');
+  if (!box) { box = h('div', { id: 'composeProgress', className: 'card', role: 'status', 'aria-live': 'polite', style: 'position:fixed;right:16px;bottom:16px;z-index:60;width:min(340px,calc(100vw - 32px));padding:14px 16px;box-shadow:var(--shadow-lg,0 8px 30px rgba(0,0,0,.18))' }); document.body.append(box); }
+  clearTimeout(box._hide);
+  box.replaceChildren(
+    h('div', { className: 'row', style: 'justify-content:space-between;gap:8px' }, h('strong', { textContent: `Đăng qua Business Suite · ${page.name}`, style: 'font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap' }),
+      h('button', { type: 'button', className: 'icon-btn', 'aria-label': 'Ẩn thanh tiến độ', textContent: '✕', style: 'width:26px;height:26px', onclick: () => box.remove() })),
+    h('div', { className: 'progress', style: 'height:6px;border-radius:6px;background:var(--surface-2,#E5E7EB);margin:10px 0;overflow:hidden' }, h('div', { id: 'cpBar', style: 'height:100%;width:0;background:var(--brand,#6D28D9);transition:width .3s' })),
+    h('ol', { id: 'cpList', style: 'list-style:none;margin:0;padding:0;display:grid;gap:6px;font-size:13px' },
+      ...steps.map(([id, label]) => h('li', { dataset: { step: id }, className: 'row', style: 'gap:8px;align-items:flex-start' },
+        h('span', { className: 'cp-icon', textContent: '○', style: 'width:16px;text-align:center;flex:none' }), h('span', { style: 'flex:1' }, label, h('span', { className: 'cp-note hint', style: 'display:block' }))))));
+};
+App.composeProgress = ({ id, state, note = '' }) => {
+  const box = $('composeProgress'), li = box?.querySelector(`[data-step="${id}"]`); if (!li) return;
+  const icon = { run: '⏳', ok: '✓', fail: '✗', manual: '✋' }[state] || '○', color = { ok: 'var(--green,#059669)', fail: 'var(--red,#DC2626)', manual: 'var(--amber,#D97706)' }[state] || '';
+  li.querySelector('.cp-icon').textContent = icon; li.querySelector('.cp-icon').style.color = color;
+  li.querySelector('.cp-note').textContent = state === 'fail' && !note ? 'Chưa làm được: mở cột Meta để làm tay' : note;
+  const all = [...box.querySelectorAll('[data-step]')], doneCount = all.filter(x => ['✓'].includes(x.querySelector('.cp-icon').textContent)).length;
+  $('cpBar').style.width = `${Math.round(doneCount / all.length * 100)}%`;
+  if (id === 'publish' && state === 'ok') { $('cpBar').style.background = 'var(--green,#059669)'; box._hide = setTimeout(() => box.remove(), 8000); }
+};
 App.composeInBusinessSuite = async (page, text, imageData, when = 0) => {
   const image = imageData instanceof Blob ? await new Promise((ok, bad) => { const r = new FileReader(); r.onload = () => ok(r.result); r.onerror = bad; r.readAsDataURL(imageData); }) : String(imageData);
   toast(`Đang ${when ? 'hẹn giờ' : 'đăng'} ngầm bài có ảnh + nút cho ${page.name} qua Business Suite…`, 8000);
+  App.composeSteps(page, { image, text, when });
   const r = await globalThis.metaDesktop.composePost({ pageId: String(page.id), text: text || '', image, when });
   if (r.error === 'login') throw Error('Đăng nhập Business Suite ở cột Hộp thư Meta trước.');
   if (r.error) throw Error(r.error);
