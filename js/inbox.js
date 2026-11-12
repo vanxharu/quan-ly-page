@@ -90,7 +90,12 @@
   const toList = (page, data, after = '') => { const list = (data || []).map(c => normalizeConversation(page, c)); list.after = after; return list; };
   // Gọi Facebook lấy hội thoại. `after` là con trỏ phân trang (không chứa token), dùng cho "Tải thêm".
   async function fetchConvs(page, limit = FIRST_LIMIT, after = '', { low = false } = {}) {
-    const res = await api(`/${page.id}/conversations`, { platform: 'messenger', limit, fields: CONV_FIELDS, ...(after ? { after } : {}) }, 'GET', page.access_token, { low });
+    // Lỗi mã 1/2 ("unexpected error, retry later") của Facebook thường do lấy quá nhiều một lần: thử lại, mỗi lần ít hội thoại hơn.
+    let res;
+    for (const n of [...new Set([limit, 25, 10].filter(x => x <= limit))]) {
+      try { res = await api(`/${page.id}/conversations`, { platform: 'messenger', limit: n, fields: CONV_FIELDS, ...(after ? { after } : {}) }, 'GET', page.access_token, { low }); break; }
+      catch (e) { if (![1, 2].includes(Number(e.code)) || n === 10 || n === Math.min(limit, 10)) throw e; await new Promise(r => setTimeout(r, 1200)); }
+    }
     const data = res.data || [], cursor = res.paging?.next ? res.paging?.cursors?.after || '' : '';
     // Bản lưu dùng chung mọi tab: gộp theo ID, chỉ dữ liệu hội thoại (không token, không URL phân trang).
     const cache = await DB.get(cacheKey(page), {}).catch(() => ({}));
