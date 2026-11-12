@@ -1,0 +1,43 @@
+<!doctype html><html lang="vi"><head><meta charset="utf-8"><title>Khoá app</title><style>
+:root{--bg:#F1F5F9;--card:#fff;--fg:#0F172A;--muted:#64748B;--line:#CBD5E1;--brand:#6D28D9;--err:#DC2626}
+@media (prefers-color-scheme:dark){:root{--bg:#0B0F19;--card:#111827;--fg:#F9FAFB;--muted:#9CA3AF;--line:#374151;--brand:#8B5CF6;--err:#F87171}}
+*{box-sizing:border-box}html,body{margin:0;height:100%;background:var(--bg);color:var(--fg);font:14px/1.5 system-ui,"Segoe UI",sans-serif}
+body{display:grid;place-items:center;padding:16px}.card{width:min(360px,100%);background:var(--card);border:1px solid var(--line);border-radius:16px;padding:24px;display:grid;gap:12px}
+h1{font-size:18px;margin:0}p{margin:0;color:var(--muted);font-size:13px}label{display:grid;gap:4px;font-size:13px}
+input[type=password],select{height:38px;border:1px solid var(--line);border-radius:10px;padding:0 10px;background:transparent;color:inherit;font:inherit}
+.check{display:flex;gap:8px;align-items:center}button{height:38px;border-radius:10px;border:1px solid var(--line);background:transparent;color:inherit;font:inherit;cursor:pointer;padding:0 14px}
+button.primary{background:var(--brand);border-color:var(--brand);color:#fff;font-weight:600}.row{display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap}
+.err{color:var(--err);font-size:13px;min-height:18px}.link{border:0;background:none;color:var(--muted);text-decoration:underline;height:auto;padding:0;font-size:12px;justify-self:start}
+:focus-visible{outline:2px solid var(--brand);outline-offset:2px}
+</style></head><body><main class="card" id="card"></main><script>
+const q = new URLSearchParams(location.search), mode = q.get('mode'), card = document.getElementById('card');
+const el = (t, a = {}, ...c) => { const e = Object.assign(document.createElement(t), a); e.append(...c); return e; };
+const err = el('div', { className: 'err', role: 'alert' });
+if (mode === 'unlock') {
+  const pw = el('input', { type: 'password', autocomplete: 'current-password', 'aria-label': 'Mật khẩu' });
+  const form = el('form', { style: 'display:grid;gap:12px' }, el('label', {}, 'Mật khẩu', pw), err, el('button', { className: 'primary', type: 'submit' }, 'Mở khoá'));
+  form.onsubmit = async e => { e.preventDefault(); const r = await lockApi.unlock(pw.value); if (!r.ok) { err.textContent = r.error; pw.select(); } };
+  const forgot = el('button', { className: 'link', type: 'button' }, 'Quên mật khẩu?');
+  forgot.onclick = async () => { if (confirm('Xoá mật khẩu sẽ ĐĂNG XUẤT mọi tài khoản trong app (Facebook, Business Suite, ChatGPT) rồi mở lại app. Tiếp tục?')) await lockApi.reset(); };
+  card.append(el('h1', {}, '🔒 Meta Assistant đang khoá'), el('p', {}, 'Nhập mật khẩu app để tiếp tục.'), form, forgot);
+  pw.focus();
+} else {
+  lockApi.state().then(s => {
+    const cur = el('input', { type: 'password', autocomplete: 'current-password' }), next = el('input', { type: 'password', autocomplete: 'new-password' }), again = el('input', { type: 'password', autocomplete: 'new-password' });
+    const onMin = el('input', { type: 'checkbox', checked: s.onMinimize }), idle = el('select', {}, ...[[0, 'Không tự khoá'], [5, '5 phút'], [10, '10 phút'], [15, '15 phút'], [30, '30 phút'], [60, '1 giờ']].map(([v, t]) => el('option', { value: v, selected: v === s.idleMinutes }, t)));
+    const form = el('form', { style: 'display:grid;gap:12px' },
+      s.enabled ? el('label', {}, 'Mật khẩu hiện tại', cur) : '',
+      el('label', {}, s.enabled ? 'Mật khẩu mới (để trống nếu giữ nguyên)' : 'Mật khẩu mới (ít nhất 4 ký tự)', next), el('label', {}, 'Nhập lại mật khẩu mới', again),
+      el('label', { className: 'check' }, onMin, 'Khoá khi thu nhỏ app hoặc khoá màn hình Windows'),
+      el('label', {}, 'Tự khoá khi không dùng máy', idle), err,
+      el('div', { className: 'row' }, s.enabled ? el('button', { type: 'button', id: 'off' }, 'Tắt mật khẩu') : '', el('button', { type: 'button', id: 'cancel' }, 'Huỷ'), el('button', { className: 'primary', type: 'submit' }, 'Lưu')));
+    form.onsubmit = async e => { e.preventDefault(); if (next.value !== again.value) return err.textContent = 'Hai lần nhập mật khẩu mới không khớp.';
+      const r = await lockApi.save({ current: cur.value, next: next.value, onMinimize: onMin.checked, idleMinutes: Number(idle.value) }); if (!r.ok) err.textContent = r.error; };
+    card.append(el('h1', {}, '🔒 Mật khẩu mở app'), el('p', {}, 'Có mật khẩu thì app khoá mỗi lần mở, và tự khoá theo cài đặt bên dưới.'), form);
+    form.querySelector('#cancel').onclick = () => lockApi.cancel();
+    const off = form.querySelector('#off'); if (off) off.onclick = async () => { const r = await lockApi.save({ current: cur.value, remove: true }); if (!r.ok) err.textContent = r.error; };
+    (s.enabled ? cur : next).focus();
+  });
+}
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && mode !== 'unlock') lockApi.cancel(); });
+</script></body></html>

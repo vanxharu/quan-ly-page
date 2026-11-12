@@ -39,6 +39,11 @@
     mount(el) {
       el.append(
         h('div', { className: 'card', id: 'srvCard' }),
+        // App Windows: mật khẩu mở app + tự khoá (cài trong app, không lưu trên web).
+        window.metaDesktop?.lockSettings ? h('div', { className: 'card' }, h('h3', { className: 'card-title', textContent: '🔒 Bảo mật app' }),
+          h('p', { className: 'muted', id: 'lockInfo', textContent: 'Đang đọc…' }),
+          h('div', { className: 'row' }, h('button', { className: 'btn btn-primary', textContent: 'Mật khẩu & tự khoá…', onclick: () => window.metaDesktop.lockSettings() }),
+            h('button', { className: 'btn btn-ghost', id: 'lockNow', textContent: 'Khoá ngay (Ctrl+L)', onclick: () => window.metaDesktop.lockNow() }))) : null,
         h('div', { className: 'card' },
           h('h3', { className: 'card-title', textContent: 'Dữ liệu' }),
           h('p', { className: 'muted', textContent: 'Dữ liệu (mẫu tin, khách, đơn, lịch đăng…) lưu trên trình duyệt này. Dùng máy/trình duyệt khác thì xuất sao lưu rồi nhập ở đó.' }),
@@ -55,7 +60,13 @@
           h('p', { className: 'hint' }, h('a', { href: 'privacy.html', target: '_blank', textContent: 'Chính sách quyền riêng tư' }), ' · ', h('a', { href: 'terms.html', target: '_blank', textContent: 'Điều khoản' }), ' · ', h('a', { href: 'data-deletion.html', target: '_blank', textContent: 'Xoá dữ liệu' }))),
         h('form', { className: 'card', id: 'stRules' }));
     },
-    async refresh() { drawRules(); App.server?.drawCard(); }
+    async refresh() {
+      drawRules(); App.server?.drawCard();
+      window.metaDesktop?.lockState?.().then(st => {
+        $('lockInfo').textContent = st.enabled ? `Đang bật: khoá khi mở app${st.onMinimize ? ', khi thu nhỏ / khoá màn hình' : ''}${st.idleMinutes ? `, sau ${st.idleMinutes} phút không dùng máy` : ''}.` : 'Chưa đặt mật khẩu: ai mở máy cũng vào được app.';
+        $('lockNow').hidden = !st.enabled;
+      }).catch(() => {});
+    }
   });
   async function doImport(file) {
     if (!file) return;

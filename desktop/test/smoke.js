@@ -15,7 +15,7 @@ const fake = req => {
 // Trang chính (phiên mặc định) và Business Suite (phiên persist:meta) đều dùng dữ liệu giả.
 app.whenReady().then(() => { session.defaultSession.protocol.handle('https', fake); session.fromPartition('persist:meta').protocol.handle('https', fake); });
 const electron = require('electron'), opened = []; electron.shell.openExternal = url => { opened.push(url); return Promise.resolve(); };
-try { fs.rmSync(path.join(app.getPath('userData'), 'layout.json')); } catch {}
+for (const f of ['layout.json', 'lock.json']) try { fs.rmSync(path.join(app.getPath('userData'), f)); } catch {}
 require('../main.js');
 setTimeout(async () => {
   const win = app.views.page, out = {};
@@ -52,6 +52,15 @@ setTimeout(async () => {
     app.toggleStudio(true);
     out.hiddenPost = await win.webContents.executeJavaScript(`metaDesktop.composePost({pageId:'123456',text:'Bài đăng ngầm',image:'${png}'})`);
     out.sideAfterHidden = app.views.meta.getBounds().width;
+    // Khoá app: đặt mật khẩu → khoá → sai → đúng.
+    const lk = app.appLock, lv = lk.view.webContents, wait = ms => new Promise(r => setTimeout(r, ms));
+    lk.settings(); await wait(1200);
+    out.lockSetup = await lv.executeJavaScript("(async()=>{const i=[...document.querySelectorAll('input[type=password]')];i[0].value='1234';i[1].value='1234';document.querySelector('form').requestSubmit();await new Promise(r=>setTimeout(r,500));return JSON.stringify(await lockApi.state())})()");
+    lk.lock(); await wait(1200);
+    out.lockCover = lk.view.getBounds().width > 0 && lk.isLocked();
+    out.lockWrong = await lv.executeJavaScript("lockApi.unlock('0000').then(r=>r.error)");
+    out.lockRight = await lv.executeJavaScript("lockApi.unlock('1234').then(r=>r.ok)");
+    out.lockGone = lk.view.getBounds().width === 0 && !lk.isLocked();
     out.panel = await app.views.panel.webContents.executeJavaScript('document.body.innerText.slice(0,40)');
     await win.webContents.executeJavaScript("metaDesktop.tabChanged('messages'); 1"); await new Promise(r => setTimeout(r, 300));
     out.msgPanel = app.views.panel.getBounds().width;
@@ -70,6 +79,6 @@ setTimeout(async () => {
     await barWc.executeJavaScript("bar.cmd('close'); 1"); await new Promise(r => setTimeout(r, 300));
     out.hidden = app.views.meta.getBounds().width;
   } catch (e) { out.error = e.message; }
-  console.log('SMOKE', JSON.stringify(out)); process.exit(out.studio?.startsWith('ok') && out.ext?.length && out.panel && out.token === 'TOK123' && out.meta?.[0].includes('asset_id=1') && out.meta[1] > 0 && out.ver?.startsWith('v') && out.dev === 'dev' && out.lookup?.uid === '100012345678' && /thao-big/.test(out.lookup?.pic) && out.composer[0] === 'Lên lịch' && out.composer[1] === 'Xin chào khách' && /^bai-viet\.png:70$/.test(out.composer[2]) && out.composer[3] === 'Gửi tin nhắn' && out.composer[5] === out.expectDate && out.composer[6] === '7' && out.composer[7] === '10' && out.composeResult?.hidden && out.composeResult?.done && out.hiddenPost?.done && out.hiddenPost?.hidden && out.sideAfterHidden === 0 && out.loginBtn === '1092800303751533' && out.wider && out.hidden === 0 && out.msgPanel === 0 && out.widths[1] > 0 ? 0 : 1);
+  console.log('SMOKE', JSON.stringify(out)); process.exit(out.studio?.startsWith('ok') && out.ext?.length && out.panel && out.token === 'TOK123' && out.meta?.[0].includes('asset_id=1') && out.meta[1] > 0 && out.ver?.startsWith('v') && out.dev === 'dev' && out.lookup?.uid === '100012345678' && /thao-big/.test(out.lookup?.pic) && out.composer[0] === 'Lên lịch' && out.composer[1] === 'Xin chào khách' && /^bai-viet\.png:70$/.test(out.composer[2]) && out.composer[3] === 'Gửi tin nhắn' && out.composer[5] === out.expectDate && out.composer[6] === '7' && out.composer[7] === '10' && out.composeResult?.hidden && out.composeResult?.done && out.hiddenPost?.done && out.hiddenPost?.hidden && out.sideAfterHidden === 0 && out.loginBtn === '1092800303751533' && out.lockCover && out.lockWrong === 'Sai mật khẩu.' && out.lockRight && out.lockGone && out.wider && out.hidden === 0 && out.msgPanel === 0 && out.widths[1] > 0 ? 0 : 1);
 }, 6000);
 // lookup có nghỉ 1.5–3 s; composer chờ tối đa vài giây

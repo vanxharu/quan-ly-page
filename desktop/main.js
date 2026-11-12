@@ -4,6 +4,7 @@ const { app, BaseWindow, BrowserWindow, Menu, WebContentsView, ipcMain, session,
 const path = require('path'), crypto = require('crypto');
 const { ElectronChromeExtensions } = require('electron-chrome-extensions');
 const { createMetaAuto } = require('./meta-auto');
+const { setupLock } = require('./app-lock');
 
 const WEB = process.env.META_ASSISTANT_URL || 'https://vanxharu.github.io/quan-ly-page/';
 const EXT = app.isPackaged ? path.join(process.resourcesPath, 'extension') : path.join(__dirname, '../extension/chatgpt-connector');
@@ -220,8 +221,12 @@ app.whenReady().then(async () => {
   // Cài im lặng rồi tự mở lại app: không hiện trình cài đặt, không phải bấm Next.
   ipcMain.handle('update-install', e => { if (fromPage(e) && downloaded) getUpdater().quitAndInstall(true, true); });
   layout();
+  // Khoá app bằng mật khẩu (lớp phủ trên cùng); tạo sau mọi khung khác để luôn che được.
+  const appLock = setupLock({ mainWindow, focusPage: () => pageView.webContents.focus(), sessions: [ses, metaSes] });
+  ipcMain.on('app-lock', (e, what) => { if (!fromPage(e)) return; if (what === 'settings') appLock.settings(); else if (what === 'now') appLock.lock(); });
   Menu.setApplicationMenu(Menu.buildFromTemplate([
     { label: 'Studio AI', accelerator: 'Ctrl+Shift+A', click: () => toggleStudio() },
+    { label: 'Bảo mật', submenu: [{ label: 'Khoá ngay', accelerator: 'Ctrl+L', click: () => appLock.lock() }, { label: 'Mật khẩu & tự khoá…', click: () => appLock.settings() }] },
     { label: 'Hộp thư Meta', accelerator: 'Ctrl+Shift+M', click: () => { if (!metaView.webContents.getURL()) metaView.webContents.loadURL('https://business.facebook.com/latest/inbox/all'); show('meta'); } },
     { label: 'Xem', submenu: [
       { label: 'Tải lại', accelerator: 'F5', click: () => pageView.webContents.reloadIgnoringCache() },
@@ -245,6 +250,7 @@ app.whenReady().then(async () => {
       { label: 'Cỡ gốc', accelerator: 'Ctrl+0', click: () => pageView.webContents.setZoomLevel(0) }, { type: 'separator' },
       { label: 'Công cụ lỗi', accelerator: 'F12', click: () => pageView.webContents.toggleDevTools() }] },
   ]));
+  app.appLock = appLock;
   app.toggleStudio = toggleStudio; app.views = { page: pageView, panel: panelView, meta: metaView, worker, bar };
   mainWindow.on('closed', () => { mainWindow = null; for (const w of [worker, composer]) if (!w.isDestroyed()) w.destroy(); app.quit(); });
   if (app.isPackaged) getUpdater().checkForUpdatesAndNotify().catch(() => {});
