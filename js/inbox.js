@@ -19,15 +19,24 @@
     for (const [key, v] of old) { S.manual[key] = { ...v, url: await App.uidPicture(v.uid), at: Date.now() }; S.pics.set(key, S.manual[key].url); }
     if (old.length) { await DB.set(App.customerUidKey, S.manual); paintPictures(); }
   });
-  async function setCustomerUid(c) {
-    const key = pictureKey(c), cur = S.manual[key]?.uid || '';
-    const text = prompt(`UID Facebook hoặc link trang cá nhân của ${c.other.name || 'khách'} (để trống để bỏ):`, cur);
-    if (text === null) return;
+  // Ô nhập ngay dưới tên khách (app Windows/Electron không hỗ trợ prompt()).
+  function setCustomerUid(c) {
+    const key = pictureKey(c);
+    $('ibUidForm')?.remove();
+    const input = h('input', { type: 'text', autocomplete: 'off', value: S.manual[key]?.uid || '', placeholder: 'UID số hoặc link facebook.com/profile.php?id=…', 'aria-label': 'UID Facebook của khách', style: 'flex:1;min-width:0' });
+    const form = h('form', { id: 'ibUidForm', className: 'row', style: 'gap:6px;margin-top:8px;width:100%' }, input,
+      h('button', { className: 'btn btn-primary btn-sm', textContent: 'Lưu' }),
+      h('button', { type: 'button', className: 'btn btn-ghost btn-sm', textContent: 'Huỷ', onclick: () => form.remove() }));
+    form.onsubmit = async e => { e.preventDefault(); form.querySelector('button').disabled = true; await saveCustomerUid(c, input.value); };
+    $('ibTitle').append(form); input.focus(); input.select();
+  }
+  async function saveCustomerUid(c, text) {
+    const key = pictureKey(c);
     const all = await DB.get(App.customerUidKey, {});
     if (!text.trim()) { delete all[key]; delete S.manual[key]; S.pics.delete(key); pictureChecked.delete(key); }
     else {
       const uid = App.parseFacebookUid(text);
-      if (!uid) return toast('Cần UID dạng số hoặc link có ?id=… (link dạng facebook.com/ten-rieng không đọc được UID).', 6000);
+      if (!uid) { $('ibUidForm')?.querySelector('button')?.removeAttribute('disabled'); return toast('Cần UID dạng số hoặc link có ?id=… (link dạng facebook.com/ten-rieng không đọc được UID).', 6000); }
       all[key] = S.manual[key] = { uid, url: await App.uidPicture(uid), at: Date.now() };
       S.pics.set(key, all[key].url);
     }

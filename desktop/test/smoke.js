@@ -32,11 +32,14 @@ setTimeout(async () => {
     await new Promise(r => setTimeout(r, 2500));
     out.token = await win.webContents.executeJavaScript("localStorage.getItem('fbTok')");
     out.panel = await app.views.panel.webContents.executeJavaScript('document.body.innerText.slice(0,40)');
+    await win.webContents.executeJavaScript("metaDesktop.tabChanged('messages'); 1"); await new Promise(r => setTimeout(r, 300));
+    out.msgPanel = app.views.panel.getBounds().width;
+    await win.webContents.executeJavaScript("metaDesktop.tabChanged('publishing'); 1"); await new Promise(r => setTimeout(r, 300));
     out.widths = [app.views.page.getBounds().width, app.views.panel.getBounds().width];
     app.toggleStudio(); out.closed = app.views.panel.getBounds().width;
     await win.webContents.executeJavaScript("metaDesktop.openMetaInbox('https://evil.example/x'); metaDesktop.openMetaInbox('https://business.facebook.com/latest/inbox/all?asset_id=1&selected_item_id=9'); 1");
     await new Promise(r => setTimeout(r, 800));
     out.meta = [app.views.meta.webContents.getURL(), app.views.meta.getBounds().width, app.views.page.getBounds().width];
   } catch (e) { out.error = e.message; }
-  console.log('SMOKE', JSON.stringify(out)); process.exit(out.studio?.startsWith('ok') && out.ext?.length && out.panel && out.token === 'TOK123' && out.meta?.[0].includes('asset_id=1') && out.meta[1] > 0 && out.ver?.startsWith('APP ') && out.dev === 'dev' ? 0 : 1);
+  console.log('SMOKE', JSON.stringify(out)); process.exit(out.studio?.startsWith('ok') && out.ext?.length && out.panel && out.token === 'TOK123' && out.meta?.[0].includes('asset_id=1') && out.meta[1] > 0 && out.ver?.startsWith('APP ') && out.dev === 'dev' && out.msgPanel === 0 && out.widths[1] > 0 ? 0 : 1);
 }, 6000);

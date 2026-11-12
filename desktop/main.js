@@ -37,7 +37,7 @@ function handleDeepLink(link) {
 if (process.defaultApp) app.setAsDefaultProtocolClient(PROTOCOL, process.execPath, [path.resolve(process.argv[1] || '.')]);
 else app.setAsDefaultProtocolClient(PROTOCOL);
 
-let extensions, mainWindow, pageView, panelView, metaView, side = 'studio', studio; // side: cột phải đang hiện 'studio' | 'meta' | ''
+let extensions, mainWindow, pageView, panelView, metaView, side = 'studio', group = '', studio; // side: cột phải 'studio' | 'meta' | ''; group: nhóm tab đang mở trên trang
 function newWindow(url, opts = {}) {
   const win = new BrowserWindow({ width: 1280, height: 860, icon: ICON, autoHideMenuBar: true, show: false, ...opts,
     webPreferences: { sandbox: true, contextIsolation: true } });
@@ -97,10 +97,12 @@ app.whenReady().then(async () => {
   mainWindow.contentView.addChildView(metaView);
   const layout = () => {
     const { width, height } = mainWindow.getContentBounds();
+    // Studio AI chỉ hiện khi đang ở nhóm Đăng bài.
+    const cur = side === 'studio' && group !== 'publishing' ? '' : side;
     // Hộp thư Meta cần rộng hơn Studio AI.
-    const w = side === 'studio' && studio ? Math.min(460, Math.round(width * 0.4)) : side === 'meta' ? Math.round(width * 0.55) : 0;
+    const w = cur === 'studio' && studio ? Math.min(460, Math.round(width * 0.4)) : cur === 'meta' ? Math.round(width * 0.55) : 0;
     pageView.setBounds({ x: 0, y: 0, width: width - w, height });
-    for (const [name, v] of [['studio', panelView], ['meta', metaView]]) v.setBounds(side === name ? { x: width - w, y: 0, width: w, height } : { x: width, y: 0, width: 0, height: 0 });
+    for (const [name, v] of [['studio', panelView], ['meta', metaView]]) v.setBounds(cur === name ? { x: width - w, y: 0, width: w, height } : { x: width, y: 0, width: 0, height: 0 });
   };
   mainWindow.on('resize', layout);
   wire(pageView.webContents, mainWindow);
@@ -115,6 +117,7 @@ app.whenReady().then(async () => {
     if (metaView.webContents.getURL() !== url) metaView.webContents.loadURL(url);
     show('meta', true);
   };
+  ipcMain.on('tab-changed', (e, g) => { if (e.sender === pageView.webContents) { group = String(g); layout(); } });
   ipcMain.on('open-meta-inbox', (e, url) => { if (e.sender === pageView.webContents) openMetaInbox(url); });
   // Cập nhật: kiểm tra GitHub Releases, tải về, rồi khởi động lại để cài khi người dùng bấm.
   let updater = null, downloaded = '';

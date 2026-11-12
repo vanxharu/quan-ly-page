@@ -508,6 +508,7 @@ function showTab(id) {
   if (![...$('subnav').children].some(b => b.dataset.tab === id)) return showGroup(g, id);
   current = id;
   local.set('lastTab', `${g}:${id}`);
+  window.metaDesktop?.tabChanged?.(g); // app Windows: Studio AI chỉ hiện ở nhóm Đăng bài
   [...$('subnav').children].forEach(b => b.setAttribute('aria-selected', b.dataset.tab === id));
   let panel = document.querySelector(`[data-panel="${id}"]`);
   const mod = App.tabs[id];
