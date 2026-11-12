@@ -5,11 +5,13 @@ const path = require('path'), crypto = require('crypto');
 const { ElectronChromeExtensions } = require('electron-chrome-extensions');
 const { createMetaAuto } = require('./meta-auto');
 const { setupLock } = require('./app-lock');
+const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 const WEB = process.env.META_ASSISTANT_URL || 'https://vanxharu.github.io/quan-ly-page/';
 const EXT = app.isPackaged ? path.join(process.resourcesPath, 'extension') : path.join(__dirname, '../extension/chatgpt-connector');
 const ICON = path.join(__dirname, 'icon.png');
 // Facebook/Google chặn đăng nhập trong "trình duyệt nhúng": bỏ chữ Electron khỏi User-Agent để giống Chrome.
+app.setAppUserModelId('com.vanxharu.metaassistant'); // biểu tượng + nhóm đúng trên taskbar Windows
 app.userAgentFallback = app.userAgentFallback.replace(/ (Electron|meta-assistant)\/\S+/g, '');
 
 // Đăng nhập Facebook / ChatGPT phải mở trong app (cần window.opener); link khác mở bằng trình duyệt mặc định.
@@ -202,21 +204,35 @@ app.whenReady().then(async () => {
   ipcMain.on('tab-changed', (e, g) => { if (e.sender === pageView.webContents) { group = String(g); layout(); } });
   ipcMain.on('open-meta-inbox', (e, url) => { if (e.sender === pageView.webContents) openMetaInbox(url); });
   // Cập nhật: kiểm tra GitHub Releases, tải về, rồi khởi động lại để cài khi người dùng bấm.
-  let updater = null, downloaded = '';
+  // Chỉ một lượt kiểm tra/tải chạy cùng lúc (lúc mở app, nút trên trang, kiểm tra định kỳ dùng chung), lỗi mạng thì thử lại 1 lần,
+  // tải nguyên file (tải "vi sai" qua blockmap hay hỏng giữa chừng).
+  let updater = null, downloaded = '', checking = null;
   const getUpdater = () => {
-    if (!updater) { updater = require('electron-updater').autoUpdater; updater.autoInstallOnAppQuit = true; updater.on('update-downloaded', info => { downloaded = info.version; }); }
+    if (!updater) {
+      updater = require('electron-updater').autoUpdater;
+      updater.autoDownload = true; updater.autoInstallOnAppQuit = true; updater.disableDifferentialDownload = true;
+      updater.on('update-downloaded', info => { downloaded = info.version; });
+      updater.on('error', () => {}); // lỗi trả về qua lượt kiểm tra, không để văng thông báo lỗi của Electron
+    }
     return updater;
   };
+  const checkOnce = async () => {
+    const u = getUpdater(), r = await u.checkForUpdates();
+    if (!r?.isUpdateAvailable) return { state: 'latest' };
+    await (r.downloadPromise || new Promise((ok, bad) => { u.once('update-downloaded', ok); u.once('error', bad); }));
+    return { state: 'ready', version: downloaded || r.updateInfo.version };
+  };
+  const checkUpdate = () => checking ||= (async () => {
+    try {
+      if (downloaded) return { state: 'ready', version: downloaded };
+      try { return await checkOnce(); } catch { await sleep(5000); return await checkOnce(); }
+    } finally { checking = null; }
+  })();
   ipcMain.handle('app-version', () => app.getVersion());
   ipcMain.handle('update-check', async e => {
     if (!fromPage(e)) return { state: 'denied' };
     if (!app.isPackaged) return { state: 'dev' };
-    if (downloaded) return { state: 'ready', version: downloaded };
-    const r = await getUpdater().checkForUpdates();
-    const v = r?.updateInfo?.version;
-    if (!v || v === app.getVersion() || !r.downloadPromise) return { state: 'latest' };
-    await r.downloadPromise;
-    return { state: 'ready', version: v };
+    return checkUpdate();
   });
   // Cài im lặng rồi tự mở lại app: không hiện trình cài đặt, không phải bấm Next.
   ipcMain.handle('update-install', e => { if (fromPage(e) && downloaded) getUpdater().quitAndInstall(true, true); });
@@ -253,6 +269,6 @@ app.whenReady().then(async () => {
   app.appLock = appLock;
   app.toggleStudio = toggleStudio; app.views = { page: pageView, panel: panelView, meta: metaView, worker, bar };
   mainWindow.on('closed', () => { mainWindow = null; for (const w of [worker, composer]) if (!w.isDestroyed()) w.destroy(); app.quit(); });
-  if (app.isPackaged) getUpdater().checkForUpdatesAndNotify().catch(() => {});
+  if (app.isPackaged) { checkUpdate().catch(() => {}); setInterval(() => checkUpdate().catch(() => {}), 2 * 3600e3); }
 });
 app.on('window-all-closed', () => app.quit());

@@ -20,9 +20,13 @@ jobs:
       # GitHub chỉ cho đăng bản phát hành có tag sẵn.
       - shell: bash
         run: v=v$(node -p "require('./package.json').version"); git tag -f $v; git push -f origin $v
-      # Tạo sẵn bản phát hành: electron-builder tải nhiều file song song, nếu chưa có thì nó tạo trùng 2 bản.
+      # Tạo sẵn bản phát hành dạng nháp: electron-builder tải nhiều file song song (nếu chưa có thì tạo trùng 2 bản);
+      # để nháp tới khi tải xong hết, app đã cài không thấy bản mới thiếu file.
       - shell: bash
-        run: v=v$(node -p "require('./package.json').version"); gh release view $v >/dev/null 2>&1 || gh release create $v --title "Meta Assistant $v" --notes "Bản Windows $v"
+        run: v=v$(node -p "require('./package.json').version"); gh release view $v >/dev/null 2>&1 || gh release create $v --draft --title "Meta Assistant $v" --notes "Bản Windows $v"
         env: { GH_TOKEN: '${{ secrets.GITHUB_TOKEN }}' }
       - run: npx electron-builder --win nsis --publish always
+        env: { GH_TOKEN: '${{ secrets.GITHUB_TOKEN }}' }
+      - shell: bash
+        run: v=v$(node -p "require('./package.json').version"); gh release edit $v --draft=false --latest
         env: { GH_TOKEN: '${{ secrets.GITHUB_TOKEN }}' }

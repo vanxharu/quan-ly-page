@@ -1,6 +1,6 @@
 {
   "name": "meta-assistant",
-  "version": "1.0.26",
+  "version": "1.0.27",
   "description": "Meta Assistant cho Windows: quản lý Page Facebook + Studio AI",
   "main": "main.js",
   "scripts": {
@@ -58,7 +58,7 @@
       "provider": "github",
       "owner": "vanxharu",
       "repo": "quan-ly-page",
-      "releaseType": "release"
+      "releaseType": "draft"
     }
   }
 }

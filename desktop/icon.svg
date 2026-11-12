@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="back" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#3DB8F0"/><stop offset="1" stop-color="#1E9BE0"/></linearGradient>
+    <linearGradient id="front" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#1C86DE"/><stop offset="1" stop-color="#0B63C4"/></linearGradient>
+  </defs>
+  <!-- bong bóng sau: đuôi dưới trái -->
+  <path d="M190 40c-88 0-160 62-160 140 0 40 19 77 50 102l-22 62 70-34c19 6 40 10 62 10 88 0 160-62 160-140S278 40 190 40z" fill="url(#back)"/>
+  <!-- bong bóng trước: đuôi dưới phải -->
+  <path d="M322 150c-94 0-170 68-170 152s76 152 170 152c24 0 47-4 67-12l77 40-22-70c30-28 48-66 48-110 0-84-76-152-170-152z" fill="url(#front)" stroke="#0A4F9E" stroke-opacity=".25" stroke-width="4"/>
+  <text x="322" y="372" text-anchor="middle" font-family="Segoe UI, Arial, sans-serif" font-weight="800" font-size="200" fill="#fff">?</text>
+</svg>
