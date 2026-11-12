@@ -153,7 +153,7 @@ app.whenReady().then(async () => {
   wire(metaView.webContents, mainWindow, false);
   // Luôn lấy index.html mới (GitHub Pages cho trình duyệt giữ bản cũ ~10 phút → trang chạy code cũ sau mỗi lần cập nhật web).
   pageView.webContents.loadURL(WEB, { extraHeaders: 'pragma: no-cache\ncache-control: no-cache\n' });
-  if (studio) panelView.webContents.loadURL(`chrome-extension://${studio.id}/sidepanel.html`);
+  if (studio) panelView.webContents.loadURL(`chrome-extension://${studio.id}/sidepanel.html?desktop=1`);
   const fromPage = e => e.sender === pageView.webContents;
   let dragFrom = null;
   ipcMain.on('side-bar', (e, name, x) => {

@@ -137,6 +137,8 @@
     if(JSON.stringify(settings)!==JSON.stringify(P.settings(state.studioSettings)))await call('PANEL_SAVE_SETTINGS',{settings});
     await chrome.storage.local.set({studioChoices:choices,studioTransport:transport,studioPostCount:count(),studioImages:$('images').checked});
   }
+  // Trong app Windows (sidepanel.html?desktop=1): Studio AI cập nhật cùng app, ẩn nút cập nhật riêng của tiện ích.
+  if(new URLSearchParams(location.search).get('desktop')==='1'){$('updateExtension').hidden=true;$('updateExtension').title='Cập nhật cùng app Meta Assistant';}
   $('updateExtension').onclick=async()=>{
     if(busy())return;updating=true;footer();notice('Đang kiểm tra bản mới, sao lưu và cập nhật vào thư mục đang dùng…');
     try{await checkpointBeforeUpdate();const result=await call('PANEL_UPDATE',{uiVersion:UI_VERSION});
