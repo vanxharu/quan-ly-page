@@ -17,7 +17,8 @@ app.whenReady().then(() => { session.defaultSession.protocol.handle('https', fak
 const electron = require('electron'), opened = []; electron.shell.openExternal = url => { opened.push(url); return Promise.resolve(); };
 for (const f of ['layout.json', 'lock.json']) try { fs.rmSync(path.join(app.getPath('userData'), f)); } catch {}
 require('../main.js');
-setTimeout(async () => {
+const whenViews = fn => { const t = setInterval(() => { if (app.views) { clearInterval(t); setTimeout(fn, 4000); } }, 300); };
+whenViews(async () => {
   const win = app.views.page, out = {};
   try {
     out.ua = await win.webContents.executeJavaScript('navigator.userAgent');
@@ -40,6 +41,7 @@ setTimeout(async () => {
     out.token = await win.webContents.executeJavaScript("localStorage.getItem('fbTok')");
     await win.webContents.executeJavaScript("metaDesktop.loginFacebook({appId:'1062977306762250',configId:'1092800303751533'}); 1"); await new Promise(r => setTimeout(r, 400));
     out.loginBtn = new URL(metaWc.getURL()).searchParams.get('config_id');
+    out.metaBrands = await app.views.meta.webContents.executeJavaScript("(navigator.userAgentData?.brands||[]).map(b=>b.brand).join(',') + ' | ' + navigator.userAgent.includes('Electron')");
     out.lookup = await win.webContents.executeJavaScript("metaDesktop.lookupProfile({pageId:'123456',psid:'9',name:'Nguyễn Thảo'})");
     const png = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
     // Hẹn giờ: làm ngầm hết (ảnh, chữ, nút, ngày + giờ) rồi tự bấm Lên lịch.
@@ -80,6 +82,6 @@ setTimeout(async () => {
     await barWc.executeJavaScript("bar.cmd('close'); 1"); await new Promise(r => setTimeout(r, 300));
     out.hidden = app.views.meta.getBounds().width;
   } catch (e) { out.error = e.message; }
-  console.log('SMOKE', JSON.stringify(out)); process.exit(out.studio?.startsWith('ok') && out.ext?.length && out.panel && out.token === 'TOK123' && out.meta?.[0].includes('asset_id=1') && out.meta[1] > 0 && out.ver?.startsWith('v') && out.dev === 'dev' && out.lookup?.uid === '100012345678' && /thao-big/.test(out.lookup?.pic) && out.composer[0] === 'Lên lịch' && out.composer[1] === 'Xin chào khách' && /^bai-viet\.png:70$/.test(out.composer[2]) && out.composer[3] === 'Gửi tin nhắn' && out.composer[5] === out.expectDate && out.composer[6] === '7' && out.composer[7] === '10' && out.composeResult?.hidden && out.composeResult?.done && out.hiddenPost?.done && out.hiddenPost?.hidden && out.sideAfterHidden === 0 && out.loginBtn === '1092800303751533' && out.lockCover && out.lockWrong === 'Sai mật khẩu.' && out.lockRight && out.lockGone && out.panelCall === true && out.wider && out.hidden === 0 && out.msgPanel === 0 && out.widths[1] > 0 ? 0 : 1);
-}, 6000);
+  console.log('SMOKE', JSON.stringify(out)); process.exit(out.studio?.startsWith('ok') && out.ext?.length && out.panel && out.token === 'TOK123' && out.meta?.[0].includes('asset_id=1') && out.meta[1] > 0 && out.ver?.startsWith('v') && out.dev === 'dev' && out.lookup?.uid === '100012345678' && /thao-big/.test(out.lookup?.pic) && out.composer[0] === 'Lên lịch' && out.composer[1] === 'Xin chào khách' && /^bai-viet\.png:70$/.test(out.composer[2]) && out.composer[3] === 'Gửi tin nhắn' && out.composer[5] === out.expectDate && out.composer[6] === '7' && out.composer[7] === '10' && out.composeResult?.hidden && out.composeResult?.done && out.hiddenPost?.done && out.hiddenPost?.hidden && out.sideAfterHidden === 0 && out.loginBtn === '1092800303751533' && out.lockCover && out.lockWrong === 'Sai mật khẩu.' && out.lockRight && out.lockGone && out.panelCall === true && /Google Chrome/.test(out.metaBrands) && / \| false$/.test(out.metaBrands) && out.wider && out.hidden === 0 && out.msgPanel === 0 && out.widths[1] > 0 ? 0 : 1);
+});
 // lookup có nghỉ 1.5–3 s; composer chờ tối đa vài giây

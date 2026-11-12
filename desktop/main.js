@@ -139,6 +139,21 @@ app.whenReady().then(async () => {
   panelView = new WebContentsView({ webPreferences: { sandbox: true, contextIsolation: true } });
   mainWindow.contentView.addChildView(pageView);
   metaView = new WebContentsView({ webPreferences: { partition: META, sandbox: true, contextIsolation: true } });
+  // Business Suite trong Electron báo lỗi (invariant #23746) và không dựng ô viết bài. UA đã bỏ chữ Electron nhưng
+  // "client hints" (navigator.userAgentData, sec-ch-ua) vẫn thiếu thương hiệu Google Chrome → Facebook nhận là trình duyệt lạ.
+  // Dùng DevTools Protocol giả đầy đủ Chrome cho cột Meta + 2 cửa sổ ngầm (áp dụng cho mọi lần tải trang sau đó).
+  const chromeMajor = process.versions.chrome.split('.')[0];
+  const asChrome = async wc => {
+    try {
+      if (!wc.getURL()) await wc.loadURL('about:blank'); // chưa có trang thì lệnh DevTools không trả lời
+      if (!wc.debugger.isAttached()) wc.debugger.attach('1.3');
+      const brands = [{ brand: 'Google Chrome', version: chromeMajor }, { brand: 'Chromium', version: chromeMajor }, { brand: 'Not_A Brand', version: '24' }];
+      await wc.debugger.sendCommand('Emulation.setUserAgentOverride', { userAgent: app.userAgentFallback, platform: 'Win32', acceptLanguage: 'vi-VN,vi;q=0.9,en;q=0.8',
+        userAgentMetadata: { brands, fullVersionList: brands.map(b => ({ ...b, version: b.brand === 'Not_A Brand' ? '24.0.0.0' : process.versions.chrome })),
+          platform: 'Windows', platformVersion: '15.0.0', architecture: 'x86', model: '', mobile: false, bitness: '64', wow64: false } });
+    } catch (e) { console.error('Không giả Chrome được cho Business Suite:', e.message); }
+  };
+  for (const wc of [metaView.webContents, worker.webContents, composer.webContents]) await asChrome(wc);
   mainWindow.contentView.addChildView(panelView);
   mainWindow.contentView.addChildView(metaView);
   // Độ rộng cột phải (tỉ lệ cửa sổ), nhớ giữa các lần mở app.

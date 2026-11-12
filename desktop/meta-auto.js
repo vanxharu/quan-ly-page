@@ -175,8 +175,9 @@ function createMetaAuto({ worker, composer, metaView, showMeta = () => () => {},
               for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
               const dt = new DataTransfer(); dt.items.add(new File([bytes], name, { type }));
               this.files = dt.files;
+              const n = this.files.length; // đếm trước: trang thường xoá ô chọn file ngay sau khi nhận ảnh
               this.dispatchEvent(new Event('input', { bubbles: true })); this.dispatchEvent(new Event('change', { bubbles: true }));
-              return this.files.length;
+              return n;
             }` });
           done.image = r?.result?.value === 1;
           step('image', done.image ? 'ok' : 'fail');
@@ -227,7 +228,7 @@ function createMetaAuto({ worker, composer, metaView, showMeta = () => () => {},
         }
       }
     } catch (e) { notify(`Business Suite: lỗi khi điền sẵn (${e.message}). Làm tay phần còn lại.`); }
-    finally { try { dbg.detach(); } catch {} }
+    // Giữ debugger gắn: nó mang cấu hình giả Chrome (userAgentMetadata) cho Business Suite, tháo ra là mất.
     for (const k of ['image', 'text', 'button', 'schedule']) if (done[k] !== true) step(k, 'fail');
     return { done, find, click, waitFor };
   };
@@ -252,7 +253,7 @@ function createMetaAuto({ worker, composer, metaView, showMeta = () => () => {},
             for (let i = 0; i < 60 && !leftComposer(wc); i++) await sleep(1000);
             if (leftComposer(wc)) { progress({ id: 'publish', state: 'ok' }); wc.loadURL('about:blank').catch(() => {}); return { done: true, filled: r.done, hidden: true }; }
           }
-        } catch {} finally { try { dbg.detach(); } catch {} }
+        } catch {}
       }
       notify('Đăng ngầm chưa xong (Business Suite thiếu bước). Mở cột Meta để bạn hoàn tất…');
       progress({ id: 'reset', state: 'reset' }); // chạy lại các bước trong cột Meta, bảng tiến độ làm mới
