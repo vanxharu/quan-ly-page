@@ -15,10 +15,38 @@
   // Ảnh theo UID nhập tay: ưu tiên hơn ảnh Meta trả về. Link ảnh fbcdn hết hạn sau vài ngày nên lấy lại sau 2 ngày.
   DB.get(App.customerUidKey, {}).then(all => { S.manual = all || {}; for (const [key, v] of Object.entries(S.manual)) S.pics.set(key, v.url); }).catch(() => {});
   App.onLogin.push(async () => {
-    const old = Object.entries(S.manual).filter(([, v]) => Date.now() - (v.at || 0) > 2 * 864e5);
+    const old = Object.entries(S.manual).filter(([, v]) => v.uid && !v.auto && Date.now() - (v.at || 0) > 2 * 864e5);
     for (const [key, v] of old) { S.manual[key] = { ...v, url: await App.uidPicture(v.uid), at: Date.now() }; S.pics.set(key, S.manual[key].url); }
     if (old.length) { await DB.set(App.customerUidKey, S.manual); paintPictures(); }
   });
+  // App Windows: app chưa Live nên Graph không trả ảnh khách → đọc ảnh + UID từ Business Suite (khung ẩn của app).
+  // Chỉ chạy cho hội thoại bạn mở (và nút "Lấy avatar" cho danh sách), từng khách một.
+  const autoPics = !!window.metaDesktop?.lookupProfile;
+  let loginWarned = false;
+  async function lookupFromMeta(c, { force = false } = {}) {
+    const key = pictureKey(c), cur = S.manual[key];
+    if (!autoPics || !c.other.id || (cur && (!cur.auto || (!force && Date.now() - (cur.at || 0) < 2 * 864e5)))) return false;
+    const r = await window.metaDesktop.lookupProfile({ pageId: String(c.page.id), psid: String(c.other.id), name: c.other.name || '' }).catch(e => ({ error: e.message }));
+    if (r.error) {
+      if (r.error === 'login' && !loginWarned) { loginWarned = true; toast('Mở menu "Hộp thư Meta" và đăng nhập Business Suite một lần để app tự lấy avatar khách.', 8000); }
+      return false;
+    }
+    if (!r.pic) return false;
+    const all = await DB.get(App.customerUidKey, {});
+    all[key] = S.manual[key] = { uid: r.uid || '', url: r.pic, at: Date.now(), auto: true };
+    await DB.set(App.customerUidKey, all);
+    S.pics.set(key, r.pic); paintPictures();
+    if (S.conv && pictureKey(S.conv) === key) drawHead(S.conv);
+    return true;
+  }
+  async function lookupList(btn) {
+    const todo = S.convs.filter(c => !S.pics.get(pictureKey(c))).slice(0, 30);
+    if (!todo.length) return toast('Danh sách đã có đủ avatar.');
+    btn.disabled = true; let ok = 0;
+    for (const [i, c] of todo.entries()) { btn.textContent = `Đang lấy ${i + 1}/${todo.length}…`; if (await lookupFromMeta(c, { force: true })) ok++; }
+    btn.disabled = false; btn.textContent = 'Lấy avatar';
+    toast(`Đã lấy avatar cho ${ok}/${todo.length} khách.`);
+  }
   // Ô nhập ngay dưới tên khách (app Windows/Electron không hỗ trợ prompt()).
   function setCustomerUid(c) {
     const key = pictureKey(c);
@@ -113,6 +141,7 @@
             h('div', { className: 'chips', id: 'ibFilter' }, ...[['all', 'Tất cả'], ['unread', 'Chưa đọc'], ['unanswered', 'Chưa trả lời'], ['today', 'Hôm nay']].map(([f, t]) =>
               h('button', { className: 'chip', dataset: { f }, textContent: t, 'aria-pressed': String(f === S.filter), onclick: () => { S.filter = f; drawList(); } }))),
             h('select', { id: 'ibLabel', style: 'width:auto;padding:4px 8px;font-size:12px', onchange: () => drawList() }),
+            window.metaDesktop?.lookupProfile ? h('button',{type:'button',className:'btn btn-ghost btn-sm',textContent:'Lấy avatar',title:'Đọc avatar + UID khách từ Business Suite (từng khách, tối đa 30)',onclick:e=>lookupList(e.currentTarget)}) : null,
             h('button',{type:'button',className:'btn btn-ghost btn-sm',textContent:'Báo lỗi ảnh',title:'Tải báo lỗi ảnh khách trên phiên hiện tại',onclick:downloadAvatarDiagnostic})),
           h('div', { className: 'list', id: 'ibList' }),
           h('button', { type: 'button', className: 'btn btn-ghost btn-sm', id: 'ibMore', hidden: true, textContent: 'Tải thêm hội thoại', onclick: loadMore })),
@@ -293,9 +322,9 @@
     const identity=S.identities.get(pictureKey(c));
     $('ibTitle').replaceChildren(h('span', { className: 'thread-head' }, custAvatar(c, 32),
       h('span', { style: 'min-width:0' }, h('div', { className: 'card-title', textContent: c.other.name || 'Khách' }), h('div', { className: 'hint', textContent: c.page.name }),
-        S.manual?.[pictureKey(c)] ? h('a',{className:'hint',href:'https://www.facebook.com/profile.php?id='+S.manual[pictureKey(c)].uid,target:'_blank',rel:'noopener noreferrer',textContent:'UID '+S.manual[pictureKey(c)].uid})
+        S.manual?.[pictureKey(c)]?.uid ? h('a',{className:'hint',href:'https://www.facebook.com/profile.php?id='+S.manual[pictureKey(c)].uid,target:'_blank',rel:'noopener noreferrer',textContent:'UID '+S.manual[pictureKey(c)].uid})
           : identity?h('a',{className:'hint',href:identity.profileUrl,target:'_blank',rel:'noopener noreferrer',textContent:'UID '+identity.uid}):null),
-      h('button',{type:'button',className:'btn btn-ghost btn-sm',title:'Nhập UID Facebook của khách để hiện ảnh đại diện',textContent:S.manual?.[pictureKey(c)]?'Đổi UID':'Gắn UID',onclick:()=>setCustomerUid(c)}),
+      h('button',{type:'button',className:'btn btn-ghost btn-sm',title:'Nhập UID Facebook của khách để hiện ảnh đại diện',textContent:S.manual?.[pictureKey(c)]?.uid?'Đổi UID':'Gắn UID',onclick:()=>setCustomerUid(c)}),
       App.metaLink(App.businessInboxUrl(c.page.id, c.other.id), 'Hộp thư Meta ↗')));
   }
   async function drawList() {
@@ -357,6 +386,7 @@
     S.conv = c;
     drawHead(c);
     queuePics([c]);
+    if (switching) lookupFromMeta(c);
     $('ibReload').hidden = false;
     if (switching) {
       S.draftReady = false; S.tpl = null; S.image = '';

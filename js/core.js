@@ -340,6 +340,17 @@ App.adAccount = async () => {
   if (!acc) throw Error('Tài khoản Facebook này chưa có tài khoản quảng cáo. Tạo một tài khoản ở business.facebook.com (không cần nạp tiền) để gắn nút Gửi tin nhắn vào bài có ảnh.');
   return acc.id;
 };
+// App Windows: điền sẵn trình soạn bài Business Suite (ảnh + nội dung) ở cột bên; bạn bật "Gửi tin nhắn", chọn giờ và bấm Đăng.
+// Không cần tài khoản quảng cáo. Chờ tới khi bạn đăng xong (trang rời trình soạn) rồi mới sang bài tiếp theo.
+App.composeInBusinessSuite = async (page, text, imageData, when = 0) => {
+  const image = imageData instanceof Blob ? await new Promise((ok, bad) => { const r = new FileReader(); r.onload = () => ok(r.result); r.onerror = bad; r.readAsDataURL(imageData); }) : String(imageData);
+  toast(`Business Suite: bật nút "Gửi tin nhắn"${when ? `, hẹn ${fmtTime(when * 1000)}` : ''} rồi bấm Đăng cho ${page.name}.`, 15000);
+  const r = await globalThis.metaDesktop.composePost({ pageId: String(page.id), text: text || '', image });
+  if (r.error === 'login') throw Error('Đăng nhập Business Suite ở cột Hộp thư Meta trước.');
+  if (r.error) throw Error(r.error);
+  if (!r.done) throw Error('Chưa đăng trong Business Suite (đóng trình soạn hoặc quá 15 phút).');
+  return { id: '', post_id: '', viaBusinessSuite: true };
+};
 App.publishWithMessengerButton = async (page, text, imageData, when = 0) => {
   if (!App.userToken) throw Error('Đăng nhập Facebook lại để đăng bài có nút Gửi tin nhắn.');
   if (when && !App.server?.user) throw Error('Bài có ảnh + nút Gửi tin nhắn được máy chủ bot đăng đúng giờ: đăng nhập máy chủ ở Quản lý › Cài đặt trước.');
@@ -364,6 +375,7 @@ App.publishWithMessengerButton = async (page, text, imageData, when = 0) => {
 // Đăng (hoặc hẹn) một bài lên Page. when: giây Unix, 0 = đăng ngay. options.messageButton: thêm nút/link Gửi tin nhắn.
 App.publish = async (page, text, imageData, when = 0, options = {}) => {
   const sched = when ? { published: false, scheduled_publish_time: when, unpublished_content_type:'SCHEDULED' } : {};
+  if (options.messageButton && imageData && globalThis.metaDesktop?.composePost) return App.composeInBusinessSuite(page, text, imageData, when);
   if (options.messageButton && imageData) return App.publishWithMessengerButton(page, text, imageData, when);
   if (options.messageButton && !imageData) {
     const link = App.messengerLink(page);

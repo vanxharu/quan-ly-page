@@ -3,6 +3,7 @@
 const { app, BaseWindow, BrowserWindow, Menu, WebContentsView, ipcMain, session, shell } = require('electron');
 const path = require('path'), crypto = require('crypto');
 const { ElectronChromeExtensions } = require('electron-chrome-extensions');
+const { createMetaAuto } = require('./meta-auto');
 
 const WEB = process.env.META_ASSISTANT_URL || 'https://vanxharu.github.io/quan-ly-page/';
 const EXT = app.isPackaged ? path.join(process.resourcesPath, 'extension') : path.join(__dirname, '../extension/chatgpt-connector');
@@ -89,6 +90,9 @@ app.whenReady().then(async () => {
   catch (e) { console.error('Không nạp được Studio AI:', e); }
   // Một cửa sổ: trang web bên trái, Studio AI luôn nằm kế bên phải (thay cho bảng bên của Chrome).
   mainWindow = new BaseWindow({ width: 1440, height: 880, icon: ICON, title: `Meta Assistant ${app.getVersion()}` });
+  // Khung ẩn (nằm dưới trang chính) để đọc Business Suite: avatar + UID khách.
+  const worker = new WebContentsView({ webPreferences: { sandbox: true, contextIsolation: true, backgroundThrottling: false } });
+  mainWindow.contentView.addChildView(worker);
   pageView = new WebContentsView({ webPreferences: { sandbox: true, contextIsolation: true, preload: path.join(__dirname, 'preload.js') } });
   panelView = new WebContentsView({ webPreferences: { sandbox: true, contextIsolation: true } });
   mainWindow.contentView.addChildView(pageView);
@@ -102,6 +106,7 @@ app.whenReady().then(async () => {
     // Hộp thư Meta cần rộng hơn Studio AI.
     const w = cur === 'studio' && studio ? Math.min(460, Math.round(width * 0.4)) : cur === 'meta' ? Math.round(width * 0.55) : 0;
     pageView.setBounds({ x: 0, y: 0, width: width - w, height });
+    worker.setBounds({ x: 0, y: 0, width: Math.max(width, 1200), height: Math.max(height, 800) });
     for (const [name, v] of [['studio', panelView], ['meta', metaView]]) v.setBounds(cur === name ? { x: width - w, y: 0, width: w, height } : { x: width, y: 0, width: 0, height: 0 });
   };
   mainWindow.on('resize', layout);
@@ -110,6 +115,7 @@ app.whenReady().then(async () => {
   wire(metaView.webContents, mainWindow, false);
   pageView.webContents.loadURL(WEB);
   if (studio) panelView.webContents.loadURL(`chrome-extension://${studio.id}/sidepanel.html`);
+  const fromPage = e => e.sender === pageView.webContents;
   const show = (name, open) => { side = (typeof open === 'boolean' ? open : side !== name) ? name : ''; layout(); };
   const toggleStudio = open => show('studio', open);
   const openMetaInbox = url => {
@@ -117,6 +123,11 @@ app.whenReady().then(async () => {
     if (metaView.webContents.getURL() !== url) metaView.webContents.loadURL(url);
     show('meta', true);
   };
+  const auto = createMetaAuto({ worker, metaView, showMeta: () => show('meta', true) });
+  worker.webContents.setAudioMuted(true);
+  worker.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  ipcMain.handle('meta-lookup', (e, args) => fromPage(e) ? auto.lookupProfile(args || {}) : { error: 'denied' });
+  ipcMain.handle('meta-compose', (e, args) => fromPage(e) ? auto.composePost(args || {}) : { error: 'denied' });
   ipcMain.on('tab-changed', (e, g) => { if (e.sender === pageView.webContents) { group = String(g); layout(); } });
   ipcMain.on('open-meta-inbox', (e, url) => { if (e.sender === pageView.webContents) openMetaInbox(url); });
   // Cập nhật: kiểm tra GitHub Releases, tải về, rồi khởi động lại để cài khi người dùng bấm.
@@ -125,7 +136,6 @@ app.whenReady().then(async () => {
     if (!updater) { updater = require('electron-updater').autoUpdater; updater.on('update-downloaded', info => { downloaded = info.version; }); }
     return updater;
   };
-  const fromPage = e => e.sender === pageView.webContents;
   ipcMain.handle('app-version', () => app.getVersion());
   ipcMain.handle('update-check', async e => {
     if (!fromPage(e)) return { state: 'denied' };
@@ -151,7 +161,7 @@ app.whenReady().then(async () => {
       { label: 'Cỡ gốc', accelerator: 'Ctrl+0', click: () => pageView.webContents.setZoomLevel(0) }, { type: 'separator' },
       { label: 'Công cụ lỗi', accelerator: 'F12', click: () => pageView.webContents.toggleDevTools() }] },
   ]));
-  app.toggleStudio = toggleStudio; app.views = { page: pageView, panel: panelView, meta: metaView };
+  app.toggleStudio = toggleStudio; app.views = { page: pageView, panel: panelView, meta: metaView, worker };
   mainWindow.on('closed', () => { mainWindow = null; app.quit(); });
   if (app.isPackaged) getUpdater().checkForUpdatesAndNotify().catch(() => {});
 });

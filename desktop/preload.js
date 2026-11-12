@@ -3,6 +3,8 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('metaDesktop', {
   openMetaInbox: url => ipcRenderer.send('open-meta-inbox', String(url)),
   tabChanged: group => ipcRenderer.send('tab-changed', String(group)),
+  lookupProfile: args => ipcRenderer.invoke('meta-lookup', args),
+  composePost: args => ipcRenderer.invoke('meta-compose', args),
   version: () => ipcRenderer.invoke('app-version'),
   checkUpdate: () => ipcRenderer.invoke('update-check'),
   installUpdate: () => ipcRenderer.invoke('update-install'),

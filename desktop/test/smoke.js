@@ -5,6 +5,8 @@ const type = f => f.endsWith('.js') ? 'text/javascript' : f.endsWith('.css') ? '
 app.whenReady().then(() => session.defaultSession.protocol.handle('https', req => {
   if (req.url.startsWith(PREFIX)) { let f = path.join(ROOT, decodeURIComponent(new URL(req.url).pathname.replace('/quan-ly-page/', ''))); if (f.endsWith(path.sep) || f === ROOT) f = path.join(f, 'index.html');
     try { return new Response(fs.readFileSync(f), { headers: { 'content-type': type(f) } }); } catch { return new Response('', { status: 404 }); } }
+  if (req.url.startsWith('https://business.facebook.com/latest/inbox')) return new Response(fs.readFileSync(path.join(__dirname, 'fixtures/inbox.html')), { headers: { 'content-type': 'text/html' } });
+  if (req.url.startsWith('https://business.facebook.com/latest/composer')) return new Response(fs.readFileSync(path.join(__dirname, 'fixtures/composer.html')), { headers: { 'content-type': 'text/html' } });
   if (req.url.includes('graph.facebook.com') && req.url.includes('/me/accounts')) return Response.json({ data: [{ id: '1', name: 'Page A', access_token: 't' }] });
   if (req.url.includes('graph.facebook.com')) return Response.json({ data: [] });
   return new Response('', { status: 404 });
@@ -31,6 +33,15 @@ setTimeout(async () => {
     app.emit('second-instance', {}, ['x', 'metaassistant://login?access_token=TOK123&state=' + oauth.searchParams.get('state')]);
     await new Promise(r => setTimeout(r, 2500));
     out.token = await win.webContents.executeJavaScript("localStorage.getItem('fbTok')");
+    out.lookup = await win.webContents.executeJavaScript("metaDesktop.lookupProfile({pageId:'123456',psid:'9',name:'Nguyễn Thảo'})");
+    const png = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+    const composing = win.webContents.executeJavaScript(`metaDesktop.composePost({pageId:'123456',text:'Xin chào khách',image:'${png}'})`);
+    await new Promise(r => setTimeout(r, 4000));
+    const meta = app.views.meta.webContents;
+    out.composer = [await meta.executeJavaScript("document.getElementById('ed').innerText"), meta.getTitle()];
+    meta.loadURL('https://business.facebook.com/latest/inbox/all?asset_id=123456');
+    out.composeResult = await composing;
+    app.toggleStudio(true);
     out.panel = await app.views.panel.webContents.executeJavaScript('document.body.innerText.slice(0,40)');
     await win.webContents.executeJavaScript("metaDesktop.tabChanged('messages'); 1"); await new Promise(r => setTimeout(r, 300));
     out.msgPanel = app.views.panel.getBounds().width;
@@ -41,5 +52,6 @@ setTimeout(async () => {
     await new Promise(r => setTimeout(r, 800));
     out.meta = [app.views.meta.webContents.getURL(), app.views.meta.getBounds().width, app.views.page.getBounds().width];
   } catch (e) { out.error = e.message; }
-  console.log('SMOKE', JSON.stringify(out)); process.exit(out.studio?.startsWith('ok') && out.ext?.length && out.panel && out.token === 'TOK123' && out.meta?.[0].includes('asset_id=1') && out.meta[1] > 0 && out.ver?.startsWith('APP ') && out.dev === 'dev' && out.msgPanel === 0 && out.widths[1] > 0 ? 0 : 1);
+  console.log('SMOKE', JSON.stringify(out)); process.exit(out.studio?.startsWith('ok') && out.ext?.length && out.panel && out.token === 'TOK123' && out.meta?.[0].includes('asset_id=1') && out.meta[1] > 0 && out.ver?.startsWith('APP ') && out.dev === 'dev' && out.lookup?.uid === '100012345678' && /thao/.test(out.lookup?.pic) && out.composer[0] === 'Xin chào khách' && /^file:/.test(out.composer[1]) && out.composeResult?.done && out.msgPanel === 0 && out.widths[1] > 0 ? 0 : 1);
 }, 6000);
+// lookup có nghỉ 1.5–3 s; composer chờ tối đa vài giây
