@@ -145,7 +145,8 @@ app.whenReady().then(async () => {
   wire(pageView.webContents, mainWindow);
   wire(panelView.webContents, mainWindow, false);
   wire(metaView.webContents, mainWindow, false);
-  pageView.webContents.loadURL(WEB);
+  // Luôn lấy index.html mới (GitHub Pages cho trình duyệt giữ bản cũ ~10 phút → trang chạy code cũ sau mỗi lần cập nhật web).
+  pageView.webContents.loadURL(WEB, { extraHeaders: 'pragma: no-cache\ncache-control: no-cache\n' });
   if (studio) panelView.webContents.loadURL(`chrome-extension://${studio.id}/sidepanel.html`);
   const fromPage = e => e.sender === pageView.webContents;
   let dragFrom = null;
@@ -216,7 +217,7 @@ app.whenReady().then(async () => {
     { label: 'Studio AI', accelerator: 'Ctrl+Shift+A', click: () => toggleStudio() },
     { label: 'Hộp thư Meta', accelerator: 'Ctrl+Shift+M', click: () => { if (!metaView.webContents.getURL()) metaView.webContents.loadURL('https://business.facebook.com/latest/inbox/all'); show('meta'); } },
     { label: 'Xem', submenu: [
-      { label: 'Tải lại', accelerator: 'F5', click: () => pageView.webContents.reload() },
+      { label: 'Tải lại', accelerator: 'F5', click: () => pageView.webContents.reloadIgnoringCache() },
       { label: 'Tải lại Studio AI', click: () => panelView.webContents.reload() },
       { label: 'Tải lại hộp thư Meta', click: () => metaView.webContents.reload() },
       // Lưu trang Business Suite mà app vừa đọc (khung ẩn) + cột Hộp thư Meta ra Desktop, để sửa cách đọc avatar/UID theo giao diện thật.
