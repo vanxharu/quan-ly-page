@@ -1,2 +1,14 @@
-<!doctype html><meta charset="utf-8"><body><div contenteditable="true" role="textbox" id="ed" style="min-height:40px;border:1px solid"></div><input type="file" accept="image/*" id="f">
-<script>document.getElementById('f').onchange=e=>document.title='file:'+e.target.files[0].name+':'+e.target.files[0].size;</script></body>
+<!doctype html><meta charset="utf-8"><body style="font:14px sans-serif">
+<div role="button" id="add" style="padding:8px;border:1px solid"><span><div>Thêm ảnh/video</div></span></div>
+<div data-pagelet="BusinessComposerTextEditor" id="pl"></div>
+<label id="js_i0" for="js_hz"><span><span>Nút</span></span></label>
+<div role="combobox" id="js_hz" aria-labelledby="js_i0 js_i3" aria-haspopup="listbox" style="padding:8px;border:1px solid"><div id="js_i3">Không dùng nút</div></div>
+<div id="lb"></div>
+<input type="checkbox" role="switch" id="sw" aria-label="Đặt ngày và giờ" style="opacity:0;position:absolute;width:1px;height:1px"><label for="sw"><span>Đặt ngày và giờ</span></label>
+<script>
+// Giả lập giao diện Business Suite: ô văn bản tải chậm, nút ảnh mở hộp chọn file, combobox Nút, công tắc hẹn giờ.
+setTimeout(() => document.getElementById('pl').innerHTML = '<div contenteditable="true" role="textbox" id="ed" style="min-height:40px;border:1px solid"></div>', 2000);
+document.getElementById('add').onclick = () => { const f = document.createElement('input'); f.type = 'file'; f.accept = 'image/*'; f.onchange = () => document.body.dataset.file = f.files[0].name + ':' + f.files[0].size; f.click(); };
+document.getElementById('js_hz').onclick = () => document.getElementById('lb').innerHTML = '<div role="listbox"><div role="option">Không dùng nút</div><div role="option" id="msg" style="padding:6px">Gửi tin nhắn</div></div>';
+document.addEventListener('click', e => { if (e.target.closest('#msg')) { document.getElementById('js_i3').textContent = 'Gửi tin nhắn'; document.getElementById('lb').innerHTML = ''; } });
+</script></body>
