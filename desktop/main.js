@@ -104,6 +104,8 @@ app.whenReady().then(async () => {
   catch (e) { console.error('Không nạp được Studio AI:', e); }
   // Một cửa sổ: trang web bên trái, Studio AI luôn nằm kế bên phải (thay cho bảng bên của Chrome).
   mainWindow = new BaseWindow({ width: 1440, height: 880, icon: ICON, title: `Meta Assistant ${app.getVersion()}` });
+  // Ẩn thanh menu cho gọn (bấm Alt để hiện); các phím tắt Ctrl+Shift+A / Ctrl+Shift+M vẫn dùng được.
+  mainWindow.setAutoHideMenuBar(true); mainWindow.setMenuBarVisibility(false);
   // Khung ẩn để đọc Business Suite: avatar + UID khách.
   // Cửa sổ vẽ ngầm (offscreen): vẫn chạy cuộn / tải thêm như trang thật nhưng không hiện ra.
   const worker = new BrowserWindow({ show: false, width: 1280, height: 900, webPreferences: { offscreen: true, sandbox: true, contextIsolation: true, backgroundThrottling: false } });

@@ -822,18 +822,21 @@ App.checkedPages = box => [...box.querySelectorAll('input:checked')].map(i => Ap
 // App Windows: phiên bản cạnh tên app + nút Cập nhật (tải bản mới từ GitHub Releases, khởi động lại để cài).
 if (window.metaDesktop?.version) (async () => {
   const v = await window.metaDesktop.version(), tag = document.querySelector('.pro-tag'), btn = $('btnUpdate');
-  tag.textContent = 'APP ' + v; tag.title = 'Meta Assistant cho Windows, phiên bản ' + v;
-  btn.hidden = false;
+  // Thanh trên gọn cho app: nhãn chỉ ghi phiên bản (bấm để kiểm tra cập nhật), nút Cập nhật chỉ hiện khi có bản mới.
+  document.body.classList.add('desktop-app');
+  tag.textContent = 'v' + v; tag.title = `Meta Assistant ${v} · bấm để kiểm tra cập nhật`; tag.style.cursor = 'pointer';
+  tag.onclick = () => btn.onclick();
+  btn.hidden = true;
   // Kiểm tra ngầm khi mở app: có bản mới thì tải sẵn, nút đổi thành "Mở lại để lên x.y.z" (tắt app cũng tự cập nhật).
-  window.metaDesktop.checkUpdate().then(r => { if (r.state === 'ready') { btn.dataset.ready = '1'; btn.textContent = `Mở lại để lên ${r.version}`; btn.classList.add('btn-primary'); } }).catch(() => {});
+  window.metaDesktop.checkUpdate().then(r => { if (r.state === 'ready') { btn.dataset.ready = '1'; btn.hidden = false; btn.textContent = `Cập nhật ${r.version}`; btn.classList.add('btn-primary'); } }).catch(() => {});
   btn.onclick = async () => {
     if (btn.dataset.ready) return window.metaDesktop.installUpdate();
-    btn.disabled = true; btn.textContent = 'Đang kiểm tra…';
+    btn.disabled = true; tag.textContent = 'Đang kiểm tra…';
     try {
       const r = await window.metaDesktop.checkUpdate();
-      if (r.state === 'ready') { btn.dataset.ready = '1'; btn.textContent = `Mở lại để lên ${r.version}`; toast(`Đã tải bản ${r.version}. Bấm "Mở lại để lên ${r.version}": app tự cập nhật và mở lại, không cần cài đặt.`, 7000); }
-      else { btn.textContent = 'Cập nhật'; toast(r.state === 'latest' ? `Đang dùng bản mới nhất (${v}).` : 'Bản chạy thử không tự cập nhật.'); }
-    } catch (e) { btn.textContent = 'Cập nhật'; toast('Không kiểm tra được bản mới: ' + e.message, 6000); }
-    btn.disabled = false;
+      if (r.state === 'ready') { btn.dataset.ready = '1'; btn.hidden = false; btn.classList.add('btn-primary'); btn.textContent = `Cập nhật ${r.version}`; toast(`Đã tải bản ${r.version}. Bấm "Cập nhật ${r.version}": app tự cập nhật và mở lại, không cần cài đặt.`, 7000); }
+      else { toast(r.state === 'latest' ? `Đang dùng bản mới nhất (${v}).` : 'Bản chạy thử không tự cập nhật.'); }
+    } catch (e) { toast('Không kiểm tra được bản mới: ' + e.message, 6000); }
+    btn.disabled = false; tag.textContent = 'v' + v;
   };
 })();

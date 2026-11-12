@@ -1,0 +1,15 @@
+/* App Windows: thanh trên gọn (48px), bỏ dòng "Quản lý Fanpage", logo/nút nhỏ lại. */
+.desktop-app .header-top{height:48px;padding:6px 16px;gap:8px}
+.desktop-app .header-top::before{content:none!important}
+.desktop-app .logo{gap:7px}
+.desktop-app .logo-badge,.desktop-app .logo-badge img{width:26px;height:26px;border-radius:8px}
+.desktop-app .app-title{font-size:14px}
+.desktop-app .pro-tag{font-size:9px;padding:2px 5px}
+.desktop-app .dot{display:none}
+.desktop-app .page-btn{height:32px;padding:3px 10px}
+.desktop-app .icon-btn{width:30px;height:30px;border-radius:8px}
+.desktop-app #btnUpdate{min-height:30px}
+.desktop-app.workspace-connected .workspace-sidebar{top:48px}
+.desktop-app.workspace-connected .logo{top:11px;left:18px}
+/* Cửa sổ hẹp (cột Meta đang mở): một hàng — nút menu, logo, chọn Page giãn giữa, nút bên phải. */
+@media(max-width:900px){.desktop-app.workspace-connected .header-top{min-height:48px;height:48px;padding:6px 12px;flex-wrap:nowrap}.desktop-app.workspace-connected .app-title{display:none}.desktop-app.workspace-connected .logo{margin-right:0}.desktop-app.workspace-connected .page-picker{order:0;flex:1 1 auto;min-width:0}.desktop-app.workspace-connected .page-btn{width:100%}}
