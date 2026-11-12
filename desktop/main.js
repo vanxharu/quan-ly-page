@@ -225,6 +225,18 @@ app.whenReady().then(async () => {
   worker.webContents.setAudioMuted(true);
   worker.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   ipcMain.handle('meta-lookup', (e, args) => fromPage(e) ? auto.lookupProfile(args || {}) : { error: 'denied' });
+  ipcMain.handle('meta-threads', (e, args) => fromPage(e) ? auto.listThreads(args || {}) : { error: 'denied' });
+  // Mở đúng hội thoại trong cột Meta: tải hộp thư của Page rồi bấm vào dòng của khách (UID).
+  ipcMain.handle('meta-open-thread', async (e, { pageId, uid } = {}) => {
+    if (!fromPage(e) || !/^\d+$/.test(String(pageId)) || !/^\d+$/.test(String(uid))) return false;
+    openMetaInbox(`https://business.facebook.com/latest/inbox/messenger?asset_id=${pageId}&mailbox_id=${pageId}`);
+    for (let i = 0; i < 24; i++) {
+      await sleep(500);
+      const ok = await metaView.webContents.executeJavaScript(`(() => { const el = document.querySelector('[data-maiba-contact-id="${uid}"]'); if (!el) return false; el.scrollIntoView({ block: 'center' }); el.click(); return true; })()`).catch(() => false);
+      if (ok) return true;
+    }
+    return false;
+  });
   ipcMain.handle('meta-compose', (e, args) => fromPage(e) ? auto.composePost(args || {}) : { error: 'denied' });
   ipcMain.on('fb-login', (e, a) => {
     if (!fromPage(e) || !/^\d+$/.test(String(a?.appId))) return;

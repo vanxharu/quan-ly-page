@@ -4,6 +4,8 @@ contextBridge.exposeInMainWorld('metaDesktop', {
   openMetaInbox: url => ipcRenderer.send('open-meta-inbox', String(url)),
   tabChanged: group => ipcRenderer.send('tab-changed', String(group)),
   lookupProfile: args => ipcRenderer.invoke('meta-lookup', args),
+  listThreads: args => ipcRenderer.invoke('meta-threads', args),
+  openThread: args => ipcRenderer.invoke('meta-open-thread', args),
   composePost: args => ipcRenderer.invoke('meta-compose', args),
   loginFacebook: args => ipcRenderer.send('fb-login', args),
   lockSettings: () => ipcRenderer.send('app-lock', 'settings'),

@@ -25,7 +25,7 @@
   let loginWarned = false;
   async function lookupFromMeta(c, { force = false } = {}) {
     const key = pictureKey(c), cur = S.manual[key];
-    if (!autoPics || !c.other.id || (cur && (!cur.auto || (!force && Date.now() - (cur.at || 0) < 2 * 864e5)))) return false;
+    if (!autoPics || c.bs || !c.other.id || (cur && (!cur.auto || (!force && Date.now() - (cur.at || 0) < 2 * 864e5)))) return false;
     const r = await window.metaDesktop.lookupProfile({ pageId: String(c.page.id), psid: String(c.other.id), name: c.other.name || '' }).catch(e => ({ error: e.message }));
     if (r.error) {
       if (r.error === 'login' && !loginWarned) { loginWarned = true; toast('Mở menu "Hộp thư Meta" và đăng nhập Business Suite một lần để app tự lấy avatar khách.', 8000); }
@@ -41,7 +41,7 @@
     return true;
   }
   async function lookupList(btn) {
-    const todo = S.convs.filter(c => !S.pics.get(pictureKey(c))).slice(0, 30);
+    const todo = S.convs.filter(c => !c.bs && !S.pics.get(pictureKey(c))).slice(0, 30);
     if (!todo.length) return toast('Danh sách đã có đủ avatar.');
     btn.disabled = true; let ok = 0;
     for (const [i, c] of todo.entries()) { btn.textContent = `Đang lấy ${i + 1}/${todo.length}…`; if (await lookupFromMeta(c, { force: true })) ok++; }
@@ -177,6 +177,49 @@
   App.onPageChange.push(() => { saveDraft(); S.conv = null; S.more.clear(); S.extra.clear(); resetThread(); });
 
   // Khoảng làm mới danh sách khi đang xem Hộp thư; Page đã nối webhook máy chủ thì thưa hơn (tin mới được báo ngay).
+  // App Windows: Page nào Graph API lỗi thì đọc danh sách hội thoại từ Business Suite (khung ẩn), gộp chung với các Page khác.
+  // Bấm vào hội thoại đó sẽ mở đúng khách trong cột Meta. Mỗi Page đọc lại tối đa 1 lần/phút.
+  const bsCache = new Map();
+  // Giờ Business Suite ghi dạng chữ ("5 phút", "14:20", "Th 3", "12 thg 11") → mốc thời gian để xếp chung với Page khác.
+  function bsTime(text, now = Date.now()) {
+    const t = String(text || '').trim().toLowerCase();
+    if (/^(vừa xong|now)$/.test(t)) return now;
+    let m = t.match(/^(\d+)\s*(giây|phút|giờ|ngày|tuần|tháng|năm|[smhdwy])$/);
+    if (m) return now - m[1] * ({ 'giây': 1, s: 1, 'phút': 60, m: 60, 'giờ': 3600, h: 3600, 'ngày': 86400, d: 86400, 'tuần': 604800, w: 604800, 'tháng': 2592000, 'năm': 31536000, y: 31536000 }[m[2]]) * 1000;
+    const d = new Date(now);
+    if ((m = t.match(/^(\d{1,2}):(\d{2})$/))) { d.setHours(+m[1], +m[2], 0, 0); return d.getTime(); }
+    if ((m = t.match(/^(?:th\s?([2-7])|(cn))$/))) { const want = m[2] ? 0 : m[1] - 1; d.setHours(12, 0, 0, 0); d.setDate(d.getDate() - (((d.getDay() - want) + 7) % 7 || 7)); return d.getTime(); }
+    if ((m = t.match(/^(\d{1,2})(?:\s*thg\s*|\/)(\d{1,2})(?:\/(\d{2,4}))?$/))) {
+      const y = m[3] ? (m[3].length === 2 ? 2000 + +m[3] : +m[3]) : d.getFullYear();
+      let at = new Date(y, m[2] - 1, +m[1], 12).getTime();
+      if (!m[3] && at > now) at = new Date(y - 1, m[2] - 1, +m[1], 12).getTime();
+      return at;
+    }
+    return null;
+  }
+  async function bsThreads(p) {
+    if (!window.metaDesktop?.listThreads) return null;
+    const hit = bsCache.get(p.id);
+    if (hit && Date.now() - hit.at < 60e3) return hit.list;
+    const r = await window.metaDesktop.listThreads({ pageId: String(p.id) });
+    if (r?.error === 'login') { toast('Đăng nhập Business Suite trong cột Meta (menu "Hộp thư Meta") để app đọc tin khi API lỗi.', 8000); return null; }
+    if (!r?.rows?.length) return null;
+    let prev = Date.now() + 1000;
+    const list = r.rows.map(row => {
+      const at = Math.min(bsTime(row.time) ?? prev, prev - 1000); prev = at; // giữ đúng thứ tự Business Suite
+      const c = { id: `bs:${p.id}:${row.uid}`, bs: true, uid: row.uid, page: p, other: { id: 'bs' + row.uid, name: row.name },
+        snippet: row.snippet, timeText: row.time, updated_time: new Date(at).toISOString(), unread_count: row.unread ? 1 : 0 };
+      if (row.pic) S.pics.set(pictureKey(c), row.pic);
+      return c;
+    });
+    bsCache.set(p.id, { at: Date.now(), list });
+    return list;
+  }
+  function openBs(c) {
+    S.bsActive = c.id; drawList(); // không đặt S.conv: hội thoại này không đọc qua Graph
+    window.metaDesktop.openThread({ pageId: String(c.page.id), uid: c.uid })
+      .then(ok => { if (!ok) toast(`Đã mở hộp thư ${c.page.name} trong cột Meta, bấm vào ${c.other.name} để xem.`, 6000); }).catch(() => {});
+  }
   const listInterval = page => App.server?.livePages?.has?.(String(page.id)) ? 5 * 60e3 : App.selected().length > 5 ? 120e3 : 60e3;
   async function load(silent, { force = false } = {}) {
     const pages = App.selected();
@@ -189,7 +232,10 @@
     if (!silent) $('ibList').replaceChildren(empty(`Đang tải hội thoại của ${pages.length} Page…`));
     const errors = [], errorPages = [];
     const lists = await pool(pages, 3, p => convsFor(p, { maxAge: force ? 0 : silent ? listInterval(p) : 30e3, force, low: silent }).catch(async e => {
-      errors.push(`${p.name}: ${e.message}${e.code ? ` (mã ${e.code}${e.sub ? '/' + e.sub : ''})` : ''}`); errorPages.push(p);
+      const why = `${p.name}: ${e.message}${e.code ? ` (mã ${e.code}${e.sub ? '/' + e.sub : ''})` : ''}`;
+      const bs = await bsThreads(p).catch(() => null);
+      if (bs?.length) { errors.push(`${why} → đang hiện ${bs.length} hội thoại đọc từ Business Suite (bấm để mở trong cột Meta).`); return bs; }
+      errors.push(why); errorPages.push(p);
       if (e.cache) return e.cache;
       const previous = S.convs.filter(c => c.page.id === p.id);
       if (previous.length) return previous;
@@ -259,7 +305,7 @@
   async function loadPics(convs, force = false) {
     const byPage = new Map(), waiting = new Set(), tasks = [];
     for (const c of convs) {
-      if (!c.other.id || S.manual?.[pictureKey(c)]) continue;
+      if (c.bs || !c.other.id || S.manual?.[pictureKey(c)]) continue;
       const key = pictureKey(c), pending = pictureLoads.get(key);
       if (pending) { waiting.add(pending); continue; }
       const ttl = S.pics.has(key) ? 5 * 60e3 : 60e3;
@@ -354,15 +400,16 @@
       ...(list.length ? list.map(c => {
         const wait = c.fromCustomer ? (Date.now() - c.lastAt) / 60e3 : null;
         const labels = S.crm?.[c.key]?.labels || [];
-        return h('div', { className: 'item' + (c.unread_count ? ' unread' : '') + (S.conv?.id === c.id ? ' active' : ''), onclick: () => openConv(c) },
+        return h('div', { className: 'item' + (c.unread_count ? ' unread' : '') + ((c.bs ? S.bsActive : S.conv?.id) === c.id ? ' active' : ''), onclick: () => c.bs ? openBs(c) : openConv(c) },
           custAvatar(c),
           h('div', { className: 'body' },
             h('div', { className: 'top' }, h('span', { className: 'name', textContent: c.other.name || 'Khách' }),
               c.unread_count ? h('span', { className: 'badge', textContent: c.unread_count }) : null,
-              h('span', { className: 'time', textContent: fmtShort(c.updated_time) })),
+              h('span', { className: 'time', textContent: c.timeText || fmtShort(c.updated_time) })),
             h('div', { className: 'snippet', textContent: c.snippet || '' }),
-            (multi || wait != null || labels.length) ? h('div', { className: 'tags' },
+            (multi || c.bs || wait != null || labels.length) ? h('div', { className: 'tags' },
               multi ? h('span', { className: 'page-chip', textContent: c.page.name }) : null,
+              c.bs ? h('span', { className: 'page-chip', title: 'API Page này đang lỗi, tin đọc từ Business Suite', textContent: 'Business Suite' }) : null,
               wait != null && wait < 7 * 1440 ? h('span', { className: 'wait' + (wait > st.waitMinutes ? ' late' : ''), title: 'Khách đang chờ trả lời', textContent: '⏳ ' + InboxRules.formatWait(wait) }) : null,
               ...labels.slice(0, 3).map(l => tag(l))) : null));
       }) : [empty(S.convs.length ? 'Không có hội thoại khớp bộ lọc.' : 'Chưa có tin nhắn.')]));

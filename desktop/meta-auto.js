@@ -65,6 +65,24 @@ function readRows(scroll) {
   return { rows, end };
 }
 
+// Chạy trong trang Business Suite: các hội thoại đang hiện, kèm tin cuối, giờ (chữ Meta ghi) và chưa đọc (tin cuối in đậm).
+function readThreads() {
+  const isTime = s => /^(vừa xong|now|\d+\s*(giây|phút|giờ|ngày|tuần|tháng|năm|[smhdwy])|\d{1,2}:\d{2}|th\s?[2-7]|cn|\d{1,2}\s*thg\s*\d{1,2}|\d{1,2}\/\d{1,2}(\/\d{2,4})?)$/i.test(s);
+  return [...document.querySelectorAll('[data-maiba-contact-id][data-maiba-contact-type="fb_user"]')].map(el => {
+    const title = el.querySelector('[data-surface$="lib:thread_title"]'), name = (title?.innerText || '').trim();
+    const leaves = [...el.querySelectorAll('span,div,abbr')].filter(x => x.childElementCount === 0 && !title?.contains(x));
+    const lines = leaves.map(x => (x.innerText || x.textContent || '').trim()).filter(s => s && s !== name && !/^[·•]$/.test(s));
+    const time = lines.find(isTime) || '';
+    const snippet = lines.filter(s => s !== time).sort((a, b) => b.length - a.length)[0] || '';
+    const leaf = snippet && leaves.find(x => (x.innerText || x.textContent || '').trim() === snippet);
+    return {
+      uid: el.getAttribute('data-maiba-contact-id'), name, snippet, time,
+      unread: !!leaf && Number(getComputedStyle(leaf).fontWeight) >= 600,
+      pic: [...el.querySelectorAll('img')].map(i => i.currentSrc || i.src).find(u => /scontent|fbcdn\.net\/v\//.test(u) && !/static\.xx/.test(u)) || '',
+    };
+  }).filter(r => /^\d{5,}$/.test(r.uid) && r.name);
+}
+
 // Chạy trong trang: tìm phần tử hiện trên màn hình theo selector / role / chữ / nhãn (aria-labelledby), cuộn vào giữa, trả toạ độ tâm.
 function findTarget({ selector, role, text, label, enabled }) {
   const re = s => s ? new RegExp(s, 'i') : null, tRe = re(text), lRe = re(label);
@@ -122,6 +140,24 @@ function createMetaAuto({ worker, composer, metaView, showMeta = () => () => {},
     if (found.length !== 1) return { error: found.length ? 'trùng tên' : 'not-found' }; // trùng tên thì không đoán
     const { uid, pic } = found[0];
     return { pic, uid, profileUrl: `https://www.facebook.com/profile.php?id=${uid}` };
+  });
+
+  // Hộp thư dự phòng khi Graph API lỗi: đọc danh sách hội thoại mới nhất của Page trong khung ẩn.
+  const listThreads = ({ pageId }) => queue(async () => {
+    if (!/^\d+$/.test(String(pageId))) return { error: 'Thiếu Page.' };
+    const wc = worker.webContents;
+    await wc.loadURL(`https://business.facebook.com/latest/inbox/messenger?asset_id=${pageId}&mailbox_id=${pageId}`).catch(() => {});
+    let rows = [];
+    for (let i = 0; i < 8 && !rows.length; i++) {
+      await sleep(1500);
+      if (isLogin(wc.getURL())) return { error: 'login' };
+      rows = await wc.executeJavaScript(`(${readThreads})()`).catch(() => []);
+    }
+    // Dùng luôn cho tra avatar (cùng Page, khỏi tải lại).
+    const entry = { at: Date.now(), rows: new Map(), full: false };
+    for (const r of rows) entry.rows.set(key(r.name), [...(entry.rows.get(key(r.name)) || []), r]);
+    if (rows.length) pageRows.set(String(pageId), entry);
+    return { rows };
   });
 
   // Điền sẵn trình soạn bài Business Suite. Trả về khi người dùng đã đăng/hẹn (trang rời khỏi trình soạn) hoặc sau 15 phút.
@@ -299,6 +335,6 @@ function createMetaAuto({ worker, composer, metaView, showMeta = () => () => {},
     return { done: leftComposer(wc), filled: done };
   });
 
-  return { lookupProfile, composePost };
+  return { lookupProfile, listThreads, composePost };
 }
-module.exports = { createMetaAuto, extractProfile, findTarget };
+module.exports = { readThreads, createMetaAuto, extractProfile, findTarget };
