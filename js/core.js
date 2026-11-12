@@ -343,29 +343,73 @@ App.adAccount = async () => {
 // App Windows: điền sẵn trình soạn bài Business Suite (ảnh + nội dung) ở cột bên; bạn bật "Gửi tin nhắn", chọn giờ và bấm Đăng.
 // Không cần tài khoản quảng cáo. Chờ tới khi bạn đăng xong (trang rời trình soạn) rồi mới sang bài tiếp theo.
 // Thanh tiến độ đăng qua Business Suite (góc dưới phải): từng bước ✓ / đang làm / ✗, app Windows báo về qua App.composeProgress.
+// Bảng tiến độ góc dưới phải: phần "lượt nhiều bài" (#cpBatch) + phần các bước của bài đang đăng qua Business Suite (#cpSteps).
+const ICON = { wait: '○', run: '⏳', ok: '✓', fail: '✗', manual: '✋' }, TONE = { ok: 'var(--green,#059669)', fail: 'var(--red,#DC2626)', manual: 'var(--amber,#D97706)', run: 'var(--brand,#6D28D9)' };
+const progressBox = () => {
+  let box = $('composeProgress');
+  if (!box) {
+    box = h('div', { id: 'composeProgress', className: 'card', role: 'status', 'aria-live': 'polite', style: 'position:fixed;right:16px;bottom:16px;z-index:60;width:min(360px,calc(100vw - 32px));max-height:calc(100vh - 32px);overflow:auto;padding:14px 16px;box-shadow:var(--shadow-lg,0 8px 30px rgba(0,0,0,.18))' },
+      h('div', { className: 'row', style: 'justify-content:space-between;gap:8px' }, h('strong', { id: 'cpTitle', style: 'font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap' }),
+        h('button', { type: 'button', className: 'icon-btn', 'aria-label': 'Ẩn bảng tiến độ', textContent: '✕', style: 'width:26px;height:26px;flex:none', onclick: () => box.remove() })),
+      h('div', { id: 'cpBatch' }), h('div', { id: 'cpSteps' }));
+    document.body.append(box);
+  }
+  clearTimeout(box._hide);
+  return box;
+};
+const bar = (id, pct, color) => h('div', { style: 'height:6px;border-radius:6px;background:var(--surface-2,#E5E7EB);margin:8px 0;overflow:hidden' }, h('div', { id, style: `height:100%;width:${pct}%;background:${color || 'var(--brand,#6D28D9)'};transition:width .3s` }));
+const paintRow = (li, state, note) => {
+  const icon = li.querySelector('.cp-icon'); icon.textContent = ICON[state] || '○'; icon.style.color = TONE[state] || '';
+  li.dataset.state = state; li.style.fontWeight = state === 'run' ? '600' : '';
+  if (note != null) li.querySelector('.cp-note').textContent = note;
+};
+const row = (attrs, label) => h('li', { ...attrs, className: 'row', style: 'gap:8px;align-items:flex-start' },
+  h('span', { className: 'cp-icon', textContent: '○', style: 'width:16px;text-align:center;flex:none' }), h('span', { style: 'flex:1;min-width:0' }, label, h('span', { className: 'cp-note hint', style: 'display:block' })));
+
+// Lượt lên lịch nhiều bài: tổng tiến độ + danh sách từng bài (chờ / đang làm / xong / lỗi).
+App.batchProgress = {
+  start(items) {
+    const box = progressBox();
+    $('cpTitle').textContent = `Lên lịch ${items.length} bài`;
+    $('cpSteps').replaceChildren();
+    $('cpBatch').replaceChildren(h('div', { id: 'cpBatchSum', className: 'hint', style: 'margin-top:6px' }), bar('cpBatchBar', 0),
+      h('ol', { id: 'cpBatchList', style: 'list-style:none;margin:0 0 6px;padding:0;display:grid;gap:5px;font-size:12.5px;max-height:220px;overflow:auto' },
+        ...items.map(it => row({ dataset: { item: it.id } }, it.label))));
+    box._batch = items.length; this.sum();
+  },
+  set(id, state, note = '') {
+    const li = $('cpBatchList')?.querySelector(`[data-item="${CSS.escape(String(id))}"]`); if (!li) return;
+    paintRow(li, state, note);
+    if (state === 'run') li.scrollIntoView({ block: 'nearest' });
+    this.sum();
+  },
+  sum() {
+    const all = [...($('cpBatchList')?.children || [])], n = s => all.filter(li => li.dataset.state === s).length, done = n('ok') + n('fail');
+    $('cpBatchSum').textContent = `Đã xong ${done}/${all.length}` + (n('ok') ? ` · ✓ ${n('ok')} đã hẹn` : '') + (n('fail') ? ` · ✗ ${n('fail')} lỗi` : '');
+    $('cpBatchBar').style.width = `${all.length ? Math.round(done / all.length * 100) : 0}%`;
+    $('cpBatchBar').style.background = n('fail') ? 'var(--amber,#D97706)' : done === all.length ? 'var(--green,#059669)' : '';
+  },
+  end() { const box = $('composeProgress'); if (!box) return; box._batch = 0; $('cpSteps').replaceChildren(); $('cpTitle').textContent += ' · xong'; },
+};
+// Các bước của một bài đăng qua Business Suite (nằm dưới danh sách lượt nếu đang đăng nhiều bài).
 App.composeSteps = (page, { image, text, when }) => {
   const steps = [['open', 'Mở trình soạn Business Suite'], image && ['image', 'Đưa ảnh vào bài'], text && ['text', 'Điền nội dung'],
     ['button', 'Chọn Nút › Gửi tin nhắn'], when && ['schedule', `Đặt giờ ${fmtTime(when * 1000)}`], ['publish', when ? 'Bấm Lên lịch' : 'Bấm Đăng']].filter(Boolean);
-  let box = $('composeProgress');
-  if (!box) { box = h('div', { id: 'composeProgress', className: 'card', role: 'status', 'aria-live': 'polite', style: 'position:fixed;right:16px;bottom:16px;z-index:60;width:min(340px,calc(100vw - 32px));padding:14px 16px;box-shadow:var(--shadow-lg,0 8px 30px rgba(0,0,0,.18))' }); document.body.append(box); }
-  clearTimeout(box._hide);
-  box.replaceChildren(
-    h('div', { className: 'row', style: 'justify-content:space-between;gap:8px' }, h('strong', { textContent: `Đăng qua Business Suite · ${page.name}`, style: 'font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap' }),
-      h('button', { type: 'button', className: 'icon-btn', 'aria-label': 'Ẩn thanh tiến độ', textContent: '✕', style: 'width:26px;height:26px', onclick: () => box.remove() })),
-    h('div', { className: 'progress', style: 'height:6px;border-radius:6px;background:var(--surface-2,#E5E7EB);margin:10px 0;overflow:hidden' }, h('div', { id: 'cpBar', style: 'height:100%;width:0;background:var(--brand,#6D28D9);transition:width .3s' })),
-    h('ol', { id: 'cpList', style: 'list-style:none;margin:0;padding:0;display:grid;gap:6px;font-size:13px' },
-      ...steps.map(([id, label]) => h('li', { dataset: { step: id }, className: 'row', style: 'gap:8px;align-items:flex-start' },
-        h('span', { className: 'cp-icon', textContent: '○', style: 'width:16px;text-align:center;flex:none' }), h('span', { style: 'flex:1' }, label, h('span', { className: 'cp-note hint', style: 'display:block' }))))));
+  const box = progressBox();
+  if (!box._batch) { $('cpTitle').textContent = `Đăng qua Business Suite · ${page.name}`; $('cpBatch').replaceChildren(); }
+  $('cpSteps').replaceChildren(
+    box._batch ? h('div', { className: 'hint', style: 'margin-top:8px;border-top:1px solid var(--border,#E5E7EB);padding-top:8px', textContent: `Bài đang đăng · ${page.name}` }) : null,
+    bar('cpBar', 0),
+    h('ol', { id: 'cpList', style: 'list-style:none;margin:0;padding:0;display:grid;gap:6px;font-size:13px' }, ...steps.map(([id, label]) => row({ dataset: { step: id } }, label))));
 };
 App.composeProgress = ({ id, state, note = '' }) => {
-  if (state === 'reset') { $('composeProgress')?.querySelectorAll('[data-step]').forEach(li => { li.querySelector('.cp-icon').textContent = '○'; li.querySelector('.cp-icon').style.color = ''; li.querySelector('.cp-note').textContent = ''; }); if ($('cpBar')) $('cpBar').style.width = '0'; return; }
-  const box = $('composeProgress'), li = box?.querySelector(`[data-step="${id}"]`); if (!li) return;
-  const icon = { run: '⏳', ok: '✓', fail: '✗', manual: '✋' }[state] || '○', color = { ok: 'var(--green,#059669)', fail: 'var(--red,#DC2626)', manual: 'var(--amber,#D97706)' }[state] || '';
-  li.querySelector('.cp-icon').textContent = icon; li.querySelector('.cp-icon').style.color = color;
-  li.querySelector('.cp-note').textContent = state === 'fail' && !note ? 'Chưa làm được: mở cột Meta để làm tay' : note;
-  const all = [...box.querySelectorAll('[data-step]')], doneCount = all.filter(x => ['✓'].includes(x.querySelector('.cp-icon').textContent)).length;
-  $('cpBar').style.width = `${Math.round(doneCount / all.length * 100)}%`;
-  if (id === 'publish' && state === 'ok') { $('cpBar').style.background = 'var(--green,#059669)'; box._hide = setTimeout(() => box.remove(), 8000); }
+  const box = $('composeProgress'); if (!box || !$('cpList')) return;
+  if (state === 'reset') { box.querySelectorAll('#cpList [data-step]').forEach(li => paintRow(li, 'wait', '')); $('cpBar').style.width = '0'; return; }
+  const li = box.querySelector(`#cpList [data-step="${id}"]`); if (!li) return;
+  paintRow(li, state, state === 'fail' && !note ? 'Chưa làm được: mở cột Meta để làm tay' : note);
+  const all = [...box.querySelectorAll('#cpList [data-step]')];
+  $('cpBar').style.width = `${Math.round(all.filter(x => x.dataset.state === 'ok').length / all.length * 100)}%`;
+  if (id === 'publish' && state === 'ok') { $('cpBar').style.background = 'var(--green,#059669)'; if (!box._batch) box._hide = setTimeout(() => box.remove(), 8000); }
 };
 App.composeInBusinessSuite = async (page, text, imageData, when = 0) => {
   const image = imageData instanceof Blob ? await new Promise((ok, bad) => { const r = new FileReader(); r.onload = () => ok(r.result); r.onerror = bad; r.readAsDataURL(imageData); }) : String(imageData);

@@ -206,7 +206,14 @@
     if (!list.length) return log('err', 'Không có bài đã duyệt.');
     $('plGo').disabled = true;
     let ok = 0;
-    for (const i of list) { if (await scheduleOne(i)) ok++; }
+    App.batchProgress?.start(list.map(i => ({ id: i.id, label: `${(pageOf(i)?.name || i.pageName || 'Page').slice(0, 40)} · ${i.at ? fmtTime(i.at) : 'chưa có giờ'}` })));
+    for (const i of list) {
+      App.batchProgress?.set(i.id, 'run');
+      const done = await scheduleOne(i); if (done) ok++;
+      const after = (await DB.get(QUEUE, [])).find(x => x.id === i.id);
+      App.batchProgress?.set(i.id, done ? 'ok' : 'fail', done ? '' : (after?.error || 'Lỗi').slice(0, 140));
+    }
+    App.batchProgress?.end();
     $('plGo').disabled = false;
     log(ok === list.length ? 'ok' : 'err', `Đã hẹn ${ok}/${list.length} bài trên Facebook.${ok < list.length ? ' Bài lỗi ghi rõ lý do bên dưới.' : ''}`);
     if (ok) logLinks(list.map(i => pageOf(i)).filter(Boolean));
