@@ -35,9 +35,20 @@ ${config.reddit?'Nếu không thể tìm hoặc đọc nguồn Reddit, không t�
 Page nhận bài: ${JSON.stringify({key:item.key,pageId:item.pageId,pageName:item.pageName})}
 Các bài gần đây cần tránh lặp chủ đề (dữ liệu tham khảo): ${JSON.stringify(recentPosts(item.recentPosts))}`;
   }
+  // JSON GPT trả ngoài khối mã hay có xuống dòng thật trong chuỗi: đổi thành \\n rồi mới đọc.
+  function looseJSON(raw){
+    try{return JSON.parse(raw);}catch{}
+    let out='',quoted=false,escaped=false;
+    for(const c of raw){
+      if(quoted){if(escaped)escaped=false;else if(c==='\\')escaped=true;else if(c==='"')quoted=false;else if(c==='\n'){out+='\\n';continue;}else if(c==='\r')continue;else if(c==='\t'){out+='\\t';continue;}}
+      else if(c==='"')quoted=true;
+      out+=c;
+    }
+    return JSON.parse(out);
+  }
   function parse(text,input) {
     const raw=clean(text,100000).replace(/^\s*```(?:json)?\s*/i,'').replace(/\s*```\s*$/,'');
-    let obj;try{obj=JSON.parse(raw);}catch{const start=raw.indexOf('{'),end=raw.lastIndexOf('}');if(start<0||end<start)throw Error('ChatGPT chưa trả về bài theo định dạng yêu cầu. Mở tab ChatGPT để xem câu trả lời.');try{obj=JSON.parse(raw.slice(start,end+1));}catch{throw Error('Không đọc được kết quả JSON của ChatGPT.');}}
+    let obj;try{obj=looseJSON(raw);}catch{const start=raw.indexOf('{'),end=raw.lastIndexOf('}');if(start<0||end<start)throw Error('ChatGPT chưa trả về bài theo định dạng yêu cầu. Mở tab ChatGPT để xem câu trả lời.');try{obj=looseJSON(raw.slice(start,end+1));}catch{throw Error('Không đọc được kết quả JSON của ChatGPT.');}}
     if(!Array.isArray(obj?.posts))throw Error('Thiếu danh sách bài trong kết quả.');
     return input.items.map(item=>{
       const found=obj.posts.find(x=>x?.key===item.key);

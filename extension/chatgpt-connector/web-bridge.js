@@ -1,6 +1,6 @@
 (() => {
   if(location.origin!=='https://vanxharu.github.io'||!location.pathname.startsWith('/quan-ly-page/'))return;
-  const BRIDGE_VERSION='2.5.6';
+  const BRIDGE_VERSION='2.5.7';
   let trustedAt=-Infinity,disconnected=false;
   document.addEventListener('click',e=>{if(e.isTrusted&&e.composedPath().some(el=>el?.matches?.('[data-ai-sidepanel]'))){chrome.runtime.sendMessage({type:'OPEN_PANEL'}).catch(()=>{});}if(e.isTrusted&&e.composedPath().some(el=>el?.matches?.('[data-ai-generate]')))trustedAt=performance.now();},true);
   const reply=data=>window.postMessage({source:'META_AI_CONNECTOR_V106',...data},location.origin);
