@@ -143,6 +143,8 @@
     if (!items.length) return;
     document.querySelector('.planner-delete-dialog')?.close();
     const onFb = items.filter(i => i.status === 'scheduled' && i.fbPostId);
+    // Hẹn qua Business Suite: app không có mã bài nên không huỷ được trên Facebook.
+    const viaBs = items.filter(i => i.status === 'scheduled' && !i.fbPostId && i.viaBusinessSuite !== false && i.pageKey);
     let busy = false;
     const choice = h('div', { className: 'planner-delete-choice' },
       h('label', {}, h('input', { type: 'radio', name: 'plDelMode', value: 'fb', checked: true }), ` Huỷ luôn ${onFb.length} bài đã hẹn trên Facebook (bài sẽ không được đăng)`),
@@ -159,7 +161,8 @@
     const dialog = h('dialog', { className: 'planner-page-dialog planner-delete-dialog', 'aria-label': 'Xoá bài', onclose: () => dialog.remove() },
       h('div', { className: 'planner-page-dialog-head' }, h('h3', { textContent: items.length > 1 ? `Xoá ${items.length} bài?` : 'Xoá bài này?' }),
         h('button', { type: 'button', className: 'icon-btn', 'aria-label': 'Đóng', textContent: '×', onclick: () => dialog.close() })),
-      h('p', { className: 'hint', textContent: onFb.length ? `${onFb.length} bài đã được hẹn trên Facebook. Chọn cách xoá:` : 'Bài chưa được hẹn trên Facebook, chỉ xoá khỏi danh sách.' }),
+      h('p', { className: 'hint', textContent: onFb.length ? `${onFb.length} bài đã được hẹn trên Facebook. Chọn cách xoá:` : viaBs.length ? '' : 'Bài chưa được hẹn trên Facebook, chỉ xoá khỏi danh sách.' }),
+      viaBs.length ? h('p', { className: 'status err', textContent: `${viaBs.length} bài đã hẹn qua Business Suite (bài có ảnh + nút): xoá ở đây KHÔNG huỷ trên Facebook. Huỷ trong Business Suite › Lịch (Nội dung › Đã lên lịch).` }) : null,
       onFb.length ? choice : null, error,
       h('div', { className: 'row', style: 'justify-content:flex-end;margin-top:14px' }, h('button', { type: 'button', className: 'btn btn-ghost', textContent: 'Huỷ', onclick: () => dialog.close() }), go));
     document.body.append(dialog); dialog.showModal();
@@ -192,7 +195,7 @@
     App.plannerRunning?.add(i.id);
     try {
       const res = await App.publish(page, i.text, i.imageData, Math.floor(i.at / 1000), { messageButton: i.messageButton ?? !!App.planner?.messageButtonDefault });
-      await patch(i.id, { status: 'scheduled', fbPostId: res.post_id || res.id, pageKey: page.id, pageName: page.name, error: '' });
+      await patch(i.id, { status: 'scheduled', fbPostId: res.post_id || res.id, viaBusinessSuite: !!res.viaBusinessSuite, pageKey: page.id, pageName: page.name, error: '' });
       return true;
     } catch (e) { await patch(i.id, { status: 'error', error: e.message }); return false; }
     finally { App.plannerRunning?.delete(i.id); }
