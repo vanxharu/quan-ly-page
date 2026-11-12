@@ -51,7 +51,15 @@ setTimeout(async () => {
     await win.webContents.executeJavaScript("metaDesktop.openMetaInbox('https://evil.example/x'); metaDesktop.openMetaInbox('https://business.facebook.com/latest/inbox/all?asset_id=1&selected_item_id=9'); 1");
     await new Promise(r => setTimeout(r, 800));
     out.meta = [app.views.meta.webContents.getURL(), app.views.meta.getBounds().width, app.views.page.getBounds().width];
+    await new Promise(r => setTimeout(r, 800));
+    const barWc = app.views.bar.webContents, before = app.views.meta.getBounds().width;
+    await barWc.executeJavaScript("bar.cmd('wide'); 1"); await new Promise(r => setTimeout(r, 300));
+    out.wider = app.views.meta.getBounds().width > before;
+    await barWc.executeJavaScript("bar.cmd('drag-start', 1000); bar.cmd('drag', 900); bar.cmd('drag-end', 900); 1"); await new Promise(r => setTimeout(r, 300));
+    out.dragged = app.views.meta.getBounds().width;
+    await barWc.executeJavaScript("bar.cmd('close'); 1"); await new Promise(r => setTimeout(r, 300));
+    out.hidden = app.views.meta.getBounds().width;
   } catch (e) { out.error = e.message; }
-  console.log('SMOKE', JSON.stringify(out)); process.exit(out.studio?.startsWith('ok') && out.ext?.length && out.panel && out.token === 'TOK123' && out.meta?.[0].includes('asset_id=1') && out.meta[1] > 0 && out.ver?.startsWith('APP ') && out.dev === 'dev' && out.lookup?.uid === '100012345678' && /thao/.test(out.lookup?.pic) && out.composer[0] === 'Xin chào khách' && /^file:/.test(out.composer[1]) && out.composeResult?.done && out.msgPanel === 0 && out.widths[1] > 0 ? 0 : 1);
+  console.log('SMOKE', JSON.stringify(out)); process.exit(out.studio?.startsWith('ok') && out.ext?.length && out.panel && out.token === 'TOK123' && out.meta?.[0].includes('asset_id=1') && out.meta[1] > 0 && out.ver?.startsWith('APP ') && out.dev === 'dev' && out.lookup?.uid === '100012345678' && /thao/.test(out.lookup?.pic) && out.composer[0] === 'Xin chào khách' && /^file:/.test(out.composer[1]) && out.composeResult?.done && out.wider && out.hidden === 0 && out.msgPanel === 0 && out.widths[1] > 0 ? 0 : 1);
 }, 6000);
 // lookup có nghỉ 1.5–3 s; composer chờ tối đa vài giây

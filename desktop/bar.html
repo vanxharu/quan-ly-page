@@ -1,0 +1,23 @@
+<!doctype html><html lang="vi"><head><meta charset="utf-8"><title>bar</title><style>
+:root{--bg:#F8FAFC;--fg:#334155;--line:#E2E8F0;--hover:#E2E8F0}
+@media (prefers-color-scheme:dark){:root{--bg:#111827;--fg:#CBD5E1;--line:#1F2937;--hover:#1F2937}}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--fg);font:12px system-ui,sans-serif;overflow:hidden;user-select:none}
+body{display:flex;align-items:center;gap:4px;padding:0 6px 0 0;border-bottom:1px solid var(--line);border-left:1px solid var(--line)}
+#grip{width:14px;align-self:stretch;cursor:col-resize;display:grid;place-items:center;color:#94A3B8}
+#grip:hover{background:var(--hover)}#title{flex:1;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+button{border:0;background:transparent;color:inherit;font:inherit;height:24px;min-width:26px;border-radius:6px;cursor:pointer;padding:0 6px}
+button:hover{background:var(--hover)}button:focus-visible{outline:2px solid #6D28D9}
+</style></head><body>
+<div id="grip" title="Kéo để đổi độ rộng" aria-label="Kéo để đổi độ rộng">⋮</div>
+<span id="title"></span>
+<button id="narrow" title="Hẹp lại" aria-label="Hẹp lại">⟩</button>
+<button id="wide" title="Rộng ra" aria-label="Rộng ra">⟨</button>
+<button id="close" title="Ẩn cột này (Ctrl+Shift+M / Ctrl+Shift+A để mở lại)" aria-label="Ẩn cột">✕</button>
+<script>
+document.getElementById('title').textContent = new URLSearchParams(location.search).get('t') || '';
+for (const id of ['narrow', 'wide', 'close']) document.getElementById(id).onclick = () => bar.cmd(id);
+const grip = document.getElementById('grip');
+grip.onpointerdown = e => { grip.setPointerCapture(e.pointerId); bar.cmd('drag-start', e.screenX); };
+grip.onpointermove = e => { if (grip.hasPointerCapture(e.pointerId)) bar.cmd('drag', e.screenX); };
+grip.onpointerup = e => { grip.releasePointerCapture(e.pointerId); bar.cmd('drag-end', e.screenX); };
+</script></body></html>

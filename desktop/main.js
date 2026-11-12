@@ -99,15 +99,26 @@ app.whenReady().then(async () => {
   metaView = new WebContentsView({ webPreferences: { sandbox: true, contextIsolation: true } });
   mainWindow.contentView.addChildView(panelView);
   mainWindow.contentView.addChildView(metaView);
+  // Độ rộng cột phải (tỉ lệ cửa sổ), nhớ giữa các lần mở app.
+  const LAYOUT_FILE = path.join(app.getPath('userData'), 'layout.json');
+  let widths = { studio: 0.32, meta: 0.45 };
+  try { widths = { ...widths, ...JSON.parse(require('fs').readFileSync(LAYOUT_FILE, 'utf8')) }; } catch {}
+  const saveWidths = () => { try { require('fs').writeFileSync(LAYOUT_FILE, JSON.stringify(widths)); } catch {} };
+  const BAR = 30;
+  const bar = new WebContentsView({ webPreferences: { sandbox: true, contextIsolation: true, preload: path.join(__dirname, 'bar-preload.js') } });
+  mainWindow.contentView.addChildView(bar);
+  let cur = '';
   const layout = () => {
     const { width, height } = mainWindow.getContentBounds();
     // Studio AI chỉ hiện khi đang ở nhóm Đăng bài.
-    const cur = side === 'studio' && group !== 'publishing' ? '' : side;
-    // Hộp thư Meta cần rộng hơn Studio AI.
-    const w = cur === 'studio' && studio ? Math.min(460, Math.round(width * 0.4)) : cur === 'meta' ? Math.round(width * 0.55) : 0;
+    cur = side === 'studio' && (group !== 'publishing' || !studio) ? '' : side;
+    const w = cur ? Math.round(Math.min(0.8, Math.max(0.2, widths[cur])) * width) : 0;
     pageView.setBounds({ x: 0, y: 0, width: width - w, height });
     worker.setBounds({ x: 0, y: 0, width: Math.max(width, 1200), height: Math.max(height, 800) });
-    for (const [name, v] of [['studio', panelView], ['meta', metaView]]) v.setBounds(cur === name ? { x: width - w, y: 0, width: w, height } : { x: width, y: 0, width: 0, height: 0 });
+    bar.setBounds(cur ? { x: width - w, y: 0, width: w, height: BAR } : { x: width, y: 0, width: 0, height: 0 });
+    for (const [name, v] of [['studio', panelView], ['meta', metaView]]) v.setBounds(cur === name ? { x: width - w, y: BAR, width: w, height: height - BAR } : { x: width, y: 0, width: 0, height: 0 });
+    const title = cur === 'meta' ? 'Hộp thư Meta' : cur === 'studio' ? 'Studio AI' : '';
+    if (title && bar.webContents.__title !== title) { bar.webContents.__title = title; bar.webContents.loadFile(path.join(__dirname, 'bar.html'), { query: { t: title } }); }
   };
   mainWindow.on('resize', layout);
   wire(pageView.webContents, mainWindow);
@@ -116,6 +127,18 @@ app.whenReady().then(async () => {
   pageView.webContents.loadURL(WEB);
   if (studio) panelView.webContents.loadURL(`chrome-extension://${studio.id}/sidepanel.html`);
   const fromPage = e => e.sender === pageView.webContents;
+  let dragFrom = null;
+  ipcMain.on('side-bar', (e, name, x) => {
+    if (e.sender !== bar.webContents || !cur) return;
+    const width = mainWindow.getContentBounds().width;
+    if (name === 'close') { side = ''; layout(); return; }
+    if (name === 'narrow' || name === 'wide') widths[cur] = Math.min(0.8, Math.max(0.2, widths[cur] + (name === 'wide' ? 0.05 : -0.05)));
+    else if (name === 'drag-start') dragFrom = { x, ratio: widths[cur] };
+    else if (name === 'drag' && dragFrom) widths[cur] = Math.min(0.8, Math.max(0.2, dragFrom.ratio + (dragFrom.x - x) / width));
+    else if (name === 'drag-end') dragFrom = null;
+    layout();
+    if (name !== 'drag') saveWidths();
+  });
   const show = (name, open) => { side = (typeof open === 'boolean' ? open : side !== name) ? name : ''; layout(); };
   const toggleStudio = open => show('studio', open);
   const openMetaInbox = url => {
@@ -174,7 +197,7 @@ app.whenReady().then(async () => {
       { label: 'Cỡ gốc', accelerator: 'Ctrl+0', click: () => pageView.webContents.setZoomLevel(0) }, { type: 'separator' },
       { label: 'Công cụ lỗi', accelerator: 'F12', click: () => pageView.webContents.toggleDevTools() }] },
   ]));
-  app.toggleStudio = toggleStudio; app.views = { page: pageView, panel: panelView, meta: metaView, worker };
+  app.toggleStudio = toggleStudio; app.views = { page: pageView, panel: panelView, meta: metaView, worker, bar };
   mainWindow.on('closed', () => { mainWindow = null; app.quit(); });
   if (app.isPackaged) getUpdater().checkForUpdatesAndNotify().catch(() => {});
 });

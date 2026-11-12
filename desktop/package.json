@@ -1,6 +1,6 @@
 {
   "name": "meta-assistant",
-  "version": "1.0.8",
+  "version": "1.0.9",
   "description": "Meta Assistant cho Windows: quản lý Page Facebook + Studio AI",
   "main": "main.js",
   "scripts": {
@@ -25,6 +25,8 @@
     "productName": "Meta Assistant",
     "files": [
       "main.js",
+      "bar.html",
+      "bar-preload.js",
       "preload.js",
       "meta-auto.js",
       "icon.png",
