@@ -187,9 +187,9 @@
     S.listBusy = true; S.fetchScope = scope; S.lastListAt = Date.now();
     try {
     if (!silent) $('ibList').replaceChildren(empty(`Đang tải hội thoại của ${pages.length} Page…`));
-    const errors = [];
+    const errors = [], errorPages = [];
     const lists = await pool(pages, 3, p => convsFor(p, { maxAge: force ? 0 : silent ? listInterval(p) : 30e3, force, low: silent }).catch(async e => {
-      errors.push(`${p.name}: ${e.message}${e.code ? ` (mã ${e.code}${e.sub ? '/' + e.sub : ''})` : ''}`);
+      errors.push(`${p.name}: ${e.message}${e.code ? ` (mã ${e.code}${e.sub ? '/' + e.sub : ''})` : ''}`); errorPages.push(p);
       if (e.cache) return e.cache;
       const previous = S.convs.filter(c => c.page.id === p.id);
       if (previous.length) return previous;
@@ -206,7 +206,7 @@
     const labels = await App.crm.allLabels();
     const cur = $('ibLabel').value;
     $('ibLabel').replaceChildren(h('option', { value: '', textContent: 'Mọi nhãn' }), ...labels.map(l => h('option', { value: l, textContent: l, selected: l === cur })));
-    S.errors = errors;
+    S.errorPages = errorPages; S.errors = errors;
     // Hội thoại đang mở có tin mới → đọc lại luôn.
     const fresh = S.conv && S.convs.find(c => c.id === S.conv.id);
     if (fresh && fresh.updated_time !== S.conv.updated_time) { fresh.unread_count = 0; openConv(fresh, { silent: true }); }
@@ -347,7 +347,9 @@
     $('ibMore').hidden = ![...S.more.values()].some(x => x.after);
     const errors = S.errors?.length ? [h('details', { className: 'status err' },
       h('summary', { textContent: `${S.errors.length} Page chưa tải được tin mới.${S.convs.length ? ' Đang giữ danh sách đã tải.' : ''} Bấm xem chi tiết.` }),
-      ...S.errors.map(e => h('div', { style: 'margin-top:8px', textContent: e })))] : [];
+      ...S.errors.map(e => h('div', { style: 'margin-top:8px', textContent: e })),
+      // API lỗi: xem / trả lời tin của Page đó ngay trong Business Suite (cột Meta trong app, tab mới trên trình duyệt).
+      ...(S.errorPages || []).map(p => h('div', { style: 'margin-top:6px' }, App.metaLink(`https://business.facebook.com/latest/inbox/all?asset_id=${p.id}`, `Mở hộp thư ${p.name.slice(0, 30)} trong Business Suite ↗`))))] : [];
     $('ibList').replaceChildren(...errors,
       ...(list.length ? list.map(c => {
         const wait = c.fromCustomer ? (Date.now() - c.lastAt) / 60e3 : null;
