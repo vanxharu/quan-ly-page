@@ -29,6 +29,7 @@
     const r = await window.metaDesktop.lookupProfile({ pageId: String(c.page.id), psid: String(c.other.id), name: c.other.name || '' }).catch(e => ({ error: e.message }));
     if (r.error) {
       if (r.error === 'login' && !loginWarned) { loginWarned = true; toast('Mở menu "Hộp thư Meta" và đăng nhập Business Suite một lần để app tự lấy avatar khách.', 8000); }
+      else if (!force) toast(`Chưa lấy được avatar ${c.other.name || ''} từ Business Suite (${r.error}). Menu Xem › "Lưu chẩn đoán Business Suite" rồi gửi file cho người hỗ trợ.`, 9000);
       return false;
     }
     if (!r.pic) return false;
@@ -414,8 +415,16 @@
         });
       if (!res) return;
       if (S.conv !== c) return;
-      // Sắp theo giờ gửi thay vì tin vào thứ tự Graph trả về (có lúc không phải mới nhất trước).
-      const msgs = (res.messages?.data || []).slice().sort((a, b) => new Date(a.created_time) - new Date(b.created_time));
+      let data = res.messages?.data || [];
+      // Có lúc trường messages lồng trong hội thoại trả thiếu vài tin mới nhất (khác snippet ở danh sách): đọc lại qua /messages.
+      const newest = [...data].sort((a, b) => new Date(b.created_time) - new Date(a.created_time))[0];
+      if (c.snippet && newest && norm(newest.message || '') !== norm(c.snippet)) {
+        const edge = await api(`/${c.id}/messages`, { fields: 'message,from,created_time,attachments{image_data,mime_type,name,file_url}', limit: 40 }, 'GET', c.page.access_token).catch(() => null);
+        if (edge?.data?.length) data = edge.data;
+      }
+      if (S.conv !== c) return;
+      // Sắp theo giờ gửi thay vì tin vào thứ tự Graph trả về.
+      const msgs = data.slice().sort((a, b) => new Date(a.created_time) - new Date(b.created_time));
       // Giờ tin cuối của khách: quyết định khung nhắn (24 giờ / 7 ngày với thẻ Nhân viên trả lời / đã đóng).
       const lastCust = [...msgs].reverse().find(m => m.from?.id !== c.page.id);
       c.lastCustomerAt = lastCust ? new Date(lastCust.created_time).getTime() || 0 : 0;

@@ -156,7 +156,19 @@ app.whenReady().then(async () => {
     { label: 'Xem', submenu: [
       { label: 'Tải lại', accelerator: 'F5', click: () => pageView.webContents.reload() },
       { label: 'Tải lại Studio AI', click: () => panelView.webContents.reload() },
-      { label: 'Tải lại hộp thư Meta', click: () => metaView.webContents.reload() }, { type: 'separator' },
+      { label: 'Tải lại hộp thư Meta', click: () => metaView.webContents.reload() },
+      // Lưu trang Business Suite mà app vừa đọc (khung ẩn) + cột Hộp thư Meta ra Desktop, để sửa cách đọc avatar/UID theo giao diện thật.
+      { label: 'Lưu chẩn đoán Business Suite', click: async () => {
+        const dir = app.getPath('desktop'), stamp = new Date().toISOString().replace(/[:.]/g, '-');
+        for (const [name, v] of [['an', worker], ['cot-phai', metaView]]) {
+          const wc = v.webContents; if (!wc.getURL()) continue;
+          const html = await wc.executeJavaScript('location.href + "\\n" + document.documentElement.outerHTML').catch(e => String(e));
+          require('fs').writeFileSync(path.join(dir, `meta-assistant-chan-doan-${name}-${stamp}.html`), html);
+          const img = await wc.capturePage().catch(() => null);
+          if (img) require('fs').writeFileSync(path.join(dir, `meta-assistant-chan-doan-${name}-${stamp}.png`), img.toPNG());
+        }
+        shell.openPath(dir);
+      } }, { type: 'separator' },
       { label: 'Phóng to', accelerator: 'Ctrl+=', click: () => pageView.webContents.setZoomLevel(pageView.webContents.getZoomLevel() + 0.5) },
       { label: 'Thu nhỏ', accelerator: 'Ctrl+-', click: () => pageView.webContents.setZoomLevel(pageView.webContents.getZoomLevel() - 0.5) },
       { label: 'Cỡ gốc', accelerator: 'Ctrl+0', click: () => pageView.webContents.setZoomLevel(0) }, { type: 'separator' },
