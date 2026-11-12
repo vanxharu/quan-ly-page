@@ -2,7 +2,7 @@
 const { app, session, BrowserWindow } = require('electron'), fs = require('fs'), path = require('path');
 const ROOT = path.join(__dirname, '../..'), PREFIX = 'https://vanxharu.github.io/quan-ly-page/';
 const type = f => f.endsWith('.js') ? 'text/javascript' : f.endsWith('.css') ? 'text/css' : f.endsWith('.json') ? 'application/json' : f.endsWith('.png') ? 'image/png' : 'text/html';
-app.whenReady().then(() => session.defaultSession.protocol.handle('https', req => {
+const fake = req => {
   if (req.url.startsWith(PREFIX)) { let f = path.join(ROOT, decodeURIComponent(new URL(req.url).pathname.replace('/quan-ly-page/', ''))); if (f.endsWith(path.sep) || f === ROOT) f = path.join(f, 'index.html');
     try { return new Response(fs.readFileSync(f), { headers: { 'content-type': type(f) } }); } catch { return new Response('', { status: 404 }); } }
   if (req.url.startsWith('https://business.facebook.com/latest/inbox')) return new Response(fs.readFileSync(path.join(__dirname, 'fixtures/inbox.html')), { headers: { 'content-type': 'text/html' } });
@@ -11,7 +11,9 @@ app.whenReady().then(() => session.defaultSession.protocol.handle('https', req =
   if (req.url.includes('graph.facebook.com') && req.url.includes('/me/accounts')) return Response.json({ data: [{ id: '1', name: 'Page A', access_token: 't' }] });
   if (req.url.includes('graph.facebook.com')) return Response.json({ data: [] });
   return new Response('', { status: 404 });
-}));
+};
+// Trang chính (phiên mặc định) và Business Suite (phiên persist:meta) đều dùng dữ liệu giả.
+app.whenReady().then(() => { session.defaultSession.protocol.handle('https', fake); session.fromPartition('persist:meta').protocol.handle('https', fake); });
 const electron = require('electron'), opened = []; electron.shell.openExternal = url => { opened.push(url); return Promise.resolve(); };
 try { fs.rmSync(path.join(app.getPath('userData'), 'layout.json')); } catch {}
 require('../main.js');

@@ -58,7 +58,7 @@ function wire(wc, win, asTab = true) {
     if (/^https?:/i.test(url)) shell.openExternal(url);
     return { action: 'deny' };
   });
-  wc.on('did-create-window', child => wire(child.webContents, child));
+  wc.on('did-create-window', child => wire(child.webContents, child, child.webContents.session === session.defaultSession));
   // Bắt token ngay khi Facebook chuyển về desktop-login.html#access_token=… (chuyển hướng máy chủ hoặc trang tự chuyển).
   const catchLogin = (e, url) => {
     if (url.startsWith(PROTOCOL + '://')) { e?.preventDefault?.(); handleDeepLink(url); return true; }
@@ -109,16 +109,19 @@ app.whenReady().then(async () => {
   mainWindow.setAutoHideMenuBar(true); mainWindow.setMenuBarVisibility(false);
   // Khung ẩn để đọc Business Suite: avatar + UID khách.
   // Cửa sổ vẽ ngầm (offscreen): vẫn chạy cuộn / tải thêm như trang thật nhưng không hiện ra.
-  const worker = new BrowserWindow({ show: false, width: 1280, height: 900, webPreferences: { offscreen: true, sandbox: true, contextIsolation: true, backgroundThrottling: false } });
+  // Business Suite chạy trong phiên riêng (persist:meta): phiên mặc định có script của tiện ích Studio AI gắn vào mọi trang,
+  // làm trình soạn Business Suite lỗi (invariant #23746, mất ô văn bản). Cột Meta + 2 cửa sổ ngầm dùng chung phiên này.
+  const META = 'persist:meta', metaSes = session.fromPartition(META);
+  const worker = new BrowserWindow({ show: false, width: 1280, height: 900, webPreferences: { partition: META, offscreen: true, sandbox: true, contextIsolation: true, backgroundThrottling: false } });
   worker.webContents.setFrameRate(10);
   // Cửa sổ vẽ ngầm thứ hai cho trình soạn bài (đăng ngay không cần hiện cột Meta); tách khỏi khung đọc avatar để không giẫm nhau.
-  const composer = new BrowserWindow({ show: false, width: 1280, height: 900, webPreferences: { offscreen: true, sandbox: true, contextIsolation: true, backgroundThrottling: false } });
+  const composer = new BrowserWindow({ show: false, width: 1280, height: 900, webPreferences: { partition: META, offscreen: true, sandbox: true, contextIsolation: true, backgroundThrottling: false } });
   composer.webContents.setFrameRate(10);
   composer.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   pageView = new WebContentsView({ webPreferences: { sandbox: true, contextIsolation: true, preload: path.join(__dirname, 'preload.js') } });
   panelView = new WebContentsView({ webPreferences: { sandbox: true, contextIsolation: true } });
   mainWindow.contentView.addChildView(pageView);
-  metaView = new WebContentsView({ webPreferences: { sandbox: true, contextIsolation: true } });
+  metaView = new WebContentsView({ webPreferences: { partition: META, sandbox: true, contextIsolation: true } });
   mainWindow.contentView.addChildView(panelView);
   mainWindow.contentView.addChildView(metaView);
   // Độ rộng cột phải (tỉ lệ cửa sổ), nhớ giữa các lần mở app.
@@ -170,7 +173,7 @@ app.whenReady().then(async () => {
   };
   openLoginPane = url => { afterLogin = showMetaTemp(); metaView.webContents.loadURL(url).catch(() => {}); mainWindow.focus(); };
   // Chưa đăng nhập Facebook trong app: mở trang đăng nhập Business Suite ở cột phải ngay khi khởi động.
-  ses.cookies.get({ url: 'https://www.facebook.com', name: 'c_user' }).then(c => {
+  metaSes.cookies.get({ url: 'https://www.facebook.com', name: 'c_user' }).then(c => {
     if (c.length) return;
     metaView.webContents.loadURL('https://business.facebook.com/latest/inbox/all').catch(() => {});
     show('meta', true);
