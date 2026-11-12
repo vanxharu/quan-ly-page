@@ -1,4 +1,5 @@
-META ASSISTANT · STUDIO AI 2.5.3
+META ASSISTANT · STUDIO AI 2.5.4
+2.5.4: GPT trả lời chữ thay vì tạo ảnh thì dừng và báo lý do (không treo).
 2.5.3: sửa lệnh viết bài / tạo ảnh ngay trên trang web (tab Chủ đề).
 
 1. Bấm Tải lại tiện ích tại chrome://extensions. Nếu trình duyệt yêu cầu xác nhận quyền mới cho khung nhúng, bạn tự xác nhận.
