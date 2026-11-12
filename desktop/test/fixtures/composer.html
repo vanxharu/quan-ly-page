@@ -5,6 +5,7 @@
 <div role="combobox" id="js_hz" aria-labelledby="js_i0 js_i3" aria-haspopup="listbox" style="padding:8px;border:1px solid"><div id="js_i3">Không dùng nút</div></div>
 <div id="lb"></div>
 <div role="button" id="pub" aria-disabled="true" style="padding:8px;border:1px solid">Đăng</div>
+<div id="sched" hidden><input id="date" placeholder="dd/mm/yyyy" value="12 Tháng 11, 2026"><input id="hh" role="spinbutton" aria-label="giờ" aria-valuenow="20" style="width:30px"><input id="mm" role="spinbutton" aria-label="phút" aria-valuenow="3" style="width:30px"></div>
 <input type="checkbox" role="switch" id="sw" aria-label="Đặt ngày và giờ" style="opacity:0;position:absolute;width:1px;height:1px"><label for="sw"><span>Đặt ngày và giờ</span></label>
 <script>
 // Giả lập giao diện Business Suite: ô văn bản tải chậm, nút ảnh mở hộp chọn file, combobox Nút, công tắc hẹn giờ.
@@ -14,5 +15,14 @@ document.getElementById('js_hz').onclick = () => document.getElementById('lb').i
 document.addEventListener('click', e => { if (e.target.closest('#msg')) { document.getElementById('js_i3').textContent = 'Gửi tin nhắn'; document.getElementById('lb').innerHTML = ''; } });
 // Nút Đăng chỉ bật khi đủ ảnh + chữ + nút; bấm thì rời trình soạn.
 setInterval(() => { const ok = document.body.dataset.file && document.getElementById('ed')?.innerText && document.getElementById('js_i3').textContent === 'Gửi tin nhắn'; document.getElementById('pub').setAttribute('aria-disabled', ok ? 'false' : 'true'); }, 200);
-document.getElementById('pub').onclick = () => { if (document.getElementById('pub').getAttribute('aria-disabled') === 'false') location.href = 'https://business.facebook.com/latest/inbox/all?posted=1'; };
+document.getElementById('pub').onclick = () => {
+  if (document.getElementById('pub').getAttribute('aria-disabled') !== 'false') return;
+  localStorage.setItem('lastPost', JSON.stringify([document.getElementById('pub').textContent, document.getElementById('ed').innerText, document.body.dataset.file, document.getElementById('js_i3').textContent,
+    document.getElementById('sw').checked, document.getElementById('date').value, document.getElementById('hh').getAttribute('aria-valuenow'), document.getElementById('mm').getAttribute('aria-valuenow')]));
+  location.href = 'https://business.facebook.com/latest/inbox/all?posted=1';
+};
+// Hẹn giờ: bật công tắc thì hiện ô ngày/giờ; Enter ở ô ngày đổi sang "13 Tháng 11, 2026"; ô giờ/phút nhận 2 chữ số.
+document.getElementById('sw').onchange = e => { document.getElementById('sched').hidden = !e.target.checked; document.getElementById('pub').textContent = e.target.checked ? 'Lên lịch' : 'Đăng'; };
+document.getElementById('date').onkeydown = e => { if (e.key === 'Enter') { const [d, m, y] = e.target.value.split('/'); e.target.value = `${+d} Tháng ${+m}, ${y}`; } };
+for (const id of ['hh', 'mm']) { let buf = ''; const el = document.getElementById(id); el.onfocus = () => buf = ''; el.onkeydown = e => { if (/^\d$/.test(e.key)) { e.preventDefault(); buf = (buf + e.key).slice(-2); el.setAttribute('aria-valuenow', String(+buf)); } }; }
 </script></body>

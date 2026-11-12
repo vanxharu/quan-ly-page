@@ -188,8 +188,34 @@ function createMetaAuto({ worker, composer, metaView, showMeta = () => () => {},
         await sleep(600);
         done.button = await click({ role: 'option', text: /gửi tin nhắn|send message/i.source });
       }
-      // 4) Hẹn giờ: bật "Đặt ngày và giờ"; ngày giờ cụ thể bạn chọn (ô ngày giờ của Meta khác nhau theo tài khoản).
-      if (when && await click({ selector: 'label[for]', text: /^Đặt ngày và giờ$|^Set date and time$/i.source })) done.schedule = 'toggled';
+      // 4) Hẹn giờ: bật "Đặt ngày và giờ" → gõ ngày (ô dd/mm/yyyy) và giờ/phút (2 ô spinbutton "giờ", "phút"), rồi đọc lại để chắc đúng.
+      if (when) {
+        const at = new Date(when * 1000), pad = n => String(n).padStart(2, '0');
+        const key = async (k, vk, text = '', modifiers = 0) => {
+          await dbg.sendCommand('Input.dispatchKeyEvent', { type: text ? 'keyDown' : 'rawKeyDown', key: k, windowsVirtualKeyCode: vk, text, unmodifiedText: text, modifiers });
+          await dbg.sendCommand('Input.dispatchKeyEvent', { type: 'keyUp', key: k, windowsVirtualKeyCode: vk, modifiers });
+        };
+        const typeDigits = async digits => { for (const d of digits) await key(d, 48 + Number(d), d); };
+        const dateInput = { selector: 'input[placeholder="dd/mm/yyyy"]' };
+        if (!(await find(dateInput))) await click({ selector: 'label[for]', text: /^Đặt ngày và giờ$|^Set date and time$/i.source });
+        if (await waitFor(dateInput, 5000)) {
+          await click(dateInput); await sleep(300);
+          await key('a', 65, '', 2); // Ctrl+A
+          await dbg.sendCommand('Input.insertText', { text: `${pad(at.getDate())}/${pad(at.getMonth() + 1)}/${at.getFullYear()}` });
+          await key('Enter', 13, '\r'); await sleep(400);
+          for (const [label, value] of [['giờ', at.getHours()], ['phút', at.getMinutes()]]) {
+            await click({ selector: `input[role="spinbutton"][aria-label="${label}"]` }); await sleep(200);
+            await typeDigits(pad(value)); await sleep(200);
+          }
+          await key('Tab', 9); await sleep(400);
+          const seen = await wc.executeJavaScript(`[document.querySelector('input[placeholder="dd/mm/yyyy"]')?.value || '',
+            document.querySelector('input[role="spinbutton"][aria-label="giờ"]')?.getAttribute('aria-valuenow'),
+            document.querySelector('input[role="spinbutton"][aria-label="phút"]')?.getAttribute('aria-valuenow')]`).catch(() => ['', '', '']);
+          const d = at.getDate(), mo = at.getMonth() + 1, y = at.getFullYear();
+          const dateOk = new RegExp(`^0?${d}( Tháng |/0?)${mo}(, |/)${y}$`).test(seen[0].trim());
+          done.schedule = dateOk && Number(seen[1]) === at.getHours() && Number(seen[2]) === at.getMinutes();
+        }
+      }
     } catch (e) { notify(`Business Suite: lỗi khi điền sẵn (${e.message}). Làm tay phần còn lại.`); }
     finally { try { dbg.detach(); } catch {} }
     return { done, find, click, waitFor };
@@ -202,14 +228,14 @@ function createMetaAuto({ worker, composer, metaView, showMeta = () => () => {},
     const { pageId, text, when } = args;
     if (!/^\d+$/.test(String(pageId))) return { error: 'Thiếu Page.' };
     if (text) clipboard.writeText(String(text));
-    if (!when && composer) {
+    if (composer) {
       const wc = composer.webContents, r = await fill(wc, args);
       if (r.error === 'login') return r;
-      if (!r.error && r.done.image && r.done.text && r.done.button) {
+      if (!r.error && r.done.image && r.done.text && r.done.button && r.done.schedule === true) {
         const dbg = wc.debugger;
         try {
           if (!dbg.isAttached()) dbg.attach('1.3');
-          const publish = { role: 'button', text: /^Đăng$|^Publish$|^Post$/i.source, enabled: true };
+          const publish = { role: 'button', text: (when ? /^Lên lịch$|^Schedule$/i : /^Đăng$|^Publish$|^Post$/i).source, enabled: true };
           if (await r.waitFor(publish, 60000) && await r.click(publish)) {
             for (let i = 0; i < 60 && !leftComposer(wc); i++) await sleep(1000);
             if (leftComposer(wc)) { wc.loadURL('about:blank').catch(() => {}); return { done: true, filled: r.done, hidden: true }; }
@@ -224,7 +250,7 @@ function createMetaAuto({ worker, composer, metaView, showMeta = () => () => {},
     if (r.error) { restore(); return r; }
     const { done } = r;
     const todo = [!done.image && 'thêm ảnh (Thêm ảnh/video)', !done.text && 'dán nội dung (Ctrl+V, đã chép sẵn)', !done.button && 'chọn Nút › Gửi tin nhắn',
-      when && `chọn giờ ${new Date(when * 1000).toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' })}`].filter(Boolean);
+      when && done.schedule !== true && `chọn giờ ${new Date(when * 1000).toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' })}`].filter(Boolean);
     notify(`Business Suite: ${todo.length ? 'còn ' + todo.join(', ') + ', rồi' : 'đã điền xong,'} bấm ${when ? 'Lên lịch' : 'Đăng'}. Bấm ✕ trên cột để huỷ.`);
     for (let i = 0; i < 900; i++) {
       await sleep(1000);
