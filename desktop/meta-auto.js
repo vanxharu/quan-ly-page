@@ -49,31 +49,63 @@ function extractProfile({ pageId, name }) {
   return { pic: best ? srcOf(best) : '', uid, profileUrl, nameSeen };
 }
 
+// Chạy trong trang Business Suite: đọc các dòng hội thoại đang hiện; scroll=true thì cuộn danh sách xuống để tải thêm.
+function readRows(scroll) {
+  const rows = [...document.querySelectorAll('[data-maiba-contact-id][data-maiba-contact-type="fb_user"]')].map(el => ({
+    uid: el.getAttribute('data-maiba-contact-id'),
+    name: (el.querySelector('[data-surface$="lib:thread_title"]')?.innerText || '').trim(),
+    pic: [...el.querySelectorAll('img')].map(i => i.currentSrc || i.src).find(u => /scontent|fbcdn\.net\/v\//.test(u) && !/static\.xx/.test(u)) || '',
+  })).filter(r => /^\d{5,}$/.test(r.uid) && r.name);
+  let end = false;
+  if (scroll && rows.length) {
+    let box = document.querySelector('[data-maiba-contact-id]');
+    while (box && !(box.scrollHeight > box.clientHeight + 5 && /auto|scroll/.test(getComputedStyle(box).overflowY))) box = box.parentElement;
+    if (box) { const before = box.scrollTop; box.scrollTop = box.scrollHeight; end = box.scrollTop === before && before > 0; } else end = true;
+  }
+  return { rows, end };
+}
+
 function createMetaAuto({ worker, metaView, showMeta }) {
   // Hai hàng chờ riêng: đọc avatar (khung ẩn) không phải chờ trình soạn bài (có thể mở lâu).
   const makeQueue = () => { let chain = Promise.resolve(); return fn => (chain = chain.then(fn, fn)); };
   const queue = makeQueue(), composeQueue = makeQueue();
 
+  // Danh sách hội thoại Business Suite: mỗi dòng có data-maiba-contact-id (UID Facebook thật của khách), tên và ảnh.
+  // Đọc cả danh sách của một Page một lần (lưu 10 phút), rồi so tên với khách trong app.
+  const pageRows = new Map(); // pageId -> { at, rows: Map(nameKey -> [{uid,name,pic}]) }
+  const key = s => String(s || '').normalize('NFC').replace(/\s+/g, ' ').trim().toLowerCase();
+  const loadRows = async (pageId, wantName) => {
+    const cached = pageRows.get(pageId);
+    if (cached && Date.now() - cached.at < 10 * 60e3 && (!wantName || cached.rows.has(key(wantName)) || cached.full)) return cached;
+    const wc = worker.webContents;
+    if (!cached || !wc.getURL().includes(`asset_id=${pageId}`)) {
+      await wc.loadURL(`https://business.facebook.com/latest/inbox/messenger?asset_id=${pageId}&mailbox_id=${pageId}`).catch(() => {});
+      await sleep(2500);
+    }
+    const entry = { at: Date.now(), rows: new Map(), full: false };
+    for (let i = 0; i < 12; i++) {
+      if (isLogin(wc.getURL())) return { error: 'login' };
+      const r = await wc.executeJavaScript(`(${readRows})(${JSON.stringify(i > 2)})`).catch(() => ({ rows: [] }));
+      for (const row of r.rows) {
+        const list = entry.rows.get(key(row.name)) || [];
+        if (!list.some(x => x.uid === row.uid)) list.push(row);
+        entry.rows.set(key(row.name), list);
+      }
+      if (wantName && entry.rows.has(key(wantName))) break;
+      if (r.end) { entry.full = true; break; }
+      await sleep(1200 + Math.random() * 800);
+    }
+    pageRows.set(pageId, entry);
+    return entry;
+  };
   const lookupProfile = ({ pageId, psid, name }) => queue(async () => {
     if (!/^\d+$/.test(String(pageId)) || !/^\d+$/.test(String(psid))) return { error: 'Thiếu Page hoặc khách.' };
-    const args = JSON.stringify({ pageId: String(pageId), name: String(name || '') });
-    // Cột Hộp thư Meta đang mở đúng khách: đọc luôn ở đó, khỏi tải khung ẩn.
-    if (/business\.facebook\.com\/latest\/inbox/.test(metaView.webContents.getURL())) {
-      const seen = await metaView.webContents.executeJavaScript(`(${extractProfile})(${args})`).catch(() => ({}));
-      if (seen.pic && seen.profileUrl) return { pic: seen.pic, uid: seen.uid || '', profileUrl: seen.profileUrl };
-    }
-    const wc = worker.webContents;
-    const url = `https://business.facebook.com/latest/inbox/all?asset_id=${pageId}&mailbox_id=${pageId}&selected_item_id=${psid}&thread_type=FB_MESSAGE`;
-    await wc.loadURL(url).catch(() => {});
-    let last = {};
-    for (let i = 0; i < 15; i++) {
-      await sleep(1000);
-      if (isLogin(wc.getURL())) return { error: 'login' };
-      last = await wc.executeJavaScript(`(${extractProfile})(${args})`).catch(() => ({}));
-      if (last.pic && (last.profileUrl || i >= 6)) break;
-    }
-    await sleep(1500 + Math.random() * 1500); // nghỉ giữa các lượt
-    return last.pic || last.profileUrl ? { pic: last.pic || '', uid: last.uid || '', profileUrl: last.profileUrl || '' } : { error: last.nameSeen ? 'no-picture' : 'not-found' };
+    const entry = await loadRows(String(pageId), name);
+    if (entry.error) return entry;
+    const found = entry.rows.get(key(name)) || [];
+    if (found.length !== 1) return { error: found.length ? 'trùng tên' : 'not-found' }; // trùng tên thì không đoán
+    const { uid, pic } = found[0];
+    return { pic, uid, profileUrl: `https://www.facebook.com/profile.php?id=${uid}` };
   });
 
   // Điền sẵn trình soạn bài Business Suite. Trả về khi người dùng đã đăng/hẹn (trang rời khỏi trình soạn) hoặc sau 15 phút.

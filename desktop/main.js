@@ -90,9 +90,10 @@ app.whenReady().then(async () => {
   catch (e) { console.error('Không nạp được Studio AI:', e); }
   // Một cửa sổ: trang web bên trái, Studio AI luôn nằm kế bên phải (thay cho bảng bên của Chrome).
   mainWindow = new BaseWindow({ width: 1440, height: 880, icon: ICON, title: `Meta Assistant ${app.getVersion()}` });
-  // Khung ẩn (nằm dưới trang chính) để đọc Business Suite: avatar + UID khách.
-  const worker = new WebContentsView({ webPreferences: { sandbox: true, contextIsolation: true, backgroundThrottling: false } });
-  mainWindow.contentView.addChildView(worker);
+  // Khung ẩn để đọc Business Suite: avatar + UID khách.
+  // Cửa sổ vẽ ngầm (offscreen): vẫn chạy cuộn / tải thêm như trang thật nhưng không hiện ra.
+  const worker = new BrowserWindow({ show: false, width: 1280, height: 900, webPreferences: { offscreen: true, sandbox: true, contextIsolation: true, backgroundThrottling: false } });
+  worker.webContents.setFrameRate(10);
   pageView = new WebContentsView({ webPreferences: { sandbox: true, contextIsolation: true, preload: path.join(__dirname, 'preload.js') } });
   panelView = new WebContentsView({ webPreferences: { sandbox: true, contextIsolation: true } });
   mainWindow.contentView.addChildView(pageView);
@@ -114,7 +115,6 @@ app.whenReady().then(async () => {
     cur = side === 'studio' && (group !== 'publishing' || !studio) ? '' : side;
     const w = cur ? Math.round(Math.min(0.8, Math.max(0.2, widths[cur])) * width) : 0;
     pageView.setBounds({ x: 0, y: 0, width: width - w, height });
-    worker.setBounds({ x: 0, y: 0, width: Math.max(width, 1200), height: Math.max(height, 800) });
     bar.setBounds(cur ? { x: width - w, y: 0, width: w, height: BAR } : { x: width, y: 0, width: 0, height: 0 });
     for (const [name, v] of [['studio', panelView], ['meta', metaView]]) v.setBounds(cur === name ? { x: width - w, y: BAR, width: w, height: height - BAR } : { x: width, y: 0, width: 0, height: 0 });
     const title = cur === 'meta' ? 'Hộp thư Meta' : cur === 'studio' ? 'Studio AI' : '';
@@ -198,7 +198,7 @@ app.whenReady().then(async () => {
       { label: 'Công cụ lỗi', accelerator: 'F12', click: () => pageView.webContents.toggleDevTools() }] },
   ]));
   app.toggleStudio = toggleStudio; app.views = { page: pageView, panel: panelView, meta: metaView, worker, bar };
-  mainWindow.on('closed', () => { mainWindow = null; app.quit(); });
+  mainWindow.on('closed', () => { mainWindow = null; if (!worker.isDestroyed()) worker.destroy(); app.quit(); });
   if (app.isPackaged) getUpdater().checkForUpdatesAndNotify().catch(() => {});
 });
 app.on('window-all-closed', () => app.quit());
