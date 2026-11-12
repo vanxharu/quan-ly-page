@@ -29,9 +29,7 @@ chrome.runtime.onStartup?.addListener(()=>repairWebConnections().catch(()=>{}));
 
 const callUpdater=(action,extra={})=>new Promise((resolve,reject)=>{
   if(typeof chrome.runtime.sendNativeMessage!=='function')return reject(Error('Cần cài bộ cập nhật Windows và Tải lại tiện ích một lần.'));
-  // Không có phản hồi (ví dụ trong app Windows không có bộ kết nối) thì báo lỗi sau 20 giây, không treo trạng thái "đang cập nhật".
-  const timer=setTimeout(()=>reject(Error('Bộ kết nối Windows không phản hồi. Trong app Meta Assistant, Studio AI được cập nhật cùng app.')),20000);
-  chrome.runtime.sendNativeMessage('com.metaassistant.updater',{action,...extra},result=>{clearTimeout(timer);
+  chrome.runtime.sendNativeMessage('com.metaassistant.updater',{action,...extra},result=>{
     if(chrome.runtime.lastError)return reject(Error('Kết nối Windows: '+String(chrome.runtime.lastError.message||'Chưa nhận phản hồi.').slice(0,300)));
     if(!result?.ok)return reject(Error(result?.error||'Không cập nhật được tiện ích.'));
     resolve(result);
