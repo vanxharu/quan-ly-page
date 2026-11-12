@@ -101,7 +101,7 @@ async function openStudio(tab){
   await chrome.windows.create({url:chrome.runtime.getURL('sidepanel.html'),type:'popup',width:450,height:820});
 }
 chrome.action?.onClicked.addListener(tab=>{openStudio(tab).catch(()=>{});});
-const panelSender=sender=>!!sender.id&&sender.id===chrome.runtime.id&&sender.url===chrome.runtime.getURL('sidepanel.html');
+const panelSender=sender=>!!sender.id&&sender.id===chrome.runtime.id&&String(sender.url).split(/[?#]/)[0]===chrome.runtime.getURL('sidepanel.html'); // app Windows mở sidepanel.html?desktop=1
 function safeAvatar(value){try{const url=new URL(String(value||''));if(url.protocol!=='https:'||url.username||url.password)return '';for(const key of ['access_token','token','authorization','auth'])url.searchParams.delete(key);return url.href.slice(0,4000);}catch{return '';}}
 function cleanCatalog(payload){
   return {updatedAt:Date.now(),theme:payload?.theme==='dark'?'dark':'light',pages:(Array.isArray(payload?.pages)?payload.pages:[]).slice(0,250).filter(p=>p?.id&&p?.name).map(p=>({id:String(p.id).slice(0,40),name:String(p.name).slice(0,300),avatar:safeAvatar(p.avatar),selected:p.selected===true,recentPosts:P.recentPosts(p.recentPosts)}))};
