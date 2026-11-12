@@ -474,7 +474,7 @@ $('fbLogin').onclick = () => {
   // App Windows: đăng nhập trong trình duyệt mặc định (đã có phiên Facebook), app tự nhận token khi xong.
   if(window.metaDesktop?.loginFacebook){
     window.metaDesktop.loginFacebook({appId:$('appId').value.trim()||App.DEFAULT_APP_ID,configId:App.CONFIG_ID});
-    $('loginStatus').textContent='Đã mở Facebook trong trình duyệt. Bấm Tiếp tục ở đó, xong app tự đăng nhập.';
+    $('loginStatus').textContent='Đã mở Facebook ở cột bên phải. Đăng nhập (nếu được hỏi) rồi bấm Tiếp tục, xong app tự vào.';
     return;
   }
   loginPrompt=true;syncLoginCooldown();

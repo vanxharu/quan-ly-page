@@ -15,15 +15,16 @@ app.userAgentFallback = app.userAgentFallback.replace(/ (Electron|meta-assistant
 const IN_APP = /^https:\/\/([a-z0-9-]+\.)*(facebook\.com|chatgpt\.com|openai\.com|google\.com|live\.com|microsoftonline\.com|apple\.com)\//i;
 const inApp = url => url === 'about:blank' || url.startsWith(WEB) || IN_APP.test(url);
 
-// Đăng nhập Facebook bằng trình duyệt mặc định (đã có phiên Facebook, khỏi gõ lại mật khẩu):
-// Facebook trả token về desktop-login.html, trang đó mở lại app qua metaassistant://login.
+// Đăng nhập Facebook (API) ngay trong cột Meta của app: dùng chung phiên bạn đã đăng nhập Business Suite ở đó,
+// bạn tự bấm Tiếp tục; Facebook trả token về desktop-login.html, trang đó chuyển sang metaassistant://login và app bắt lại.
 const LOGIN_PAGE = WEB + 'desktop-login.html', PROTOCOL = 'metaassistant';
 let loginState = '';
+let openLoginPane = () => {};
 function loginInBrowser(sdkUrl) {
   const u = new URL(sdkUrl), q = new URLSearchParams({ client_id: u.searchParams.get('client_id') || u.searchParams.get('app_id'), redirect_uri: LOGIN_PAGE,
     response_type: 'token', state: loginState = crypto.randomBytes(16).toString('hex') });
   for (const k of ['config_id', 'scope']) if (u.searchParams.get(k)) q.set(k, u.searchParams.get(k));
-  shell.openExternal(`https://www.facebook.com/v25.0/dialog/oauth?${q}`);
+  openLoginPane(`https://www.facebook.com/v25.0/dialog/oauth?${q}`);
 }
 function handleDeepLink(link) {
   let u; try { u = new URL(link); } catch { return; }
@@ -32,11 +33,12 @@ function handleDeepLink(link) {
   if (!token || !loginState || u.searchParams.get('state') !== loginState || !mainWindow) return;
   loginState = '';
   pageView.webContents.executeJavaScript(`localStorage.setItem('fbTok', ${JSON.stringify(token)}); localStorage.setItem('autoLogin', '1'); location.reload();`);
+  metaView.webContents.loadURL('https://business.facebook.com/latest/inbox/all').catch(() => {});
   if (mainWindow.isMinimized()) mainWindow.restore();
   mainWindow.focus();
 }
-if (process.defaultApp) app.setAsDefaultProtocolClient(PROTOCOL, process.execPath, [path.resolve(process.argv[1] || '.')]);
-else app.setAsDefaultProtocolClient(PROTOCOL);
+// Bản cũ (1.0.1–1.0.12) đăng ký metaassistant:// với Windows để đăng nhập qua Chrome; giờ không dùng nữa.
+app.removeAsDefaultProtocolClient(PROTOCOL);
 
 let extensions, mainWindow, pageView, panelView, metaView, side = 'studio', group = '', studio; // side: cột phải 'studio' | 'meta' | ''; group: nhóm tab đang mở trên trang
 function newWindow(url, opts = {}) {
@@ -56,16 +58,28 @@ function wire(wc, win, asTab = true) {
     return { action: 'deny' };
   });
   wc.on('did-create-window', child => wire(child.webContents, child));
-  wc.on('will-navigate', (e, url) => { if (!inApp(url) && /^https?:/i.test(url)) { e.preventDefault(); shell.openExternal(url); } });
+  // Bắt token ngay khi Facebook chuyển về desktop-login.html#access_token=… (chuyển hướng máy chủ hoặc trang tự chuyển).
+  const catchLogin = (e, url) => {
+    if (url.startsWith(PROTOCOL + '://')) { e?.preventDefault?.(); handleDeepLink(url); return true; }
+    if (url.startsWith(LOGIN_PAGE) && url.includes('#')) {
+      const q = new URLSearchParams(url.split('#')[1]);
+      if (q.get('access_token')) { e?.preventDefault?.(); handleDeepLink(`${PROTOCOL}://login?` + new URLSearchParams({ access_token: q.get('access_token'), state: q.get('state') || '' })); return true; }
+    }
+    return false;
+  };
+  wc.on('will-redirect', (e, url) => { catchLogin(e, url); });
+  wc.on('did-navigate', (_e, url) => { catchLogin(null, url); });
+  wc.on('did-navigate-in-page', (_e, url) => { catchLogin(null, url); });
+  wc.on('will-navigate', (e, url) => {
+    if (catchLogin(e, url)) return;
+    if (!inApp(url) && /^https?:/i.test(url)) { e.preventDefault(); shell.openExternal(url); }
+  });
 }
 
 if (!app.requestSingleInstanceLock()) app.quit();
-app.on('second-instance', (_e, argv) => {
-  const link = argv.find(a => a.startsWith(PROTOCOL + '://'));
-  if (link) return handleDeepLink(link);
+app.on('second-instance', () => {
   if (mainWindow) { if (mainWindow.isMinimized()) mainWindow.restore(); mainWindow.focus(); }
 });
-app.on('open-url', (e, link) => { e.preventDefault(); handleDeepLink(link); });
 
 app.whenReady().then(async () => {
   const ses = session.defaultSession;
@@ -141,6 +155,13 @@ app.whenReady().then(async () => {
   });
   const show = (name, open) => { side = (typeof open === 'boolean' ? open : side !== name) ? name : ''; layout(); };
   const toggleStudio = open => show('studio', open);
+  openLoginPane = url => { metaView.webContents.loadURL(url).catch(() => {}); show('meta', true); mainWindow.focus(); };
+  // Chưa đăng nhập Facebook trong app: mở trang đăng nhập Business Suite ở cột phải ngay khi khởi động.
+  ses.cookies.get({ url: 'https://www.facebook.com', name: 'c_user' }).then(c => {
+    if (c.length) return;
+    metaView.webContents.loadURL('https://business.facebook.com/latest/inbox/all').catch(() => {});
+    show('meta', true);
+  }).catch(() => {});
   const openMetaInbox = url => {
     if (!/^https:\/\/business\.facebook\.com\/latest\/inbox/.test(url)) return;
     if (metaView.webContents.getURL() !== url) metaView.webContents.loadURL(url);

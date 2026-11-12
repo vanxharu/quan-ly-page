@@ -7,11 +7,13 @@ app.whenReady().then(() => session.defaultSession.protocol.handle('https', req =
     try { return new Response(fs.readFileSync(f), { headers: { 'content-type': type(f) } }); } catch { return new Response('', { status: 404 }); } }
   if (req.url.startsWith('https://business.facebook.com/latest/inbox')) return new Response(fs.readFileSync(path.join(__dirname, 'fixtures/inbox.html')), { headers: { 'content-type': 'text/html' } });
   if (req.url.startsWith('https://business.facebook.com/latest/composer')) return new Response(fs.readFileSync(path.join(__dirname, 'fixtures/composer.html')), { headers: { 'content-type': 'text/html' } });
+  if (req.url.startsWith('https://www.facebook.com/')) return new Response('<html><body>fb</body></html>', { headers: { 'content-type': 'text/html' } });
   if (req.url.includes('graph.facebook.com') && req.url.includes('/me/accounts')) return Response.json({ data: [{ id: '1', name: 'Page A', access_token: 't' }] });
   if (req.url.includes('graph.facebook.com')) return Response.json({ data: [] });
   return new Response('', { status: 404 });
 }));
 const electron = require('electron'), opened = []; electron.shell.openExternal = url => { opened.push(url); return Promise.resolve(); };
+try { fs.rmSync(path.join(app.getPath('userData'), 'layout.json')); } catch {}
 require('../main.js');
 setTimeout(async () => {
   const win = app.views.page, out = {};
@@ -26,15 +28,16 @@ setTimeout(async () => {
     out.studio = await win.webContents.executeJavaScript('App.ai.getSettings().then(r=>"ok "+r.settings.postPrompt.slice(0,30)).catch(e=>"ERR "+e.message)');
     out.save = await win.webContents.executeJavaScript('App.ai.saveSettings({postPrompt:"Lệnh thử",imagePrompt:"Ảnh thử"}).then(r=>"ok "+r.settings.postPrompt).catch(e=>"ERR "+e.message)');
     await win.webContents.executeJavaScript("window.open('https://www.facebook.com/v25.0/dialog/oauth?app_id=1062977306762250&client_id=1062977306762250&config_id=99&redirect_uri=x'); 1");
+    await new Promise(r => setTimeout(r, 800));
+    const metaWc = app.views.meta.webContents, oauth = new URL(metaWc.getURL());
+    out.oauth = oauth.searchParams.get('redirect_uri') + ' cfg=' + oauth.searchParams.get('config_id') + ' external=' + opened.length;
+    await metaWc.loadURL('https://vanxharu.github.io/quan-ly-page/desktop-login.html#access_token=BAD&state=wrong').catch(() => {});
     await new Promise(r => setTimeout(r, 500));
-    const oauth = new URL(opened.find(u => u.includes('dialog/oauth')));
-    out.oauth = oauth.searchParams.get('redirect_uri') + ' cfg=' + oauth.searchParams.get('config_id');
-    app.emit('second-instance', {}, ['x', 'metaassistant://login?access_token=BAD&state=wrong']);
-    app.emit('second-instance', {}, ['x', 'metaassistant://login?access_token=TOK123&state=' + oauth.searchParams.get('state')]);
+    await metaWc.loadURL('https://vanxharu.github.io/quan-ly-page/desktop-login.html#access_token=TOK123&state=' + oauth.searchParams.get('state')).catch(() => {});
     await new Promise(r => setTimeout(r, 2500));
     out.token = await win.webContents.executeJavaScript("localStorage.getItem('fbTok')");
     await win.webContents.executeJavaScript("metaDesktop.loginFacebook({appId:'1062977306762250',configId:'1092800303751533'}); 1"); await new Promise(r => setTimeout(r, 400));
-    out.loginBtn = new URL(opened.at(-1)).searchParams.get('config_id');
+    out.loginBtn = new URL(metaWc.getURL()).searchParams.get('config_id');
     out.lookup = await win.webContents.executeJavaScript("metaDesktop.lookupProfile({pageId:'123456',psid:'9',name:'Nguyễn Thảo'})");
     const png = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
     const composing = win.webContents.executeJavaScript(`metaDesktop.composePost({pageId:'123456',text:'Xin chào khách',image:'${png}'})`);
