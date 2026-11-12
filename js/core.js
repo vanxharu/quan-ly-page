@@ -329,10 +329,42 @@ App.recordTemplateUse = async (tpl, customerKey) => {
 // gắn nút qua API, nên thay bằng link m.me ở cuối nội dung (khách bấm vẫn mở Messenger của Page).
 App.messengerLink = page => `https://m.me/${encodeURIComponent(String(page.id))}`;
 App.withMessengerLine = (page, text) => { const link = App.messengerLink(page); return String(text || '').includes(link) ? String(text || '') : `${String(text || '').trimEnd()}${text ? '\n\n' : ''}💬 Nhắn tin cho Page: ${link}`; };
+// Bài có ảnh + nút "Gửi tin nhắn" thật: Graph API đăng bài thường xoá ảnh khi gắn nút, nên làm như Business Suite:
+// tạo mẫu quảng cáo (không chạy quảng cáo, không tốn tiền) → Facebook sinh một bài ẩn của Page có ảnh + nút →
+// đăng bài ẩn đó lên Page (ngay, hoặc máy chủ bot đăng đúng giờ hẹn). Cần quyền ads_management và một tài khoản quảng cáo.
+App.adAccount = async () => {
+  const saved = (await DB.get('settings', {})).adAccountId;
+  if (saved) return saved;
+  const list = (await api('/me/adaccounts', { fields: 'id,name,account_status', limit: 50 }, 'GET', App.userToken)).data || [];
+  const acc = list.find(a => a.account_status === 1) || list[0];
+  if (!acc) throw Error('Tài khoản Facebook này chưa có tài khoản quảng cáo. Tạo một tài khoản ở business.facebook.com (không cần nạp tiền) để gắn nút Gửi tin nhắn vào bài có ảnh.');
+  return acc.id;
+};
+App.publishWithMessengerButton = async (page, text, imageData, when = 0) => {
+  if (!App.userToken) throw Error('Đăng nhập Facebook lại để đăng bài có nút Gửi tin nhắn.');
+  if (when && !App.server?.user) throw Error('Bài có ảnh + nút Gửi tin nhắn được máy chủ bot đăng đúng giờ: đăng nhập máy chủ ở Quản lý › Cài đặt trước.');
+  const act = await App.adAccount();
+  const image = imageData instanceof Blob ? imageData : await (await fetch(imageData)).blob();
+  if (!image.size || !/^image\//.test(image.type)) throw Error('Không đọc được ảnh bài viết. Chưa gửi bài lên Facebook.');
+  const form = new FormData(); form.append('filename', image, 'bai-viet.' + (image.type.split('/')[1] || 'jpg'));
+  const hash = Object.values((await api(`/${act}/adimages`, form, 'POST', App.userToken)).images || {})[0]?.hash;
+  if (!hash) throw Error('Facebook chưa nhận ảnh cho bài có nút Gửi tin nhắn.');
+  const creative = await api(`/${act}/adcreatives`, { name: `Meta Assistant ${new Date().toISOString()}`, object_story_spec: { page_id: String(page.id), link_data: {
+    image_hash: hash, link: 'https://fb.com/messenger_doc/', message: text || '', call_to_action: { type: 'MESSAGE_PAGE', value: { app_destination: 'MESSENGER' } } } } }, 'POST', App.userToken);
+  let story = '';
+  for (let i = 0; i < 6 && !story; i++) {
+    if (i) await new Promise(r => setTimeout(r, 1500));
+    story = (await api(`/${creative.id}`, { fields: 'effective_object_story_id' }, 'GET', App.userToken)).effective_object_story_id || '';
+  }
+  if (!story) throw Error('Facebook chưa tạo xong bài có nút Gửi tin nhắn. Thử lại sau ít phút.');
+  if (!when) { await api(`/${story}`, { is_published: true }, 'POST', page.access_token); return { id: story, post_id: story }; }
+  await App.server.call('schedule_post', { pageId: String(page.id), postId: story, at: new Date(when * 1000).toISOString() });
+  return { id: story, post_id: story, viaServer: true };
+};
 // Đăng (hoặc hẹn) một bài lên Page. when: giây Unix, 0 = đăng ngay. options.messageButton: thêm nút/link Gửi tin nhắn.
 App.publish = async (page, text, imageData, when = 0, options = {}) => {
   const sched = when ? { published: false, scheduled_publish_time: when, unpublished_content_type:'SCHEDULED' } : {};
-  if (options.messageButton && imageData) text = App.withMessengerLine(page, text);
+  if (options.messageButton && imageData) return App.publishWithMessengerButton(page, text, imageData, when);
   if (options.messageButton && !imageData) {
     const link = App.messengerLink(page);
     return api(`/${page.id}/feed`, { message: text, link, call_to_action: { type: 'MESSAGE_PAGE', value: { app_destination: 'MESSENGER', link } }, ...sched }, 'POST', page.access_token);

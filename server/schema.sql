@@ -128,3 +128,30 @@ end $$;
 create or replace function rule_hit(rid uuid) returns void language sql security definer set search_path = public as
 $$ update rules set hits = hits + 1 where id = rid $$;
 revoke execute on function rule_hit(uuid) from public, anon, authenticated;
+
+-- Bài có ảnh + nút Gửi tin nhắn chờ máy chủ đăng đúng giờ (Facebook không hẹn giờ được loại bài này).
+create table if not exists scheduled_posts (
+  post_id text primary key,
+  page_id text not null,
+  publish_at timestamptz not null,
+  status text not null default 'pending',   -- pending | published | error
+  error text not null default '',
+  done_at timestamptz,
+  created_at timestamptz not null default now()
+);
+alter table scheduled_posts enable row level security;
+drop policy if exists "staff read scheduled_posts" on scheduled_posts;
+create policy "staff read scheduled_posts" on scheduled_posts for select to authenticated using (true);
+-- Khoá cho pg_cron gọi fb-admin; RLS bật, không policy → chỉ service role đọc được.
+create table if not exists app_config (key text primary key, value text not null);
+alter table app_config enable row level security;
+insert into app_config (key, value) values ('cron_key', encode(gen_random_bytes(24), 'hex')) on conflict (key) do nothing;
+create extension if not exists pg_cron;
+create extension if not exists pg_net;
+select cron.unschedule('publish-due-posts') where exists (select 1 from cron.job where jobname = 'publish-due-posts');
+select cron.schedule('publish-due-posts', '* * * * *', $$
+  select net.http_post(
+    url := 'https://kpzkokyndacmzuvyaxsc.supabase.co/functions/v1/fb-admin',
+    headers := jsonb_build_object('Content-Type', 'application/json', 'x-cron-key', (select value from app_config where key = 'cron_key')),
+    body := '{"action":"publish_due"}'::jsonb)
+$$);

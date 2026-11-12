@@ -87,14 +87,40 @@ async function status() {
   return { secret: !!env('FB_APP_SECRET'), pages: rows };
 }
 
+// Bài có ảnh + nút Gửi tin nhắn (bài ẩn tạo từ mẫu quảng cáo): Facebook không hẹn giờ được loại bài này,
+// nên máy chủ giữ lịch và đăng (is_published=true) khi tới giờ. pg_cron gọi publish_due mỗi phút.
+async function schedule_post({ pageId, postId, at }) {
+  if (!/^\d+$/.test(String(pageId)) || !/^\d+_\d+$/.test(String(postId)) || !Date.parse(at)) throw new Error('Thiếu Page, bài hoặc giờ đăng.');
+  if (!(await pageToken(pageId))) throw new Error('Page chưa kết nối với máy chủ bot (Cài đặt › Máy chủ bot › Kết nối Page).');
+  await db('scheduled_posts', { method: 'POST', prefer: 'resolution=merge-duplicates', body: { post_id: postId, page_id: pageId, publish_at: new Date(at).toISOString(), status: 'pending', error: '' } });
+  return { ok: true };
+}
+async function publish_due() {
+  const due = await db(`scheduled_posts?status=eq.pending&publish_at=lte.${new Date().toISOString()}&select=post_id,page_id&limit=20`);
+  for (const p of due || []) {
+    let patch = { status: 'published', error: '', done_at: new Date().toISOString() };
+    try { await fb(`/${p.post_id}`, await pageToken(p.page_id), { is_published: true }); }
+    catch (e) { patch = { ...patch, status: 'error', error: e.message }; }
+    await db(`scheduled_posts?post_id=eq.${p.post_id}`, { method: 'PATCH', body: patch });
+  }
+  return { published: (due || []).length };
+}
+
 async function serve(req) {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS });
+  // Lịch đăng bài (pg_cron): khoá bí mật lưu trong bảng app_config, chỉ máy chủ đọc được.
+  const cronKey = req.headers.get('x-cron-key');
+  if (cronKey) {
+    const want = (await db('app_config?key=eq.cron_key&select=value'))?.[0]?.value;
+    if (!want || cronKey !== want) return json({ error: 'Sai khoá.' }, 401);
+    try { return json(await publish_due()); } catch (e) { return json({ error: e.message }, 500); }
+  }
   // Chỉ tài khoản đã đăng nhập (chủ / nhân viên) mới gọi được.
   const user = await fetch(`${env('SUPABASE_URL')}/auth/v1/user`, { headers: { apikey: env('SUPABASE_ANON_KEY') || env('SUPABASE_SERVICE_ROLE_KEY'), Authorization: req.headers.get('authorization') || '' } });
   if (!user.ok) return json({ error: 'Chưa đăng nhập máy chủ.' }, 401);
   try {
     const body = await req.json().catch(() => ({}));
-    const fn = { connect, profile, status }[body.action];
+    const fn = { connect, profile, status, schedule_post }[body.action];
     if (!fn) return json({ error: 'Thiếu action.' }, 400);
     return json(await fn(body));
   } catch (e) { return json({ error: e.message }, 400); }

@@ -49,7 +49,7 @@
           h('label',{className:'field'},'Ảnh (tuỳ chọn)',h('input',{type:'file',id:'poImage',accept:'image/*'})),
           h('label',{className:'field'},'Hẹn giờ (tuỳ chọn)',h('input',{type:'datetime-local',id:'poAt'}))),
         h('label',{className:'row',style:'gap:8px;margin:6px 0'},h('input',{type:'checkbox',id:'poMsgBtn'}),h('span',{},'Thêm nút ',h('strong',{textContent:'Gửi tin nhắn'})),
-          h('span',{className:'hint',textContent:'· Bài chữ: nút Messenger dưới bài. Bài có ảnh: thêm link m.me cuối bài (Facebook xoá ảnh nếu gắn nút qua API).'})),
+          h('span',{className:'hint',textContent:'· Bài có ảnh: tạo qua tài khoản quảng cáo (không tốn tiền) để giữ ảnh + nút; bài hẹn giờ do máy chủ bot đăng.'})),
         h('div',{className:'row',id:'poPreview'}),
         h('div',{className:'planner-composer-target'},h('strong',{id:'poTitle'}),h('span',{id:'poTargetHint',className:'hint'}),h('div',{className:'tags',id:'poPages'}),
           h('button',{id:'poReleasePage',type:'button',className:'btn btn-ghost btn-sm',hidden:true,textContent:'Dùng các Page đang chọn',onclick:()=>{draftPageId='';edited=true;savePostDraft();}})),

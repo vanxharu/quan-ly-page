@@ -109,7 +109,7 @@
           h('input', { type: 'datetime-local', value: toLocalInput(i.at), disabled: locked, onchange: e => patch(i.id, { at: e.target.value ? new Date(e.target.value).getTime() : 0 }).then(refresh) }),
           h('span', { className: 'status ' + tone, textContent: i.aiGenerating?'Đang tạo ảnh…':label }),
           i.imageRequired&&!i.imageData?h('span',{className:'status err',textContent:'Thiếu ảnh · Chưa thể lên lịch'}):null,
-          h('label', { className: 'row planner-msg-btn', style: 'gap:6px', title: i.imageData ? 'Bài có ảnh: thêm link m.me cuối bài (Facebook xoá ảnh nếu gắn nút qua API).' : 'Gắn nút Gửi tin nhắn (Messenger) dưới bài.' },
+          h('label', { className: 'row planner-msg-btn', style: 'gap:6px', title: i.imageData ? 'Bài có ảnh: tạo qua tài khoản quảng cáo (không tốn tiền) để giữ ảnh + nút; máy chủ bot đăng đúng giờ.' : 'Gắn nút Gửi tin nhắn (Messenger) dưới bài.' },
             h('input', { type: 'checkbox', checked: i.messageButton ?? !!App.planner?.messageButtonDefault, disabled: locked, onchange: e => patch(i.id, { messageButton: e.target.checked }) }), 'Nút Gửi tin nhắn'),
           i.error ? h('span', { className: 'hint', textContent: i.error }) : null),
         i.topicTitle?h('p',{className:'hint',textContent:'Chủ đề: '+i.topicTitle}):null,
