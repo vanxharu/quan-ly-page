@@ -384,7 +384,8 @@
         });
       if (!res) return;
       if (S.conv !== c) return;
-      const msgs = (res.messages?.data || []).reverse();
+      // Sắp theo giờ gửi thay vì tin vào thứ tự Graph trả về (có lúc không phải mới nhất trước).
+      const msgs = (res.messages?.data || []).slice().sort((a, b) => new Date(a.created_time) - new Date(b.created_time));
       // Giờ tin cuối của khách: quyết định khung nhắn (24 giờ / 7 ngày với thẻ Nhân viên trả lời / đã đóng).
       const lastCust = [...msgs].reverse().find(m => m.from?.id !== c.page.id);
       c.lastCustomerAt = lastCust ? new Date(lastCust.created_time).getTime() || 0 : 0;
