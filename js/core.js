@@ -765,3 +765,20 @@ document.addEventListener('click', e => { if (!e.composedPath().includes($('page
 document.addEventListener('keydown', e => { if (e.key === 'Escape') closePicker(); });
 App.onLogin.push(drawPicker);
 App.checkedPages = box => [...box.querySelectorAll('input:checked')].map(i => App.pageById(i.value)).filter(Boolean);
+
+// App Windows: phiên bản cạnh tên app + nút Cập nhật (tải bản mới từ GitHub Releases, khởi động lại để cài).
+if (window.metaDesktop?.version) (async () => {
+  const v = await window.metaDesktop.version(), tag = document.querySelector('.pro-tag'), btn = $('btnUpdate');
+  tag.textContent = 'APP ' + v; tag.title = 'Meta Assistant cho Windows, phiên bản ' + v;
+  btn.hidden = false;
+  btn.onclick = async () => {
+    if (btn.dataset.ready) return window.metaDesktop.installUpdate();
+    btn.disabled = true; btn.textContent = 'Đang kiểm tra…';
+    try {
+      const r = await window.metaDesktop.checkUpdate();
+      if (r.state === 'ready') { btn.dataset.ready = '1'; btn.textContent = `Cài bản ${r.version}`; toast(`Đã tải bản ${r.version}. Bấm "Cài bản ${r.version}" để khởi động lại và cập nhật.`, 7000); }
+      else { btn.textContent = 'Cập nhật'; toast(r.state === 'latest' ? `Đang dùng bản mới nhất (${v}).` : 'Bản chạy thử không tự cập nhật.'); }
+    } catch (e) { btn.textContent = 'Cập nhật'; toast('Không kiểm tra được bản mới: ' + e.message, 6000); }
+    btn.disabled = false;
+  };
+})();

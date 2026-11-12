@@ -88,7 +88,7 @@ app.whenReady().then(async () => {
   try { studio = await (ses.extensions || ses).loadExtension(EXT, { allowFileAccess: true }); }
   catch (e) { console.error('Không nạp được Studio AI:', e); }
   // Một cửa sổ: trang web bên trái, Studio AI luôn nằm kế bên phải (thay cho bảng bên của Chrome).
-  mainWindow = new BaseWindow({ width: 1440, height: 880, icon: ICON, title: 'Meta Assistant' });
+  mainWindow = new BaseWindow({ width: 1440, height: 880, icon: ICON, title: `Meta Assistant ${app.getVersion()}` });
   pageView = new WebContentsView({ webPreferences: { sandbox: true, contextIsolation: true, preload: path.join(__dirname, 'preload.js') } });
   panelView = new WebContentsView({ webPreferences: { sandbox: true, contextIsolation: true } });
   mainWindow.contentView.addChildView(pageView);
@@ -116,6 +116,25 @@ app.whenReady().then(async () => {
     show('meta', true);
   };
   ipcMain.on('open-meta-inbox', (e, url) => { if (e.sender === pageView.webContents) openMetaInbox(url); });
+  // Cập nhật: kiểm tra GitHub Releases, tải về, rồi khởi động lại để cài khi người dùng bấm.
+  let updater = null, downloaded = '';
+  const getUpdater = () => {
+    if (!updater) { updater = require('electron-updater').autoUpdater; updater.on('update-downloaded', info => { downloaded = info.version; }); }
+    return updater;
+  };
+  const fromPage = e => e.sender === pageView.webContents;
+  ipcMain.handle('app-version', () => app.getVersion());
+  ipcMain.handle('update-check', async e => {
+    if (!fromPage(e)) return { state: 'denied' };
+    if (!app.isPackaged) return { state: 'dev' };
+    if (downloaded) return { state: 'ready', version: downloaded };
+    const r = await getUpdater().checkForUpdates();
+    const v = r?.updateInfo?.version;
+    if (!v || v === app.getVersion() || !r.downloadPromise) return { state: 'latest' };
+    await r.downloadPromise;
+    return { state: 'ready', version: v };
+  });
+  ipcMain.handle('update-install', e => { if (fromPage(e) && downloaded) getUpdater().quitAndInstall(); });
   layout();
   Menu.setApplicationMenu(Menu.buildFromTemplate([
     { label: 'Studio AI', accelerator: 'Ctrl+Shift+A', click: () => toggleStudio() },
@@ -131,6 +150,6 @@ app.whenReady().then(async () => {
   ]));
   app.toggleStudio = toggleStudio; app.views = { page: pageView, panel: panelView, meta: metaView };
   mainWindow.on('closed', () => { mainWindow = null; app.quit(); });
-  if (app.isPackaged) require('electron-updater').autoUpdater.checkForUpdatesAndNotify().catch(() => {});
+  if (app.isPackaged) getUpdater().checkForUpdatesAndNotify().catch(() => {});
 });
 app.on('window-all-closed', () => app.quit());

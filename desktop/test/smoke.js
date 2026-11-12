@@ -18,6 +18,8 @@ setTimeout(async () => {
     out.ext = (session.defaultSession.extensions || session.defaultSession).getAllExtensions().map(e => e.name + ' ' + e.version);
     await win.webContents.executeJavaScript("localStorage.setItem('fbTok','x'); 1");
     win.webContents.reload(); await new Promise(r => setTimeout(r, 5000));
+    out.ver = await win.webContents.executeJavaScript("document.querySelector('.pro-tag').textContent + ' | ' + !document.getElementById('btnUpdate').hidden");
+    out.dev = await win.webContents.executeJavaScript('metaDesktop.checkUpdate().then(r => r.state)');
     out.pages = await win.webContents.executeJavaScript('App.pages.length');
     out.studio = await win.webContents.executeJavaScript('App.ai.getSettings().then(r=>"ok "+r.settings.postPrompt.slice(0,30)).catch(e=>"ERR "+e.message)');
     out.save = await win.webContents.executeJavaScript('App.ai.saveSettings({postPrompt:"Lệnh thử",imagePrompt:"Ảnh thử"}).then(r=>"ok "+r.settings.postPrompt).catch(e=>"ERR "+e.message)');
@@ -36,5 +38,5 @@ setTimeout(async () => {
     await new Promise(r => setTimeout(r, 800));
     out.meta = [app.views.meta.webContents.getURL(), app.views.meta.getBounds().width, app.views.page.getBounds().width];
   } catch (e) { out.error = e.message; }
-  console.log('SMOKE', JSON.stringify(out)); process.exit(out.studio?.startsWith('ok') && out.ext?.length && out.panel && out.token === 'TOK123' && out.meta?.[0].includes('asset_id=1') && out.meta[1] > 0 ? 0 : 1);
+  console.log('SMOKE', JSON.stringify(out)); process.exit(out.studio?.startsWith('ok') && out.ext?.length && out.panel && out.token === 'TOK123' && out.meta?.[0].includes('asset_id=1') && out.meta[1] > 0 && out.ver?.startsWith('APP ') && out.dev === 'dev' ? 0 : 1);
 }, 6000);

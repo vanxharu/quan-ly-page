@@ -1,3 +1,8 @@
-// Cầu nối nhỏ cho trang web trong app: chỉ cho phép mở hộp thư Business Suite ở cột bên.
+// Cầu nối nhỏ cho trang web trong app: mở hộp thư Business Suite ở cột bên, xem phiên bản và cập nhật app.
 const { contextBridge, ipcRenderer } = require('electron');
-contextBridge.exposeInMainWorld('metaDesktop', { openMetaInbox: url => ipcRenderer.send('open-meta-inbox', String(url)) });
+contextBridge.exposeInMainWorld('metaDesktop', {
+  openMetaInbox: url => ipcRenderer.send('open-meta-inbox', String(url)),
+  version: () => ipcRenderer.invoke('app-version'),
+  checkUpdate: () => ipcRenderer.invoke('update-check'),
+  installUpdate: () => ipcRenderer.invoke('update-install'),
+});
