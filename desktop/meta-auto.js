@@ -148,6 +148,20 @@ function createMetaAuto({ worker, composer, metaView, showMeta = () => () => {},
       for (const type of ['mouseMoved', 'mousePressed', 'mouseReleased']) await dbg.sendCommand('Input.dispatchMouseEvent', { type, x: r.x, y: r.y, button: 'left', clickCount: 1 });
       return true;
     };
+    const BUTTON_BOX = { role: 'combobox', label: /^Nút$|^Button$/i.source };
+    const buttonChosen = () => wc.executeJavaScript(`(() => { const re = /^(Nút|Button)$/i;
+      const box = [...document.querySelectorAll('[role="combobox"]')].find(b => (b.getAttribute('aria-labelledby') || '').split(' ').some(id => re.test((document.getElementById(id)?.innerText || '').trim())));
+      return !!box && /gửi tin nhắn|send message/i.test(box.innerText); })()`).catch(() => false);
+    const ensureButton = async () => {
+      for (let i = 0; i < 3; i++) {
+        if (await buttonChosen()) return true;
+        if (!(await click(BUTTON_BOX))) return false;
+        await sleep(700);
+        await click({ role: 'option', text: /gửi tin nhắn|send message/i.source });
+        await sleep(700);
+      }
+      return buttonChosen();
+    };
     const waitFor = async (spec, ms = 5000) => { for (let t = 0; t < ms; t += 250) { if (await find(spec)) return true; await sleep(250); } return false; };
     try {
       if (!dbg.isAttached()) dbg.attach('1.3');
@@ -196,12 +210,9 @@ function createMetaAuto({ worker, composer, metaView, showMeta = () => () => {},
         }
         await dbg.sendCommand('Page.setInterceptFileChooserDialog', { enabled: false }).catch(() => {});
       }
-      // 3) Nút: combobox "Nút" → "Gửi tin nhắn".
-      if (await click({ role: 'combobox', label: /^Nút$|^Button$/i.source })) {
-        await sleep(600);
-        done.button = await click({ role: 'option', text: /gửi tin nhắn|send message/i.source });
-        step('button', done.button ? 'ok' : 'fail');
-      }
+      // 3) Nút: combobox "Nút" → "Gửi tin nhắn", rồi đọc lại combobox (bấm trúng menu chưa chắc đã chọn).
+      done.button = await ensureButton();
+      step('button', done.button ? 'ok' : 'fail');
       // 4) Hẹn giờ: bật "Đặt ngày và giờ" → gõ ngày (ô dd/mm/yyyy) và giờ/phút (2 ô spinbutton "giờ", "phút"), rồi đọc lại để chắc đúng.
       if (when) {
         const at = new Date(when * 1000), pad = n => String(n).padStart(2, '0');
@@ -239,7 +250,7 @@ function createMetaAuto({ worker, composer, metaView, showMeta = () => () => {},
     } catch (e) { notify(`Business Suite: lỗi khi điền sẵn (${e.message}). Làm tay phần còn lại.`); }
     // Giữ debugger gắn: nó mang cấu hình giả Chrome (userAgentMetadata) cho Business Suite, tháo ra là mất.
     for (const k of ['image', 'text', 'button', 'schedule']) if (done[k] !== true) step(k, 'fail');
-    return { done, find, click, waitFor };
+    return { done, find, click, waitFor, ensureButton };
   };
   const leftComposer = wc => wc.isDestroyed() || !/\/composer/.test(wc.getURL());
 
@@ -257,6 +268,8 @@ function createMetaAuto({ worker, composer, metaView, showMeta = () => () => {},
         try {
           if (!dbg.isAttached()) dbg.attach('1.3');
           const publish = { role: 'button', text: (when ? /^Lên lịch$|^Schedule$/i : /^Đăng$|^Publish$|^Post$/i).source, enabled: true };
+          // Đặt giờ xong trang có thể dựng lại form: kiểm tra nút Gửi tin nhắn lần cuối trước khi bấm.
+          if (!(await r.ensureButton())) throw Error('Mất lựa chọn nút Gửi tin nhắn');
           progress({ id: 'publish', state: 'run' });
           if (await r.waitFor(publish, 60000) && await r.click(publish)) {
             for (let i = 0; i < 60 && !leftComposer(wc); i++) await sleep(1000);
