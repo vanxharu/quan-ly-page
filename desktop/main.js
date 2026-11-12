@@ -1,6 +1,6 @@
 // Meta Assistant cho Windows: mở trang web (luôn là bản mới nhất trên GitHub Pages) trong cửa sổ riêng
 // và chạy sẵn tiện ích Studio AI (ChatGPT) bên trong, không cần Chrome.
-const { app, BaseWindow, BrowserWindow, Menu, WebContentsView, session, shell } = require('electron');
+const { app, BaseWindow, BrowserWindow, Menu, WebContentsView, ipcMain, session, shell } = require('electron');
 const path = require('path'), crypto = require('crypto');
 const { ElectronChromeExtensions } = require('electron-chrome-extensions');
 
@@ -37,7 +37,7 @@ function handleDeepLink(link) {
 if (process.defaultApp) app.setAsDefaultProtocolClient(PROTOCOL, process.execPath, [path.resolve(process.argv[1] || '.')]);
 else app.setAsDefaultProtocolClient(PROTOCOL);
 
-let extensions, mainWindow, pageView, panelView, panelOpen = true, studio;
+let extensions, mainWindow, pageView, panelView, metaView, side = 'studio', studio; // side: cột phải đang hiện 'studio' | 'meta' | ''
 function newWindow(url, opts = {}) {
   const win = new BrowserWindow({ width: 1280, height: 860, icon: ICON, autoHideMenuBar: true, show: false, ...opts,
     webPreferences: { sandbox: true, contextIsolation: true } });
@@ -89,33 +89,47 @@ app.whenReady().then(async () => {
   catch (e) { console.error('Không nạp được Studio AI:', e); }
   // Một cửa sổ: trang web bên trái, Studio AI luôn nằm kế bên phải (thay cho bảng bên của Chrome).
   mainWindow = new BaseWindow({ width: 1440, height: 880, icon: ICON, title: 'Meta Assistant' });
-  pageView = new WebContentsView({ webPreferences: { sandbox: true, contextIsolation: true } });
+  pageView = new WebContentsView({ webPreferences: { sandbox: true, contextIsolation: true, preload: path.join(__dirname, 'preload.js') } });
   panelView = new WebContentsView({ webPreferences: { sandbox: true, contextIsolation: true } });
   mainWindow.contentView.addChildView(pageView);
+  metaView = new WebContentsView({ webPreferences: { sandbox: true, contextIsolation: true } });
   mainWindow.contentView.addChildView(panelView);
+  mainWindow.contentView.addChildView(metaView);
   const layout = () => {
-    const { width, height } = mainWindow.getContentBounds(), w = panelOpen && studio ? Math.min(460, Math.round(width * 0.4)) : 0;
+    const { width, height } = mainWindow.getContentBounds();
+    // Hộp thư Meta cần rộng hơn Studio AI.
+    const w = side === 'studio' && studio ? Math.min(460, Math.round(width * 0.4)) : side === 'meta' ? Math.round(width * 0.55) : 0;
     pageView.setBounds({ x: 0, y: 0, width: width - w, height });
-    panelView.setBounds({ x: width - w, y: 0, width: w, height });
+    for (const [name, v] of [['studio', panelView], ['meta', metaView]]) v.setBounds(side === name ? { x: width - w, y: 0, width: w, height } : { x: width, y: 0, width: 0, height: 0 });
   };
   mainWindow.on('resize', layout);
   wire(pageView.webContents, mainWindow);
   wire(panelView.webContents, mainWindow, false);
+  wire(metaView.webContents, mainWindow, false);
   pageView.webContents.loadURL(WEB);
   if (studio) panelView.webContents.loadURL(`chrome-extension://${studio.id}/sidepanel.html`);
-  const toggleStudio = open => { panelOpen = typeof open === 'boolean' ? open : !panelOpen; layout(); };
+  const show = (name, open) => { side = (typeof open === 'boolean' ? open : side !== name) ? name : ''; layout(); };
+  const toggleStudio = open => show('studio', open);
+  const openMetaInbox = url => {
+    if (!/^https:\/\/business\.facebook\.com\/latest\/inbox/.test(url)) return;
+    if (metaView.webContents.getURL() !== url) metaView.webContents.loadURL(url);
+    show('meta', true);
+  };
+  ipcMain.on('open-meta-inbox', (e, url) => { if (e.sender === pageView.webContents) openMetaInbox(url); });
   layout();
   Menu.setApplicationMenu(Menu.buildFromTemplate([
     { label: 'Studio AI', accelerator: 'Ctrl+Shift+A', click: () => toggleStudio() },
+    { label: 'Hộp thư Meta', accelerator: 'Ctrl+Shift+M', click: () => { if (!metaView.webContents.getURL()) metaView.webContents.loadURL('https://business.facebook.com/latest/inbox/all'); show('meta'); } },
     { label: 'Xem', submenu: [
       { label: 'Tải lại', accelerator: 'F5', click: () => pageView.webContents.reload() },
-      { label: 'Tải lại Studio AI', click: () => panelView.webContents.reload() }, { type: 'separator' },
+      { label: 'Tải lại Studio AI', click: () => panelView.webContents.reload() },
+      { label: 'Tải lại hộp thư Meta', click: () => metaView.webContents.reload() }, { type: 'separator' },
       { label: 'Phóng to', accelerator: 'Ctrl+=', click: () => pageView.webContents.setZoomLevel(pageView.webContents.getZoomLevel() + 0.5) },
       { label: 'Thu nhỏ', accelerator: 'Ctrl+-', click: () => pageView.webContents.setZoomLevel(pageView.webContents.getZoomLevel() - 0.5) },
       { label: 'Cỡ gốc', accelerator: 'Ctrl+0', click: () => pageView.webContents.setZoomLevel(0) }, { type: 'separator' },
       { label: 'Công cụ lỗi', accelerator: 'F12', click: () => pageView.webContents.toggleDevTools() }] },
   ]));
-  app.toggleStudio = toggleStudio; app.views = { page: pageView, panel: panelView };
+  app.toggleStudio = toggleStudio; app.views = { page: pageView, panel: panelView, meta: metaView };
   mainWindow.on('closed', () => { mainWindow = null; app.quit(); });
   if (app.isPackaged) require('electron-updater').autoUpdater.checkForUpdatesAndNotify().catch(() => {});
 });

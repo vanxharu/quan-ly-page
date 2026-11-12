@@ -286,7 +286,8 @@
       h('span', { style: 'min-width:0' }, h('div', { className: 'card-title', textContent: c.other.name || 'Khách' }), h('div', { className: 'hint', textContent: c.page.name }),
         S.manual?.[pictureKey(c)] ? h('a',{className:'hint',href:'https://www.facebook.com/profile.php?id='+S.manual[pictureKey(c)].uid,target:'_blank',rel:'noopener noreferrer',textContent:'UID '+S.manual[pictureKey(c)].uid})
           : identity?h('a',{className:'hint',href:identity.profileUrl,target:'_blank',rel:'noopener noreferrer',textContent:'UID '+identity.uid}):null),
-      h('button',{type:'button',className:'btn btn-ghost btn-sm',title:'Nhập UID Facebook của khách để hiện ảnh đại diện',textContent:S.manual?.[pictureKey(c)]?'Đổi UID':'Gắn UID',onclick:()=>setCustomerUid(c)})));
+      h('button',{type:'button',className:'btn btn-ghost btn-sm',title:'Nhập UID Facebook của khách để hiện ảnh đại diện',textContent:S.manual?.[pictureKey(c)]?'Đổi UID':'Gắn UID',onclick:()=>setCustomerUid(c)}),
+      App.metaLink(App.businessInboxUrl(c.page.id, c.other.id), 'Hộp thư Meta ↗')));
   }
   async function drawList() {
     const st = await settings();
@@ -517,7 +518,9 @@
       const message = (e.partialTextSent ? 'Chữ đã gửi, nhưng ảnh chưa gửi được. Gửi lại ảnh để tránh lặp nội dung. ' : '') + (e.window ? e.message : e.sub === 2018278 ? 'Đã quá 24 giờ kể từ tin cuối của khách, Meta không cho Page nhắn tiếp.' : e.message) + (e.code ? ` (mã ${e.code}${e.sub ? '/' + e.sub : ''})` : '');
       if (S.conv && draftKey(S.conv) === draftKey(c)) {
         $('ibThread').append(h('div', { className: 'status err' }, message,
-          e.window ? h('div', { style: 'margin-top:6px' }, App.metaLink(App.businessInboxUrl(c.page.id, c.other.id), 'Mở hội thoại trong Business Suite ↗')) : null));
+          e.window || Number(e.sub) === 2018300 ? h('div', { style: 'margin-top:6px' }, App.metaLink(App.businessInboxUrl(c.page.id, c.other.id), 'Mở hội thoại trong Business Suite ↗')) : null));
+        // App Windows: API bị chặn (quá hạn / app khác giữ hội thoại) → mở luôn hộp thư Meta của Page đó ở cột bên.
+        if (window.metaDesktop && (e.window || Number(e.sub) === 2018300)) App.openMetaInbox(App.businessInboxUrl(c.page.id, c.other.id));
         if (e.window) drawWindow(c);
       } else toast(`${c.other.name || 'Khách'}: ${message}`, 7000);
     } finally { S.sending = false; updateSendState(); }
