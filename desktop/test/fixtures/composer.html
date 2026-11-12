@@ -4,6 +4,7 @@
 <label id="js_i0" for="js_hz"><span><span>Nút</span></span></label>
 <div role="combobox" id="js_hz" aria-labelledby="js_i0 js_i3" aria-haspopup="listbox" style="padding:8px;border:1px solid"><div id="js_i3">Không dùng nút</div></div>
 <div id="lb"></div>
+<div role="button" id="pub" aria-disabled="true" style="padding:8px;border:1px solid">Đăng</div>
 <input type="checkbox" role="switch" id="sw" aria-label="Đặt ngày và giờ" style="opacity:0;position:absolute;width:1px;height:1px"><label for="sw"><span>Đặt ngày và giờ</span></label>
 <script>
 // Giả lập giao diện Business Suite: ô văn bản tải chậm, nút ảnh mở hộp chọn file, combobox Nút, công tắc hẹn giờ.
@@ -11,4 +12,7 @@ setTimeout(() => document.getElementById('pl').innerHTML = '<div contenteditable
 document.getElementById('add').onclick = () => { const f = document.createElement('input'); f.type = 'file'; f.accept = 'image/*'; f.onchange = () => document.body.dataset.file = f.files[0].name + ':' + f.files[0].size; f.click(); };
 document.getElementById('js_hz').onclick = () => document.getElementById('lb').innerHTML = '<div role="listbox"><div role="option">Không dùng nút</div><div role="option" id="msg" style="padding:6px">Gửi tin nhắn</div></div>';
 document.addEventListener('click', e => { if (e.target.closest('#msg')) { document.getElementById('js_i3').textContent = 'Gửi tin nhắn'; document.getElementById('lb').innerHTML = ''; } });
+// Nút Đăng chỉ bật khi đủ ảnh + chữ + nút; bấm thì rời trình soạn.
+setInterval(() => { const ok = document.body.dataset.file && document.getElementById('ed')?.innerText && document.getElementById('js_i3').textContent === 'Gửi tin nhắn'; document.getElementById('pub').setAttribute('aria-disabled', ok ? 'false' : 'true'); }, 200);
+document.getElementById('pub').onclick = () => { if (document.getElementById('pub').getAttribute('aria-disabled') === 'false') location.href = 'https://business.facebook.com/latest/inbox/all?posted=1'; };
 </script></body>

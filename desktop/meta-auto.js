@@ -66,13 +66,14 @@ function readRows(scroll) {
 }
 
 // Chạy trong trang: tìm phần tử hiện trên màn hình theo selector / role / chữ / nhãn (aria-labelledby), cuộn vào giữa, trả toạ độ tâm.
-function findTarget({ selector, role, text, label }) {
+function findTarget({ selector, role, text, label, enabled }) {
   const re = s => s ? new RegExp(s, 'i') : null, tRe = re(text), lRe = re(label);
   const shown = el => { const r = el.getBoundingClientRect(); return r.width > 2 && r.height > 2 && getComputedStyle(el).visibility !== 'hidden'; };
   const own = el => (el.innerText || el.getAttribute('aria-label') || '').trim();
   let list = [...document.querySelectorAll(selector || (role ? `[role="${role}"]` : 'button,[role="button"],a,span,div,label'))];
   if (tRe) list = list.filter(el => tRe.test(own(el)) && (selector || role || ![...el.children].some(c => tRe.test(own(c)))));
   if (lRe) list = list.filter(el => (el.getAttribute('aria-labelledby') || '').split(' ').some(id => lRe.test((document.getElementById(id)?.innerText || '').trim())));
+  if (enabled) list = list.filter(el => el.getAttribute('aria-disabled') !== 'true' && !el.disabled);
   const el = list.find(shown);
   if (!el) return null;
   el.scrollIntoView({ block: 'center', inline: 'center' });
@@ -80,7 +81,7 @@ function findTarget({ selector, role, text, label }) {
   return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) };
 }
 
-function createMetaAuto({ worker, metaView, showMeta, metaShown = () => true, notify = () => {} }) {
+function createMetaAuto({ worker, composer, metaView, showMeta = () => () => {}, metaShown = () => true, notify = () => {} }) {
   // Hai hàng chờ riêng: đọc avatar (khung ẩn) không phải chờ trình soạn bài (có thể mở lâu).
   const makeQueue = () => { let chain = Promise.resolve(); return fn => (chain = chain.then(fn, fn)); };
   const queue = makeQueue(), composeQueue = makeQueue();
@@ -127,11 +128,8 @@ function createMetaAuto({ worker, metaView, showMeta, metaShown = () => true, no
   // Trình soạn Business Suite (giao diện 11/2026): nút "Thêm ảnh/video" mở hộp chọn file, ô văn bản nằm trong
   // pagelet BusinessComposerTextEditor (tải chậm), mục "Nút" là combobox, "Đặt ngày và giờ" là công tắc.
   // Mỗi bước làm riêng, bước nào hỏng thì báo để bạn làm tay; luôn chép sẵn nội dung vào clipboard.
-  const composePost = ({ pageId, text, image, when }) => composeQueue(async () => {
-    if (!/^\d+$/.test(String(pageId))) return { error: 'Thiếu Page.' };
-    const wc = metaView.webContents;
-    if (text) clipboard.writeText(String(text));
-    showMeta();
+  // Điền trình soạn trong một webContents (cột Meta đang hiện, hoặc cửa sổ vẽ ngầm). Trả về bước nào đã xong.
+  const fill = async (wc, { pageId, text, image, when }) => {
     await wc.loadURL(`https://business.facebook.com/latest/composer/?asset_id=${pageId}&context_ref=POSTS&ref=meta_assistant`).catch(() => {});
     const find = spec => wc.executeJavaScript(`(${findTarget})(${JSON.stringify(spec)})`).catch(() => null);
     let ready = false;
@@ -194,15 +192,47 @@ function createMetaAuto({ worker, metaView, showMeta, metaShown = () => true, no
       if (when && await click({ selector: 'label[for]', text: /^Đặt ngày và giờ$|^Set date and time$/i.source })) done.schedule = 'toggled';
     } catch (e) { notify(`Business Suite: lỗi khi điền sẵn (${e.message}). Làm tay phần còn lại.`); }
     finally { try { dbg.detach(); } catch {} }
+    return { done, find, click, waitFor };
+  };
+  const leftComposer = wc => wc.isDestroyed() || !/\/composer/.test(wc.getURL());
+
+  // Đăng ngay (không hẹn giờ): làm hết trong cửa sổ vẽ ngầm, đủ ảnh + chữ + nút thì tự bấm Đăng, không hiện cột Meta.
+  // Hẹn giờ, hoặc làm ngầm còn thiếu bước: mở cột Meta, điền sẵn, bạn kiểm tra rồi bấm; xong cột tự ẩn lại như trước.
+  const composePost = args => composeQueue(async () => {
+    const { pageId, text, when } = args;
+    if (!/^\d+$/.test(String(pageId))) return { error: 'Thiếu Page.' };
+    if (text) clipboard.writeText(String(text));
+    if (!when && composer) {
+      const wc = composer.webContents, r = await fill(wc, args);
+      if (r.error === 'login') return r;
+      if (!r.error && r.done.image && r.done.text && r.done.button) {
+        const dbg = wc.debugger;
+        try {
+          if (!dbg.isAttached()) dbg.attach('1.3');
+          const publish = { role: 'button', text: /^Đăng$|^Publish$|^Post$/i.source, enabled: true };
+          if (await r.waitFor(publish, 60000) && await r.click(publish)) {
+            for (let i = 0; i < 60 && !leftComposer(wc); i++) await sleep(1000);
+            if (leftComposer(wc)) { wc.loadURL('about:blank').catch(() => {}); return { done: true, filled: r.done, hidden: true }; }
+          }
+        } catch {} finally { try { dbg.detach(); } catch {} }
+      }
+      notify('Đăng ngầm chưa xong (Business Suite thiếu bước). Mở cột Meta để bạn hoàn tất…');
+      wc.loadURL('about:blank').catch(() => {});
+    }
+    const wc = metaView.webContents, restore = showMeta();
+    const r = await fill(wc, args);
+    if (r.error) { restore(); return r; }
+    const { done } = r;
     const todo = [!done.image && 'thêm ảnh (Thêm ảnh/video)', !done.text && 'dán nội dung (Ctrl+V, đã chép sẵn)', !done.button && 'chọn Nút › Gửi tin nhắn',
       when && `chọn giờ ${new Date(when * 1000).toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' })}`].filter(Boolean);
     notify(`Business Suite: ${todo.length ? 'còn ' + todo.join(', ') + ', rồi' : 'đã điền xong,'} bấm ${when ? 'Lên lịch' : 'Đăng'}. Bấm ✕ trên cột để huỷ.`);
     for (let i = 0; i < 900; i++) {
       await sleep(1000);
       if (wc.isDestroyed() || !/\/composer/.test(wc.getURL())) break;
-      if (!metaShown()) return { error: 'Đã đóng trình soạn Business Suite, bài chưa được đăng.' }; // bấm ✕ trên cột = huỷ
+      if (!metaShown()) return { error: 'Đã đóng trình soạn Business Suite, bài chưa được đăng.' }; // bấm ✕ trên cột = huỷ (cột đã ẩn sẵn)
     }
-    return { done: !/\/composer/.test(wc.isDestroyed() ? '' : wc.getURL()), filled: done };
+    restore();
+    return { done: leftComposer(wc), filled: done };
   });
 
   return { lookupProfile, composePost };

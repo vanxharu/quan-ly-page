@@ -19,7 +19,7 @@ const inApp = url => url === 'about:blank' || url.startsWith(WEB) || IN_APP.test
 // bạn tự bấm Tiếp tục; Facebook trả token về desktop-login.html, trang đó chuyển sang metaassistant://login và app bắt lại.
 const LOGIN_PAGE = WEB + 'desktop-login.html', PROTOCOL = 'metaassistant';
 let loginState = '';
-let openLoginPane = () => {};
+let openLoginPane = () => {}, afterLogin = () => {};
 function loginInBrowser(sdkUrl) {
   const u = new URL(sdkUrl), q = new URLSearchParams({ client_id: u.searchParams.get('client_id') || u.searchParams.get('app_id'), redirect_uri: LOGIN_PAGE,
     response_type: 'token', state: loginState = crypto.randomBytes(16).toString('hex') });
@@ -34,6 +34,7 @@ function handleDeepLink(link) {
   loginState = '';
   pageView.webContents.executeJavaScript(`localStorage.setItem('fbTok', ${JSON.stringify(token)}); localStorage.setItem('autoLogin', '1'); location.reload();`);
   metaView.webContents.loadURL('https://business.facebook.com/latest/inbox/all').catch(() => {});
+  afterLogin(); afterLogin = () => {};
   if (mainWindow.isMinimized()) mainWindow.restore();
   mainWindow.focus();
 }
@@ -110,6 +111,10 @@ app.whenReady().then(async () => {
   // Cửa sổ vẽ ngầm (offscreen): vẫn chạy cuộn / tải thêm như trang thật nhưng không hiện ra.
   const worker = new BrowserWindow({ show: false, width: 1280, height: 900, webPreferences: { offscreen: true, sandbox: true, contextIsolation: true, backgroundThrottling: false } });
   worker.webContents.setFrameRate(10);
+  // Cửa sổ vẽ ngầm thứ hai cho trình soạn bài (đăng ngay không cần hiện cột Meta); tách khỏi khung đọc avatar để không giẫm nhau.
+  const composer = new BrowserWindow({ show: false, width: 1280, height: 900, webPreferences: { offscreen: true, sandbox: true, contextIsolation: true, backgroundThrottling: false } });
+  composer.webContents.setFrameRate(10);
+  composer.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   pageView = new WebContentsView({ webPreferences: { sandbox: true, contextIsolation: true, preload: path.join(__dirname, 'preload.js') } });
   panelView = new WebContentsView({ webPreferences: { sandbox: true, contextIsolation: true } });
   mainWindow.contentView.addChildView(pageView);
@@ -157,7 +162,12 @@ app.whenReady().then(async () => {
   });
   const show = (name, open) => { side = (typeof open === 'boolean' ? open : side !== name) ? name : ''; layout(); };
   const toggleStudio = open => show('studio', open);
-  openLoginPane = url => { metaView.webContents.loadURL(url).catch(() => {}); show('meta', true); mainWindow.focus(); };
+  // Mở cột Meta tạm thời; hàm trả về đưa cột về như trước (ẩn lại nếu trước đó đang ẩn).
+  const showMetaTemp = () => {
+    const prev = side; show('meta', true);
+    return () => { if (side === 'meta' && prev !== 'meta') { side = prev; layout(); if (prev !== 'meta') metaView.webContents.loadURL('https://business.facebook.com/latest/inbox/all').catch(() => {}); } };
+  };
+  openLoginPane = url => { afterLogin = showMetaTemp(); metaView.webContents.loadURL(url).catch(() => {}); mainWindow.focus(); };
   // Chưa đăng nhập Facebook trong app: mở trang đăng nhập Business Suite ở cột phải ngay khi khởi động.
   ses.cookies.get({ url: 'https://www.facebook.com', name: 'c_user' }).then(c => {
     if (c.length) return;
@@ -169,7 +179,7 @@ app.whenReady().then(async () => {
     if (metaView.webContents.getURL() !== url) metaView.webContents.loadURL(url);
     show('meta', true);
   };
-  const auto = createMetaAuto({ worker, metaView, showMeta: () => show('meta', true), metaShown: () => side === 'meta',
+  const auto = createMetaAuto({ worker, composer, metaView, showMeta: showMetaTemp, metaShown: () => side === 'meta',
     notify: msg => pageView.webContents.executeJavaScript(`typeof toast === 'function' && toast(${JSON.stringify(msg)}, 30000)`).catch(() => {}) });
   worker.webContents.setAudioMuted(true);
   worker.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
@@ -226,7 +236,7 @@ app.whenReady().then(async () => {
       { label: 'Công cụ lỗi', accelerator: 'F12', click: () => pageView.webContents.toggleDevTools() }] },
   ]));
   app.toggleStudio = toggleStudio; app.views = { page: pageView, panel: panelView, meta: metaView, worker, bar };
-  mainWindow.on('closed', () => { mainWindow = null; if (!worker.isDestroyed()) worker.destroy(); app.quit(); });
+  mainWindow.on('closed', () => { mainWindow = null; for (const w of [worker, composer]) if (!w.isDestroyed()) w.destroy(); app.quit(); });
   if (app.isPackaged) getUpdater().checkForUpdatesAndNotify().catch(() => {});
 });
 app.on('window-all-closed', () => app.quit());

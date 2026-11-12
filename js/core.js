@@ -344,7 +344,7 @@ App.adAccount = async () => {
 // Không cần tài khoản quảng cáo. Chờ tới khi bạn đăng xong (trang rời trình soạn) rồi mới sang bài tiếp theo.
 App.composeInBusinessSuite = async (page, text, imageData, when = 0) => {
   const image = imageData instanceof Blob ? await new Promise((ok, bad) => { const r = new FileReader(); r.onload = () => ok(r.result); r.onerror = bad; r.readAsDataURL(imageData); }) : String(imageData);
-  toast(`Đang mở trình soạn Business Suite cho ${page.name} và điền sẵn bài…`, 8000);
+  toast(when ? `Đang mở trình soạn Business Suite cho ${page.name} và điền sẵn bài…` : `Đang đăng ngầm bài có ảnh + nút cho ${page.name} qua Business Suite…`, 8000);
   const r = await globalThis.metaDesktop.composePost({ pageId: String(page.id), text: text || '', image, when });
   if (r.error === 'login') throw Error('Đăng nhập Business Suite ở cột Hộp thư Meta trước.');
   if (r.error) throw Error(r.error);
