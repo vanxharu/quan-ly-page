@@ -66,9 +66,9 @@ function readRows(scroll) {
 }
 
 // Chạy trong trang Business Suite: các hội thoại đang hiện, kèm tin cuối, giờ (chữ Meta ghi) và chưa đọc (tin cuối in đậm).
-function readThreads() {
+function readThreads(scroll) {
   const isTime = s => /^(vừa xong|now|\d+\s*(giây|phút|giờ|ngày|tuần|tháng|năm|[smhdwy])|\d{1,2}:\d{2}|th\s?[2-7]|cn|\d{1,2}\s*thg\s*\d{1,2}|\d{1,2}\/\d{1,2}(\/\d{2,4})?)$/i.test(s);
-  return [...document.querySelectorAll('[data-maiba-contact-id][data-maiba-contact-type="fb_user"]')].map(el => {
+  const rows = [...document.querySelectorAll('[data-maiba-contact-id][data-maiba-contact-type="fb_user"]')].map(el => {
     const title = el.querySelector('[data-surface$="lib:thread_title"]'), name = (title?.innerText || '').trim();
     const leaves = [...el.querySelectorAll('span,div,abbr')].filter(x => x.childElementCount === 0 && !title?.contains(x));
     const lines = leaves.map(x => (x.innerText || x.textContent || '').trim()).filter(s => s && s !== name && !/^[·•]$/.test(s));
@@ -81,6 +81,12 @@ function readThreads() {
       pic: [...el.querySelectorAll('img')].map(i => i.currentSrc || i.src).find(u => /scontent|fbcdn\.net\/v\//.test(u) && !/static\.xx/.test(u)) || '',
     };
   }).filter(r => /^\d{5,}$/.test(r.uid) && r.name);
+  if (scroll && rows.length) { // danh sách chỉ vẽ phần đang thấy: cuộn xuống để Business Suite vẽ thêm
+    let box = document.querySelector('[data-maiba-contact-id]');
+    while (box && !(box.scrollHeight > box.clientHeight + 5 && /auto|scroll/.test(getComputedStyle(box).overflowY))) box = box.parentElement;
+    if (box) box.scrollTop += box.clientHeight;
+  }
+  return rows;
 }
 
 // Chạy trong trang: tìm phần tử hiện trên màn hình theo selector / role / chữ / nhãn (aria-labelledby), cuộn vào giữa, trả toạ độ tâm.
@@ -143,16 +149,20 @@ function createMetaAuto({ worker, composer, metaView, showMeta = () => () => {},
   });
 
   // Hộp thư dự phòng khi Graph API lỗi: đọc danh sách hội thoại mới nhất của Page trong khung ẩn.
-  const listThreads = ({ pageId }) => queue(async () => {
+  const listThreads = ({ pageId, max = 40 }) => queue(async () => {
     if (!/^\d+$/.test(String(pageId))) return { error: 'Thiếu Page.' };
     const wc = worker.webContents;
     await wc.loadURL(`https://business.facebook.com/latest/inbox/messenger?asset_id=${pageId}&mailbox_id=${pageId}`).catch(() => {});
-    let rows = [];
-    for (let i = 0; i < 8 && !rows.length; i++) {
-      await sleep(1500);
+    const seen = new Map();
+    for (let i = 0, got = 0; i < 12; i++) {
+      await sleep(i ? 700 : 1500);
       if (isLogin(wc.getURL())) return { error: 'login' };
-      rows = await wc.executeJavaScript(`(${readThreads})()`).catch(() => []);
+      const part = await wc.executeJavaScript(`(${readThreads})(${JSON.stringify(seen.size > 0)})`).catch(() => []);
+      for (const r of part) if (!seen.has(r.uid)) seen.set(r.uid, r);
+      if (seen.size >= max || (seen.size && seen.size === got && i > 4)) break; // đủ, hoặc cuộn hết
+      got = seen.size;
     }
+    const rows = [...seen.values()].slice(0, max);
     // Dùng luôn cho tra avatar (cùng Page, khỏi tải lại).
     const entry = { at: Date.now(), rows: new Map(), full: false };
     for (const r of rows) entry.rows.set(key(r.name), [...(entry.rows.get(key(r.name)) || []), r]);

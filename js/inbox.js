@@ -147,6 +147,9 @@
             h('div', { className: 'chips', id: 'ibFilter' }, ...[['all', 'Tất cả'], ['unread', 'Chưa đọc'], ['unanswered', 'Chưa trả lời'], ['today', 'Hôm nay']].map(([f, t]) =>
               h('button', { className: 'chip', dataset: { f }, textContent: t, 'aria-pressed': String(f === S.filter), onclick: () => { S.filter = f; drawList(); } }))),
             h('select', { id: 'ibLabel', style: 'width:auto;padding:4px 8px;font-size:12px', onchange: () => drawList() }),
+            window.metaDesktop?.listThreads ? h('select', { 'aria-label': 'Nguồn tin nhắn', title: 'Business Suite: đọc như hộp thư Meta, trả lời được cả tin quá 7 ngày (trong cột Meta). API: đọc và trả lời ngay trong app.', style: 'width:auto;padding:4px 8px;font-size:12px',
+              onchange: e => { local.set('inboxSource', e.target.value); S.convs = []; S.more.clear(); load(false, { force: true }); } },
+              h('option', { value: 'bs', textContent: 'Nguồn: Business Suite', selected: bsFirst() }), h('option', { value: 'api', textContent: 'Nguồn: API', selected: !bsFirst() })) : null,
             window.metaDesktop?.lookupProfile ? h('button',{type:'button',className:'btn btn-ghost btn-sm',textContent:'Lấy avatar',title:'Đọc avatar + UID khách từ Business Suite (từng khách, tối đa 30)',onclick:e=>lookupList(e.currentTarget)}) : null,
             h('button',{type:'button',className:'btn btn-ghost btn-sm',textContent:'Báo lỗi ảnh',title:'Tải báo lỗi ảnh khách trên phiên hiện tại',onclick:downloadAvatarDiagnostic})),
           h('div', { className: 'list', id: 'ibList' }),
@@ -177,9 +180,12 @@
   App.onPageChange.push(() => { saveDraft(); S.conv = null; S.more.clear(); S.extra.clear(); resetThread(); });
 
   // Khoảng làm mới danh sách khi đang xem Hộp thư; Page đã nối webhook máy chủ thì thưa hơn (tin mới được báo ngay).
-  // App Windows: Page nào Graph API lỗi thì đọc danh sách hội thoại từ Business Suite (khung ẩn), gộp chung với các Page khác.
-  // Bấm vào hội thoại đó sẽ mở đúng khách trong cột Meta. Mỗi Page đọc lại tối đa 1 lần/phút.
-  const bsCache = new Map();
+  // App Windows: mặc định đọc danh sách hội thoại từ Business Suite (khung ẩn) cho mọi Page, gộp chung; Business Suite lỗi
+  // (chưa đăng nhập…) thì dùng Graph API. Bấm vào hội thoại sẽ mở đúng khách trong cột Meta để đọc/trả lời,
+  // kể cả tin quá 7 ngày mà API không cho gửi. Mỗi Page đọc lại tối đa 1 lần/phút.
+  const bsCache = new Map(), bsNotified = new Map();
+  let bsLoginWarned = false;
+  const bsFirst = () => !!window.metaDesktop?.listThreads && local.get('inboxSource') !== 'api';
   // Giờ Business Suite ghi dạng chữ ("5 phút", "14:20", "Th 3", "12 thg 11") → mốc thời gian để xếp chung với Page khác.
   function bsTime(text, now = Date.now()) {
     const t = String(text || '').trim().toLowerCase();
@@ -197,12 +203,12 @@
     }
     return null;
   }
-  async function bsThreads(p) {
+  async function bsThreads(p, { force = false } = {}) {
     if (!window.metaDesktop?.listThreads) return null;
     const hit = bsCache.get(p.id);
-    if (hit && Date.now() - hit.at < 60e3) return hit.list;
+    if (hit && !force && Date.now() - hit.at < 60e3) return hit.list;
     const r = await window.metaDesktop.listThreads({ pageId: String(p.id) });
-    if (r?.error === 'login') { toast('Đăng nhập Business Suite trong cột Meta (menu "Hộp thư Meta") để app đọc tin khi API lỗi.', 8000); return null; }
+    if (r?.error === 'login') { if (bsLoginWarned) return null; bsLoginWarned = true; toast('Đăng nhập Business Suite trong cột Meta (menu "Hộp thư Meta") để app đọc tin khi API lỗi.', 8000); return null; }
     if (!r?.rows?.length) return null;
     let prev = Date.now() + 1000;
     const list = r.rows.map(row => {
@@ -212,11 +218,24 @@
       if (row.pic) S.pics.set(pictureKey(c), row.pic);
       return c;
     });
+    // Báo tin mới (khách nhắn, chưa đọc) — lần đọc đầu tiên của Page chỉ ghi nhận, không báo.
+    const st = await settings();
+    const known = bsNotified.has(p.id);
+    for (const c of list) {
+      const sig = `${c.snippet}|${c.timeText}`;
+      if (known && c.unread_count && bsNotified.get(c.id) !== sig && st.webNotify && !st.mutedPages?.includes(p.id) && InboxRules.notifyAllowed(st, p.id))
+        App.notify(`💬 ${c.other.name} · ${p.name}`, c.snippet || 'Tin nhắn mới');
+      bsNotified.set(c.id, sig);
+    }
+    bsNotified.set(p.id, true);
     bsCache.set(p.id, { at: Date.now(), list });
     return list;
   }
   function openBs(c) {
-    S.bsActive = c.id; drawList(); // không đặt S.conv: hội thoại này không đọc qua Graph
+    saveDraft(); S.conv = null; resetThread(); // hội thoại này không đọc qua Graph: khung bên phải chỉ ghi chú
+    $('ibTitle').replaceChildren(c.other.name);
+    $('ibThread').replaceChildren(empty(`Đang mở hội thoại với ${c.other.name} (${c.page.name}) trong cột Meta bên phải — đọc và trả lời ở đó, kể cả tin đã quá 7 ngày.`));
+    S.bsActive = c.id; c.unread_count = 0; drawList();
     window.metaDesktop.openThread({ pageId: String(c.page.id), uid: c.uid })
       .then(ok => { if (!ok) toast(`Đã mở hộp thư ${c.page.name} trong cột Meta, bấm vào ${c.other.name} để xem.`, 6000); }).catch(() => {});
   }
@@ -231,9 +250,10 @@
     try {
     if (!silent) $('ibList').replaceChildren(empty(`Đang tải hội thoại của ${pages.length} Page…`));
     const errors = [], errorPages = [];
-    const lists = await pool(pages, 3, p => convsFor(p, { maxAge: force ? 0 : silent ? listInterval(p) : 30e3, force, low: silent }).catch(async e => {
+    const viaBs = bsFirst();
+    const lists = await pool(pages, viaBs ? 1 : 3, async p => (viaBs && await bsThreads(p, { force }).catch(() => null)) || convsFor(p, { maxAge: force ? 0 : silent ? listInterval(p) : 30e3, force, low: silent }).catch(async e => {
       const why = `${p.name}: ${e.message}${e.code ? ` (mã ${e.code}${e.sub ? '/' + e.sub : ''})` : ''}`;
-      const bs = await bsThreads(p).catch(() => null);
+      const bs = viaBs ? null : await bsThreads(p).catch(() => null);
       if (bs?.length) { errors.push(`${why} → đang hiện ${bs.length} hội thoại đọc từ Business Suite (bấm để mở trong cột Meta).`); return bs; }
       errors.push(why); errorPages.push(p);
       if (e.cache) return e.cache;
@@ -648,7 +668,7 @@
     let notified = {}; try { notified = JSON.parse(local.get(NOTIFIED) || '{}'); } catch {}
     let unread = 0;
     await pool(pages, 3, async p => {
-      const convs = await convsFor(p, { maxAge: Math.max(30e3, pollEvery(st, App.pages) - 10e3), low: true }).catch(e => e.cache || []);
+      const convs = (bsFirst() && await bsThreads(p).catch(() => null)) || await convsFor(p, { maxAge: Math.max(30e3, pollEvery(st, App.pages) - 10e3), low: true }).catch(e => e.cache || []);
       for (const c of convs) {
         unread += c.unread_count ? 1 : 0;
         const prev = seen.get(c.id);
