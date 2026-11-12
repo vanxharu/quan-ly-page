@@ -1,6 +1,6 @@
 // Meta Assistant cho Windows: mở trang web (luôn là bản mới nhất trên GitHub Pages) trong cửa sổ riêng
 // và chạy sẵn tiện ích Studio AI (ChatGPT) bên trong, không cần Chrome.
-const { app, BrowserWindow, Menu, session, shell } = require('electron');
+const { app, BaseWindow, BrowserWindow, Menu, WebContentsView, session, shell } = require('electron');
 const path = require('path'), crypto = require('crypto');
 const { ElectronChromeExtensions } = require('electron-chrome-extensions');
 
@@ -30,32 +30,32 @@ function handleDeepLink(link) {
   // Chỉ nhận token của lượt đăng nhập app vừa mở (state khớp), tránh trang lạ gửi token giả vào app.
   if (!token || !loginState || u.searchParams.get('state') !== loginState || !mainWindow) return;
   loginState = '';
-  mainWindow.webContents.executeJavaScript(`localStorage.setItem('fbTok', ${JSON.stringify(token)}); localStorage.setItem('autoLogin', '1'); location.reload();`);
+  pageView.webContents.executeJavaScript(`localStorage.setItem('fbTok', ${JSON.stringify(token)}); localStorage.setItem('autoLogin', '1'); location.reload();`);
   if (mainWindow.isMinimized()) mainWindow.restore();
   mainWindow.focus();
 }
 if (process.defaultApp) app.setAsDefaultProtocolClient(PROTOCOL, process.execPath, [path.resolve(process.argv[1] || '.')]);
 else app.setAsDefaultProtocolClient(PROTOCOL);
 
-let extensions, mainWindow, studio;
+let extensions, mainWindow, pageView, panelView, panelOpen = true, studio;
 function newWindow(url, opts = {}) {
   const win = new BrowserWindow({ width: 1280, height: 860, icon: ICON, autoHideMenuBar: true, show: false, ...opts,
     webPreferences: { sandbox: true, contextIsolation: true } });
-  wire(win);
+  wire(win.webContents, win);
   win.once('ready-to-show', () => win.show());
   if (url) win.loadURL(url);
   return win;
 }
-function wire(win) {
-  extensions.addTab(win.webContents, win);
-  win.webContents.setWindowOpenHandler(({ url }) => {
+function wire(wc, win, asTab = true) {
+  if (asTab) extensions.addTab(wc, win);
+  wc.setWindowOpenHandler(({ url }) => {
     if (/^https:\/\/(www\.)?facebook\.com\/[^?]*dialog\/oauth/i.test(url) && !url.includes(encodeURIComponent(LOGIN_PAGE))) { loginInBrowser(url); return { action: 'deny' }; }
     if (inApp(url)) return { action: 'allow', overrideBrowserWindowOptions: { icon: ICON, autoHideMenuBar: true } };
     if (/^https?:/i.test(url)) shell.openExternal(url);
     return { action: 'deny' };
   });
-  win.webContents.on('did-create-window', child => wire(child));
-  win.webContents.on('will-navigate', (e, url) => { if (!inApp(url) && /^https?:/i.test(url)) { e.preventDefault(); shell.openExternal(url); } });
+  wc.on('did-create-window', child => wire(child.webContents, child));
+  wc.on('will-navigate', (e, url) => { if (!inApp(url) && /^https?:/i.test(url)) { e.preventDefault(); shell.openExternal(url); } });
 }
 
 if (!app.requestSingleInstanceLock()) app.quit();
@@ -79,21 +79,44 @@ app.whenReady().then(async () => {
     createTab: details => { const win = newWindow(details.url || WEB); return [win.webContents, win]; },
     selectTab: (_wc, win) => { if (win.isMinimized()) win.restore(); win.show(); win.focus(); },
     removeTab: (_wc, win) => { if (!win.isDestroyed()) win.close(); },
-    createWindow: details => newWindow(details.url, { width: details.width || 450, height: details.height || 820 }),
+    createWindow: details => {
+      if (String(details.url).endsWith('/sidepanel.html') && mainWindow) { app.toggleStudio(true); mainWindow.focus(); return mainWindow; }
+      return newWindow(details.url, { width: details.width || 450, height: details.height || 820 });
+    },
     removeWindow: win => { if (!win.isDestroyed()) win.close(); },
   });
   try { studio = await (ses.extensions || ses).loadExtension(EXT, { allowFileAccess: true }); }
   catch (e) { console.error('Không nạp được Studio AI:', e); }
-  // Studio AI là một phần của app: mở từ menu thay vì từ biểu tượng tiện ích của Chrome.
-  const openStudio = () => studio ? newWindow(`chrome-extension://${studio.id}/sidepanel.html`, { width: 450, height: 820 }) : null;
+  // Một cửa sổ: trang web bên trái, Studio AI luôn nằm kế bên phải (thay cho bảng bên của Chrome).
+  mainWindow = new BaseWindow({ width: 1440, height: 880, icon: ICON, title: 'Meta Assistant' });
+  pageView = new WebContentsView({ webPreferences: { sandbox: true, contextIsolation: true } });
+  panelView = new WebContentsView({ webPreferences: { sandbox: true, contextIsolation: true } });
+  mainWindow.contentView.addChildView(pageView);
+  mainWindow.contentView.addChildView(panelView);
+  const layout = () => {
+    const { width, height } = mainWindow.getContentBounds(), w = panelOpen && studio ? Math.min(460, Math.round(width * 0.4)) : 0;
+    pageView.setBounds({ x: 0, y: 0, width: width - w, height });
+    panelView.setBounds({ x: width - w, y: 0, width: w, height });
+  };
+  mainWindow.on('resize', layout);
+  wire(pageView.webContents, mainWindow);
+  wire(panelView.webContents, mainWindow, false);
+  pageView.webContents.loadURL(WEB);
+  if (studio) panelView.webContents.loadURL(`chrome-extension://${studio.id}/sidepanel.html`);
+  const toggleStudio = open => { panelOpen = typeof open === 'boolean' ? open : !panelOpen; layout(); };
+  layout();
   Menu.setApplicationMenu(Menu.buildFromTemplate([
-    { label: 'Studio AI', accelerator: 'Ctrl+Shift+A', click: openStudio },
-    { label: 'Xem', submenu: [{ role: 'reload', label: 'Tải lại' }, { role: 'forceReload', label: 'Tải lại hết' }, { type: 'separator' },
-      { role: 'zoomIn', label: 'Phóng to' }, { role: 'zoomOut', label: 'Thu nhỏ' }, { role: 'resetZoom', label: 'Cỡ gốc' }, { type: 'separator' }, { role: 'toggleDevTools', label: 'Công cụ lỗi' }] },
+    { label: 'Studio AI', accelerator: 'Ctrl+Shift+A', click: () => toggleStudio() },
+    { label: 'Xem', submenu: [
+      { label: 'Tải lại', accelerator: 'F5', click: () => pageView.webContents.reload() },
+      { label: 'Tải lại Studio AI', click: () => panelView.webContents.reload() }, { type: 'separator' },
+      { label: 'Phóng to', accelerator: 'Ctrl+=', click: () => pageView.webContents.setZoomLevel(pageView.webContents.getZoomLevel() + 0.5) },
+      { label: 'Thu nhỏ', accelerator: 'Ctrl+-', click: () => pageView.webContents.setZoomLevel(pageView.webContents.getZoomLevel() - 0.5) },
+      { label: 'Cỡ gốc', accelerator: 'Ctrl+0', click: () => pageView.webContents.setZoomLevel(0) }, { type: 'separator' },
+      { label: 'Công cụ lỗi', accelerator: 'F12', click: () => pageView.webContents.toggleDevTools() }] },
   ]));
-  mainWindow = newWindow(WEB, { autoHideMenuBar: false });
-  app.openStudio = openStudio;
-  mainWindow.on('closed', () => { mainWindow = null; });
+  app.toggleStudio = toggleStudio; app.views = { page: pageView, panel: panelView };
+  mainWindow.on('closed', () => { mainWindow = null; app.quit(); });
   if (app.isPackaged) require('electron-updater').autoUpdater.checkForUpdatesAndNotify().catch(() => {});
 });
 app.on('window-all-closed', () => app.quit());

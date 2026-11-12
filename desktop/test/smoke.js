@@ -12,7 +12,7 @@ app.whenReady().then(() => session.defaultSession.protocol.handle('https', req =
 const electron = require('electron'), opened = []; electron.shell.openExternal = url => { opened.push(url); return Promise.resolve(); };
 require('../main.js');
 setTimeout(async () => {
-  const win = BrowserWindow.getAllWindows()[0], out = {};
+  const win = app.views.page, out = {};
   try {
     out.ua = await win.webContents.executeJavaScript('navigator.userAgent');
     out.ext = (session.defaultSession.extensions || session.defaultSession).getAllExtensions().map(e => e.name + ' ' + e.version);
@@ -29,8 +29,9 @@ setTimeout(async () => {
     app.emit('second-instance', {}, ['x', 'metaassistant://login?access_token=TOK123&state=' + oauth.searchParams.get('state')]);
     await new Promise(r => setTimeout(r, 2500));
     out.token = await win.webContents.executeJavaScript("localStorage.getItem('fbTok')");
-    const panel = app.openStudio(); await new Promise(r => setTimeout(r, 3000));
-    out.panel = await panel.webContents.executeJavaScript('document.body.innerText.slice(0,80)');
+    out.panel = await app.views.panel.webContents.executeJavaScript('document.body.innerText.slice(0,40)');
+    out.widths = [app.views.page.getBounds().width, app.views.panel.getBounds().width];
+    app.toggleStudio(); out.closed = app.views.panel.getBounds().width;
   } catch (e) { out.error = e.message; }
   console.log('SMOKE', JSON.stringify(out)); process.exit(out.studio?.startsWith('ok') && out.ext?.length && out.panel && out.token === 'TOK123' ? 0 : 1);
 }, 6000);
