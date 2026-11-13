@@ -14,7 +14,7 @@ posts.push({created_time:at(11,21),reactions:{summary:{total_count:5000}}});
   const ctx=vm.createContext({Pure:W.Pure,SETTINGS:'fbScheduleSettingsV1',QUEUE:'fbScheduleQueueV1',DB:{get:async(k,f)=>structuredClone(db[k]??f),set:async(k,v)=>{db[k]=structuredClone(v);}},
     App:{planner:{},pageById:id=>({id,name:'Page '+id,access_token:'t'}),isSelected:()=>true},apiPaged:async()=>posts,
     pageOf:i=>({id:i.pageKey}),getSettings:async()=>({windows:W.Pure.DEFAULT_WINDOWS,perDay:1,weekdays:[0,1,2,3,4,5,6],days:[],pages:{},...db.fbScheduleSettingsV1}),
-    $:()=>({replaceChildren(){}}),log:(c,t)=>logs.push(t),refresh:()=>{},confirm:()=>(asked++,true),Date,Map,Set,Math,Number,String,Object,Promise,JSON,Array});
+    $:()=>({replaceChildren(){}}),metaBusy:async()=>[],log:(c,t)=>logs.push(t),refresh:()=>{},confirm:()=>(asked++,true),Date,Map,Set,Math,Number,String,Object,Promise,JSON,Array});
   vm.runInContext(section+';this.golden=goldenWindows;this.autoTime=autoTime;this.cfgFor=cfgFor;',ctx);
   assert.equal(ctx.golden(posts),'07:00–08:00, 12:00–13:00, 20:00–21:00','top 3 hours by smoothed engagement, single outlier hour ignored');
   assert.equal(ctx.golden(posts.slice(0,10)),null,'too few posts → fallback');

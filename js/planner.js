@@ -237,6 +237,22 @@
   // Bài trong danh sách khớp bài nào trên Meta (chưa bị bài khác trong danh sách nhận).
   const matchOnMeta = (i, list, taken) => list.find(p => !taken.has(p.id) && sameText(p.message, i.text));
 
+  // Bài Meta đã chiếm ngày của Page: bài đang hẹn trên Meta + bài đã đăng hôm nay, trừ bài đã có trong danh sách này
+  // (cùng mã bài, hoặc cùng giờ ±2 phút). Dùng để giữ đúng số bài/ngày khi xếp giờ.
+  async function metaBusy(page, queue) {
+    const out = [];
+    try { for (const p of await metaScheduled(page)) out.push({ id: p.id, at: p.at }); } catch {}
+    try {
+      const since = Math.floor(new Date().setHours(0, 0, 0, 0) / 1000);
+      const r = await api(`/${page.id}/published_posts`, { fields: 'id,created_time', since, limit: 25 }, 'GET', page.access_token);
+      for (const p of r.data || []) out.push({ id: p.id, at: Date.parse(p.created_time) });
+    } catch {}
+    const known = new Set(queue.map(i => i.fbPostId).filter(Boolean));
+    const mine = queue.filter(i => pageOf(i)?.id === page.id && i.at && ['scheduled', 'posted', 'scheduling'].includes(i.status));
+    return out.filter(p => p.at && !known.has(p.id) && !mine.some(i => Math.abs(i.at - p.at) < 120e3))
+      .map(p => ({ id: 'meta:' + p.id, pageKey: page.id, at: p.at, status: 'scheduled', onMeta: true }));
+  }
+
   async function reconcile({ quiet = false } = {}) {
     const queue = await DB.get(QUEUE, []);
     const pages = [...new Map(queue.filter(inSel).map(pageOf).filter(Boolean).map(p => [p.id, p])).values()];
@@ -304,15 +320,27 @@
     $('plLog').replaceChildren();
     let list = (await DB.get(QUEUE, [])).filter(i => i.status === 'approved' && inSel(i));
     if (!list.length) return log('err', 'Không có bài đã duyệt.');
-    // Bài chưa có giờ hoặc giờ đã qua / sắp tới dưới 10 phút: tự xếp sang giờ trống tiếp theo thay vì báo lỗi.
+    // Bài chưa có giờ, giờ đã qua / sắp tới dưới 10 phút, hoặc ngày đó Page đã đủ số bài/ngày (tính cả bài hẹn trên Meta
+    // và bài đã đăng hôm nay): tự xếp sang giờ/ngày trống tiếp theo thay vì báo lỗi hay đăng dồn.
     const stale = new Set(list.filter(i => pageOf(i) && (!i.at || i.at < Date.now() + 11 * 60e3)).map(i => i.id));
+    {
+      const s = await getSettings(), queue = await DB.get(QUEUE, []);
+      for (const page of [...new Map(list.map(pageOf).filter(Boolean).map(p => [p.id, p])).values()]) {
+        const per = cfgFor(s, page.id).perDay, count = new Map(), add = at => count.set(Pure.dayKeyOf(at), (count.get(Pure.dayKeyOf(at)) || 0) + 1);
+        for (const b of await metaBusy(page, queue)) add(b.at);
+        for (const i of queue) if (pageOf(i)?.id === page.id && i.at && ['scheduled', 'posted', 'scheduling'].includes(i.status)) add(i.at);
+        for (const i of list.filter(x => pageOf(x)?.id === page.id && !stale.has(x.id)).sort((a, b) => a.at - b.at)) {
+          if ((count.get(Pure.dayKeyOf(i.at)) || 0) >= per) stale.add(i.id); else add(i.at);
+        }
+      }
+    }
     if (stale.size) {
       const queue = await DB.get(QUEUE, []), items = queue.filter(i => stale.has(i.id));
       for (const i of items) i.at = 0;
       const { n } = await assignTimes(await getSettings(), queue, items);
-      for (const i of items) if (!i.at) Object.assign(i, { status: 'error', error: 'Giờ đăng đã qua và không còn giờ trống trong các ngày đăng đã chọn. Chọn thêm ngày đăng hoặc tăng số bài/ngày.' });
+      for (const i of items) if (!i.at) Object.assign(i, { status: 'error', error: 'Không còn ngày trống (mỗi ngày đã đủ bài trên Meta / trong danh sách) trong các ngày đăng đã chọn. Chọn thêm ngày đăng hoặc tăng số bài/ngày.' });
       await DB.set(QUEUE, queue);
-      log('pending', `${n} bài đã qua giờ đăng được xếp sang giờ trống tiếp theo${n < items.length ? `, ${items.length - n} bài không còn chỗ` : ''}.`);
+      log('pending', `${n} bài đã qua giờ hoặc trùng ngày đã có bài (trên Meta / trong danh sách) được xếp sang giờ trống tiếp theo${n < items.length ? `, ${items.length - n} bài không còn chỗ` : ''}.`);
       list = queue.filter(i => i.status === 'approved' && inSel(i));
       if (!list.length) return refresh();
     }
@@ -347,7 +375,8 @@
     // Bỏ ngày đăng đã qua (không còn hiện trên lịch chọn) để không xếp 0 bài mà không rõ lý do.
     const days = Pure.activeDays(s.days);
     if ((s.days || []).some(d => !days.includes(d))) { s.days = (s.days || []).filter(d => days.includes(d)); await DB.set(SETTINGS, { ...(await DB.get(SETTINGS, {})), days: s.days }); }
-    const live = queue.filter(i => i.at).map(i => ({ ...i, pageKey: pageOf(i)?.id || i.pageKey }));
+    const busy = (await Promise.all([...byKey.keys()].map(k => App.pageById(k) ? metaBusy(App.pageById(k), queue) : []))).flat();
+    const live = [...queue.filter(i => i.at).map(i => ({ ...i, pageKey: pageOf(i)?.id || i.pageKey })), ...busy];
     const plan = Pure.planTimes([...byKey.keys()].map(key => ({ key, cfg: cfgFor(s, key) })), days, live).filter(p => p.at).sort((a, b) => a.at - b.at);
     let n = 0;
     for (const slot of plan) { const item = byKey.get(slot.key)?.shift(); if (item) { item.at = slot.at; n++; } }

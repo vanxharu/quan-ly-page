@@ -15,7 +15,7 @@ const section=planner.slice(planner.indexOf('  const metaCache = new Map();'),pl
     cfgFor:(s)=>({windows:window.Pure.parseWindows(s.windows),perDay:s.perDay,weekdays:s.weekdays}),
     norm:v=>String(v||'').toLowerCase(),fmtTime:t=>new Date(t).toISOString(),refresh:()=>{},log:(c,t)=>logs.push(t),logLinks:()=>{},
     $:()=>({replaceChildren(){},disabled:false}),api:async()=>({data:[]}),ensureGolden:async()=>{},
-    App:{planner:{},plannerRunning:new Set(),batchProgress:null,publish:async(p,text,o)=>{published.push(o?.scheduledAt||o?.at||text);return {id:'X'+published.length};}},
+    App:{pageById:id=>({id,name:'Page '+id,access_token:'t'}),planner:{},plannerRunning:new Set(),batchProgress:null,publish:async(p,text,o)=>{published.push(o?.scheduledAt||o?.at||text);return {id:'X'+published.length};}},
     patch:async(id,ch)=>{db.fbScheduleQueueV1=db.fbScheduleQueueV1.map(i=>i.id===id?{...i,...ch}:i);},Date,Map,Set,Math,Number,String,Error,Object,Promise,JSON});
   vm.runInContext(section+';this.all=scheduleAll;',ctx);
   await ctx.all();
@@ -23,6 +23,6 @@ const section=planner.slice(planner.indexOf('  const metaCache = new Map();'),pl
   for(const id of ['past','soon']){assert.ok(q[id].at>=Date.now()+10*60e3,id+' moved to a future slot');assert.equal(q[id].status,'scheduled',id+': '+q[id].error);}
   assert.equal(q.ok.at,now+2*86400e3,'valid time untouched');
   assert.notEqual(new Date(q.past.at).toDateString()+new Date(q.past.at).getHours(),new Date(q.soon.at).toDateString()+new Date(q.soon.at).getHours(),'same Page not stacked in the same hour');
-  assert.match(logs.join(' '),/2 bài đã qua giờ đăng được xếp sang giờ trống/);
+  assert.match(logs.join(' '),/2 bài đã qua giờ hoặc trùng ngày đã có bài .* được xếp sang giờ trống/);
   console.log('PASS: approved posts whose time passed get the next free slot and are scheduled; valid times untouched.');
 })().catch(e=>{console.error(e);process.exitCode=1;});
