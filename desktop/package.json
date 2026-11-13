@@ -1,6 +1,6 @@
 {
   "name": "meta-assistant",
-  "version": "1.0.49",
+  "version": "1.0.50",
   "description": "Meta Assistant cho Windows: quản lý Page Facebook + Studio AI",
   "main": "main.js",
   "scripts": {
@@ -18,11 +18,11 @@
     "electron": "45.3.0",
     "electron-builder": "26.18.0"
   },
-  "productName": "Meta Assistant",
+  "productName": "Get Helps",
   "private": true,
   "build": {
     "appId": "com.vanxharu.metaassistant",
-    "productName": "Meta Assistant",
+    "productName": "Get Helps",
     "files": [
       "main.js",
       "app-lock.js",
@@ -52,7 +52,7 @@
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
-      "shortcutName": "Meta Assistant"
+      "shortcutName": "Get Helps"
     },
     "publish": {
       "provider": "github",

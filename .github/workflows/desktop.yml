@@ -1,4 +1,4 @@
-# Đóng gói app Windows (Meta Assistant Setup x.y.z.exe) và đăng lên GitHub Releases; app đã cài tự cập nhật từ đây.
+# Đóng gói app Windows (Get Helps Setup x.y.z.exe) và đăng lên GitHub Releases; app đã cài tự cập nhật từ đây.
 # Chạy: tăng "version" trong desktop/package.json, push lên main (hoặc bấm Run workflow ở tab Actions).
 name: Desktop app
 on:

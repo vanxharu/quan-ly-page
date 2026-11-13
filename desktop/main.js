@@ -11,6 +11,8 @@ const WEB = process.env.META_ASSISTANT_URL || 'https://vanxharu.github.io/quan-l
 const EXT = app.isPackaged ? path.join(process.resourcesPath, 'extension') : path.join(__dirname, '../extension/chatgpt-connector');
 const ICON = path.join(__dirname, 'icon.png');
 // Facebook/Google chặn đăng nhập trong "trình duyệt nhúng": bỏ chữ Electron khỏi User-Agent để giống Chrome.
+// Tên app (file exe, shortcut, tiêu đề) là "Get Helps" nhưng dữ liệu (đăng nhập, mật khẩu khoá, Studio AI…) vẫn ở thư mục cũ.
+app.setPath('userData', path.join(app.getPath('appData'), 'Meta Assistant'));
 app.setAppUserModelId('com.vanxharu.metaassistant'); // biểu tượng + nhóm đúng trên taskbar Windows
 // Windows tự "cho ngủ" cửa sổ bị app khác che kín hoặc bị thu nhỏ (đúng lúc app tự khoá) → ChatGPT trong Studio AI
 // ngừng vẽ/đếm giờ và lượt tạo bài, tạo ảnh bị treo. Tắt hẳn để chạy ngầm như khi đang mở.
@@ -129,7 +131,7 @@ app.whenReady().then(async () => {
   }
   catch (e) { console.error('Không nạp được Studio AI:', e); }
   // Một cửa sổ: trang web bên trái, Studio AI luôn nằm kế bên phải (thay cho bảng bên của Chrome).
-  mainWindow = new BaseWindow({ width: 1440, height: 880, icon: ICON, title: `Meta Assistant ${app.getVersion()}` });
+  mainWindow = new BaseWindow({ width: 1440, height: 880, icon: ICON, title: 'Get Helps' });
   // Ẩn thanh menu cho gọn (bấm Alt để hiện); các phím tắt Ctrl+Shift+A / Ctrl+Shift+M vẫn dùng được.
   mainWindow.setAutoHideMenuBar(true); mainWindow.setMenuBarVisibility(false);
   // Khung ẩn để đọc Business Suite: avatar + UID khách.
