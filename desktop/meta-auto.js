@@ -280,6 +280,10 @@ function createMetaAuto({ worker, composer, metaView, showMeta = () => () => {},
     do { r = await wc.executeJavaScript(`(${markComposer})()`).catch(() => null); if (r) return r; await sleep(700); } while (Date.now() < end);
     return null;
   };
+  // Không có ô trả lời: thường do Meta khoá hội thoại (khách nhắn lần cuối quá 7 ngày, bị chặn…). Đọc dòng thông báo của Meta để báo đúng lý do.
+  const whyNoComposer = wc => wc.executeJavaScript(`(() => { const re = /không thể (trả lời|nhắn|gửi)|can.?t (reply|message|send)|unable to (reply|message)|7 ngày|24 giờ|7 days|24 hours|đã chặn|blocked|không còn khả dụng|unavailable/i;
+    const hits = [...document.querySelectorAll('div,span')].filter(el => !el.childElementCount && re.test(el.innerText || '') && el.getBoundingClientRect().width > 0 && el.getBoundingClientRect().left > innerWidth * 0.25);
+    return hits.map(el => el.innerText.trim()).filter((t, i, a) => t.length < 300 && a.indexOf(t) === i).slice(0, 2).join(' / '); })()`).catch(() => '');
   const describe = c => c ? `ô nhập: ${c.tag}${c.label ? ' "' + c.label + '"' : ''} · ô file: ${c.files} · nút: ${c.buttons.join(' | ') || '—'}` : 'không thấy ô nhập';
   // Đưa ảnh vào khung trả lời, thử lần lượt: ô file → giả dán → giả kéo-thả → nút đính kèm → dán clipboard thật. Ảnh hiện trong vùng soạn mới tính là xong.
   const attachImage = async (wc, image) => {
@@ -290,7 +294,8 @@ function createMetaAuto({ worker, composer, metaView, showMeta = () => () => {},
     const pics = () => wc.executeJavaScript(`(() => { const box = document.querySelector('[data-ga-composer]'); return box ? box.querySelectorAll('img, video, [style*="background-image"]').length : 0; })()`).catch(() => 0);
     const comp = await findComposer(wc);
     attachImage.last = { tried, comp };
-    if (!comp) { tried.push('không thấy ô nhập tin'); return false; }
+    if (!comp) { const why = await whyNoComposer(wc); tried.push(why ? 'Meta báo: ' + why : 'trang không có ô trả lời'); attachImage.locked = true; return false; }
+    attachImage.locked = false;
     const before = await pics();
     const waitPreview = async () => { for (let i = 0; i < 10; i++) { await sleep(500); if (await pics() > before) return true; } return false; };
     // 1) ô chọn file có sẵn
@@ -359,10 +364,12 @@ function createMetaAuto({ worker, composer, metaView, showMeta = () => () => {},
     const picsBefore = myPics(await read());
     if (image && !await attachImage(wc, image)) {
       const d = attachImage.last;
+      if (attachImage.locked) return { error: `Business Suite không cho trả lời hội thoại này (không có ô nhập tin). ${d?.tried.join(' · ')}. Thường do khách nhắn lần cuối đã quá 7 ngày: chờ khách nhắn lại, hoặc liên hệ qua Zalo/SĐT.` };
       return { error: `Không đưa được ảnh vào Business Suite. [${d?.tried.join(' · ')} · ${describe(d?.comp)}]` };
     }
     const comp = await findComposer(wc, image ? 2000 : 10000);
-    if (!comp || !await mouse(wc, { selector: '[data-ga-editor]' })) return { error: `Không thấy ô nhập tin của Business Suite. [${describe(comp)}]` };
+    if (!comp) { const why = await whyNoComposer(wc); return { error: `Business Suite không cho trả lời hội thoại này (không có ô nhập tin).${why ? ' Meta báo: ' + why + '.' : ''} Thường do khách nhắn lần cuối đã quá 7 ngày: chờ khách nhắn lại, hoặc liên hệ qua Zalo/SĐT.` }; }
+    if (!await mouse(wc, { selector: '[data-ga-editor]' })) return { error: `Không bấm được ô nhập tin của Business Suite. [${describe(comp)}]` };
     await sleep(300);
     const lines = text ? text.split('\n') : [];
     for (const [i, line] of lines.entries()) {
