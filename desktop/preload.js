@@ -11,6 +11,7 @@ contextBridge.exposeInMainWorld('metaDesktop', {
   openService: url => ipcRenderer.send('open-svc', url),
   svcApi: args => ipcRenderer.invoke('svc-api', args),
   svcCatalog: args => ipcRenderer.invoke('svc-catalog', args),
+  svcImage: url => ipcRenderer.invoke('svc-image', String(url)),
   openThread: args => ipcRenderer.invoke('meta-open-thread', args),
   composePost: args => ipcRenderer.invoke('meta-compose', args),
   loginFacebook: args => ipcRenderer.send('fb-login', args),

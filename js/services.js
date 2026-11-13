@@ -136,82 +136,226 @@
   const platformOf = link => /tiktok/i.test(link) ? 'tiktok' : /instagram/i.test(link) ? 'instagram' : /youtu/i.test(link) ? 'youtube' : /shopee/i.test(link) ? 'shopee' : /t\.me|telegram/i.test(link) ? 'telegram' : /facebook|fb\.(com|watch|me)/i.test(link) ? 'facebook' : '';
 
   // ── Tạo đơn (hộp thoại) ── ctx: { page, name, key } khi mở từ Hộp thư; link: link khách gửi.
+  // Gói bán của tôi: { id, name, kind: 'fixed' (qty + price tổng) | 'unit' (unitPrice / đv), qty, price, unitPrice, serviceId }.
+  const pkgCost = (pkg, list) => { const svc = list.find(x => x.id === String(pkg.serviceId)); return svc ? svc.unitCost : 0; };
   async function createDialog(ctx = {}, link = '') {
     const s = await settings();
     let list = [];
     try { list = await services(); } catch (e) { return toast(e.message, 7000); }
+    const pkgs = s.packages || [];
     const dlg = h('dialog', { className: 'svc-dialog', onclose: () => dlg.remove() });
     const linkIn = h('input', { type: 'text', inputMode: 'url', value: link, placeholder: 'Link cần làm (bài viết, trang cá nhân, video…)', required: true });
-    const search = h('input', { type: 'search', placeholder: 'Tìm dịch vụ (vd: follow, like page, view tiktok)…' });
-    const pick = h('select', { size: 7, required: true, style: 'width:100%' });
+    const pkgSel = h('select', {}, h('option', { value: '', textContent: '— Chọn máy chủ trực tiếp —' }),
+      ...pkgs.map(p => { const svc = list.find(x => x.id === String(p.serviceId)), off = svc && stateOf(svc)[1] === 'err';
+        return h('option', { value: p.id, textContent: `${p.name} · ${p.kind === 'fixed' ? `${Number(p.qty).toLocaleString('vi-VN')} = ${money(p.price)}` : `${m2(p.unitPrice)}/đv`}${off ? ' · máy chủ gốc đang bảo trì' : ''}` }); }));
+    const search = h('input', { type: 'search', placeholder: 'Tìm máy chủ (vd: follow, like page, view tiktok)…' });
+    const pick = h('select', { size: 7, style: 'width:100%' });
     const qty = h('input', { type: 'number', min: 1, step: 1, value: 1000, required: true });
-    const unit = h('input', { type: 'number', min: 0, step: 'any', placeholder: 'Giá bán / 1 đơn vị (đ)', required: true });
+    const unit = h('input', { type: 'number', min: 0, step: 'any', placeholder: 'Giá bán / 1 đơn vị (đ)' });
+    const total = h('input', { type: 'number', min: 0, step: 'any', placeholder: 'Khách trả (đ)', required: true });
+    const costIn = h('input', { type: 'number', min: 0, step: 'any', placeholder: 'Giá gốc cả đơn (đ)' });
+    const shown = h('input', { type: 'text', placeholder: 'Tên dịch vụ khách thấy (vd: Tăng like bài viết)' });
     const remember = h('input', { type: 'checkbox', checked: true });
     const noteBox = h('div', { className: 'svc-notes' }), info = h('div', { className: 'svc-sum' }), err = h('div', { className: 'status err', hidden: true });
-    const chosen = () => list.find(x => x.id === pick.value);
+    const svcBox = h('div', { className: 'field' }, 'Máy chủ', search, pick);
+    const unitBox = h('label', { className: 'field', style: 'flex:1' }, 'Giá bán / 1 đơn vị', unit);
+    const rememberBox = h('label', { className: 'row', style: 'gap:6px' }, remember, 'Lưu giá / đv này vào bảng giá của máy chủ');
+    const pkg = () => pkgs.find(p => p.id === pkgSel.value);
+    const chosen = () => { const p = pkg(); return list.find(x => x.id === (p ? String(p.serviceId) : pick.value)); };
+    const touched = el => el.dataset.touched === '1';
     const draw = () => {
       const q = norm(search.value), plat = platformOf(linkIn.value);
       const rows = [...list].sort((a, b) => a.groupIndex - b.groupIndex || a.pos - b.pos || Number(a.id) - Number(b.id)).filter(x => stateOf(x)[1] !== 'err' && (!q || norm(x.name + ' ' + x.category + ' ' + x.id).includes(q))).sort((a, b) => (plat && norm(b.category + b.name).includes(plat)) - (plat && norm(a.category + a.name).includes(plat)));
       const keep = pick.value;
       pick.replaceChildren(...rows.slice(0, 300).map(x => { const [st] = stateOf(x);
         return h('option', { value: x.id, textContent: `#${x.id} · ${x.name} · gốc ${m2(x.unitCost)}/đv · ${x.min}–${x.max}${x.web ? ' · ' + st : ''}`, selected: x.id === keep }); }));
-      if (!chosen() && rows[0]) { pick.value = rows[0].id; unit.dataset.touched = ''; } // dịch vụ hợp link nhất được chọn sẵn
+      if (!pkg() && !list.some(x => x.id === pick.value) && rows[0]) { pick.value = rows[0].id; unit.dataset.touched = ''; } // máy chủ hợp link nhất được chọn sẵn
       recalc();
     };
     const recalc = () => {
-      const svc = chosen(), n = Math.max(0, Number(qty.value) || 0);
-      if (svc && !unit.dataset.touched) unit.value = s.prices[svc.id] ?? '';
-      const sell = (Number(unit.value) || 0) * n, cost = estCost(svc, n);
+      const p = pkg(), svc = chosen();
+      svcBox.hidden = !!p; rememberBox.hidden = !!p; unitBox.hidden = p?.kind === 'fixed';
+      qty.readOnly = p?.kind === 'fixed';
+      if (p?.kind === 'fixed') qty.value = p.qty;
+      if (!touched(unit)) unit.value = p ? (p.kind === 'unit' ? p.unitPrice : '') : (svc ? s.prices[svc.id] ?? '' : '');
+      if (!touched(shown)) shown.value = p ? p.name : svc ? (svc.category || '') : '';
+      const n = Math.max(0, Number(qty.value) || 0);
+      if (!touched(total)) total.value = p?.kind === 'fixed' ? p.price : unit.value === '' ? '' : Math.round(Number(unit.value) * n);
+      if (!touched(costIn)) costIn.value = svc ? Math.round(estCost(svc, n)) : '';
+      const sell = Number(total.value) || 0, cost = Number(costIn.value) || 0;
       if (svc) { const [st, cls] = stateOf(svc), sp = speedOf(svc);
         noteBox.replaceChildren(
-          h('div', { className: 'row', style: 'gap:6px;flex-wrap:wrap' }, h('span', { className: 'status ' + cls + ' svc-pill', textContent: st }),
+          h('div', { className: 'row', style: 'gap:6px;flex-wrap:wrap' }, p ? h('span', { className: 'svc-pill', textContent: `Gốc: MC ${svc.id} · ${svc.name}` }) : null,
+            h('span', { className: 'status ' + cls + ' svc-pill', textContent: st }),
             sp.text ? h('span', { className: 'svc-pill svc-speed ' + sp.kind, textContent: '⚡ ' + sp.text }) : null,
             svc.avgTime ? h('span', { className: 'svc-pill', textContent: '⏱ TB ' + svc.avgTime }) : null,
             h('span', { className: 'svc-pill', textContent: `Gốc ${m2(svc.unitCost)}/đv` })),
           svc.notes ? safeNotes(svc.notes) : null); }
-      else noteBox.replaceChildren();
+      else noteBox.replaceChildren(p ? h('div', { className: 'neg', textContent: 'Máy chủ gốc của gói không còn trong danh sách. Đổi máy chủ gốc ở Cài đặt dịch vụ › Gói bán của tôi.' }) : '');
       info.replaceChildren(
-        h('span', {}, 'Giá gốc ≈ ', h('strong', { textContent: money(cost) })), h('span', {}, 'Giá bán ', h('strong', { textContent: money(sell) })),
-        h('span', {}, 'Lời ≈ ', h('strong', { className: sell - cost < 0 ? 'neg' : '', textContent: money(sell - cost) })),
+        h('span', {}, 'Giá gốc ', h('strong', { textContent: money(cost) + (touched(costIn) ? '' : ' ≈') })), h('span', {}, 'Khách trả ', h('strong', { textContent: money(sell) })),
+        h('span', {}, 'Lãi ', h('strong', { className: sell - cost < 0 ? 'neg' : '', textContent: money(sell - cost) + pct(sell, cost) })),
         svc && (n < svc.min || n > svc.max) ? h('span', { className: 'neg', textContent: `Số lượng phải từ ${svc.min} đến ${svc.max}` }) : null);
     };
-    search.oninput = draw; pick.onchange = () => { unit.dataset.touched = ''; recalc(); }; qty.oninput = recalc; unit.oninput = () => { unit.dataset.touched = '1'; recalc(); }; linkIn.oninput = draw;
+    const reset = (...els) => els.forEach(el => { el.dataset.touched = ''; });
+    pkgSel.onchange = () => { reset(unit, total, costIn, shown); recalc(); };
+    search.oninput = draw; pick.onchange = () => { reset(unit, total, costIn, shown); recalc(); }; linkIn.oninput = draw;
+    qty.oninput = () => { reset(total, costIn); recalc(); };
+    unit.oninput = () => { unit.dataset.touched = '1'; reset(total); recalc(); };
+    for (const el of [total, costIn, shown]) el.oninput = () => { el.dataset.touched = '1'; recalc(); };
     const form = h('form', { method: 'dialog', onsubmit: async e => {
       e.preventDefault(); err.hidden = true;
-      const svc = chosen(), n = Math.round(Number(qty.value) || 0), price = Number(unit.value) || 0;
-      if (!svc) { err.textContent = 'Chọn dịch vụ.'; err.hidden = false; return; }
-      if (!/^https?:\/\//i.test(linkIn.value.trim())) { err.textContent = 'Link phải bắt đầu bằng http(s)://'; err.hidden = false; return; }
-      if (n < svc.min || n > svc.max) { err.textContent = `Số lượng phải từ ${svc.min} đến ${svc.max}.`; err.hidden = false; return; }
-      if (stateOf(svc)[1] === 'err' && !confirm(`Dịch vụ #${svc.id} đang ${stateOf(svc)[0].toLowerCase()} trên web. Vẫn tạo đơn?`)) return;
-      if (!confirm(`Tạo đơn trên web dịch vụ?\n\n${svc.name}\nSố lượng: ${n.toLocaleString('vi-VN')}\nLink: ${linkIn.value.trim()}\n\nWeb sẽ trừ khoảng ${money(estCost(svc, n))} trong số dư.`)) return;
+      const p = pkg(), svc = chosen(), n = Math.round(Number(qty.value) || 0), sell = Number(total.value) || 0, cost = Number(costIn.value) || 0;
+      const fail = m => { err.textContent = m; err.hidden = false; };
+      if (!svc) return fail(p ? 'Máy chủ gốc của gói không còn. Đổi ở Cài đặt dịch vụ.' : 'Chọn máy chủ.');
+      if (!/^https?:\/\//i.test(linkIn.value.trim())) return fail('Link phải bắt đầu bằng http(s)://');
+      if (n < svc.min || n > svc.max) return fail(`Số lượng phải từ ${svc.min} đến ${svc.max}.`);
+      if (stateOf(svc)[1] === 'err') return fail(`Máy chủ #${svc.id} đang bảo trì trên web. Chọn máy chủ khác hoặc đổi máy chủ gốc của gói.`);
+      if (!confirm(`Tạo đơn trên web dịch vụ?\n\nMáy chủ: MC ${svc.id} · ${svc.name}\nSố lượng: ${n.toLocaleString('vi-VN')}\nLink: ${linkIn.value.trim()}\n\nWeb sẽ trừ khoảng ${money(estCost(svc, n))} trong số dư.\nKhách trả: ${money(sell)}`)) return;
       const btn = form.querySelector('button[type=submit]'); btn.disabled = true; btn.textContent = 'Đang tạo đơn…';
       try {
         const r = await call('add', { service: Number(svc.id), link: linkIn.value.trim(), quantity: n });
         if (r && !r.order) r.order = r.order_id ?? r.orderId ?? r.id;
         if (!r?.order) throw Error('Web dịch vụ không trả mã đơn.');
-        if (remember.checked && price) await saveSettings({ prices: { ...(await settings()).prices, [svc.id]: price } });
+        if (!p && remember.checked && unit.value !== '' && touched(unit)) await saveSettings({ prices: { ...(await settings()).prices, [svc.id]: Number(unit.value) } });
+        const label = shown.value.trim() || p?.name || svc.category || 'Dịch vụ';
         const order = { id: uid('ord'), at: Date.now(), updatedAt: Date.now(), source: 'service', provider: new URL(s.apiUrl).hostname, providerOrderId: String(r.order),
-          serviceId: svc.id, serviceName: svc.name, link: linkIn.value.trim(), customerKey: ctx.key || '', pageKey: ctx.page?.id || '',
-          customer: { name: ctx.name || '', phone: '', address: '' }, items: [{ name: svc.name, qty: n, price, cost: estCost(svc, n) / n }],
+          serviceId: svc.id, serviceName: svc.name, displayName: label, packageId: p?.id || '', link: linkIn.value.trim(), customerKey: ctx.key || '', pageKey: ctx.page?.id || '', pageName: ctx.page?.name || '', pageAvatar: App.pageAvatarUrl(ctx.page) || '',
+          customer: { name: ctx.name || '', phone: '', address: '' }, items: [{ name: label, qty: n, price: sell / n, cost: cost / n }], costManual: touched(costIn),
           discount: 0, shipFee: 0, shipCost: 0, status: 'new', svcStatus: 'Pending', note: 'Đơn dịch vụ #' + r.order };
         await DB.set(ORDERS, [...await DB.get(ORDERS, []), order]);
         if (ctx.key) App.crm?.update?.(ctx.key, { pageId: ctx.page?.id, pageName: ctx.page?.name, name: ctx.name, orderStatus: 'Đã đặt hàng' }).catch(() => {});
         dlg.close(); toast(`Đã tạo đơn dịch vụ #${r.order}.`, 5000);
         refreshStatus([order]).catch(() => {});
         App.tabs.services?.refresh?.();
-      } catch (e2) { err.textContent = e2.message; err.hidden = false; btn.disabled = false; btn.textContent = 'Tạo đơn'; }
+        invoiceDialog(order, 'new');
+      } catch (e2) { fail(e2.message); btn.disabled = false; btn.textContent = 'Tạo đơn'; }
     } },
       h('div', { className: 'card-head' }, h('h3', { className: 'card-title', textContent: 'Tạo đơn dịch vụ' + (ctx.name ? ' · ' + ctx.name : '') }),
         h('button', { type: 'button', className: 'icon-btn', 'aria-label': 'Đóng', textContent: '×', onclick: () => dlg.close() })),
       h('label', { className: 'field' }, 'Link cần làm', linkIn),
-      h('label', { className: 'field' }, 'Dịch vụ', search, pick), noteBox,
-      h('div', { className: 'row', style: 'gap:10px;flex-wrap:wrap' }, h('label', { className: 'field', style: 'flex:1' }, 'Số lượng', qty), h('label', { className: 'field', style: 'flex:1' }, 'Giá bán / 1 đơn vị', unit)),
-      h('label', { className: 'row', style: 'gap:6px' }, remember, 'Lưu giá bán này vào bảng giá của dịch vụ'),
-      info, err,
+      h('label', { className: 'field' }, 'Gói của tôi', pkgSel),
+      svcBox, noteBox,
+      h('div', { className: 'row', style: 'gap:10px;flex-wrap:wrap' }, h('label', { className: 'field', style: 'flex:1' }, 'Số lượng', qty), unitBox),
+      h('div', { className: 'row', style: 'gap:10px;flex-wrap:wrap' },
+        h('label', { className: 'field', style: 'flex:1' }, 'Thành tiền khách trả (sửa được)', total),
+        h('label', { className: 'field', style: 'flex:1' }, 'Giá gốc cả đơn (sửa được)', costIn)),
+      h('label', { className: 'field' }, 'Tên dịch vụ trên đơn gửi khách (khách không thấy tên máy chủ gốc)', shown),
+      rememberBox, info, err,
       h('div', { className: 'row', style: 'gap:8px;justify-content:flex-end' },
         h('button', { type: 'button', className: 'btn btn-ghost', textContent: 'Mở web dịch vụ ↗', onclick: () => { if (linkIn.value) navigator.clipboard?.writeText(linkIn.value).catch(() => {}); openWeb(); } }),
         h('button', { type: 'submit', className: 'btn btn-primary', textContent: 'Tạo đơn' })));
-    dlg.append(form); document.body.append(dlg); draw(); dlg.showModal(); (link ? search : linkIn).focus();
+    dlg.append(form); document.body.append(dlg); draw(); dlg.showModal(); (link ? pkgSel : linkIn).focus();
+  }
+  // ── Xuất đơn gửi khách: tin nhắn chữ + ảnh hoá đơn (tên gói của bạn, không lộ máy chủ gốc) ──
+  const BANKS = [['970436', 'Vietcombank'], ['970415', 'VietinBank'], ['970418', 'BIDV'], ['970405', 'Agribank'], ['970422', 'MBBank'], ['970407', 'Techcombank'],
+    ['970416', 'ACB'], ['970432', 'VPBank'], ['970423', 'TPBank'], ['970403', 'Sacombank'], ['970437', 'HDBank'], ['970441', 'VIB'], ['970443', 'SHB'],
+    ['970431', 'Eximbank'], ['970426', 'MSB'], ['970448', 'OCB'], ['970440', 'SeABank'], ['970449', 'LPBank'], ['970428', 'NamABank'], ['970409', 'BacABank'],
+    ['970454', 'VietCapitalBank'], ['970429', 'SCB'], ['970452', 'KienLongBank'], ['970425', 'ABBANK'], ['970412', 'PVcomBank'], ['970419', 'NCB'],
+    ['970433', 'VietBank'], ['970427', 'VietABank'], ['970430', 'PGBank'], ['970438', 'BaoVietBank'], ['970400', 'SaigonBank'], ['970424', 'ShinhanBank'],
+    ['546034', 'CAKE'], ['546035', 'Ubank'], ['963388', 'Timo'], ['970406', 'Vikki'], ['970414', 'MBV'], ['971005', 'ViettelMoney'], ['971011', 'VNPTMoney']];
+  const bankName = bin => (BANKS.find(b => b[0] === String(bin)) || [, ''])[1];
+  const payCode = o => 'DV' + o.providerOrderId;
+  const orderSell = o => (o.items?.[0]?.price || 0) * (o.items?.[0]?.qty || 0);
+  const qrUrl = (inv, o) => inv.bin && inv.acc ? `https://img.vietqr.io/image/${inv.bin}-${encodeURIComponent(inv.acc)}-qr_only.png?amount=${Math.round(orderSell(o))}&addInfo=${encodeURIComponent(payCode(o))}&accountName=${encodeURIComponent(inv.holder || '')}` : '';
+  const progressLine = o => { const st = statusVi(o.svcStatus), q = o.items?.[0]?.qty || 0;
+    const done = o.startCount != null && o.remains != null ? ` · đã lên ${Math.max(0, q - Number(o.remains)).toLocaleString('vi-VN')}/${q.toLocaleString('vi-VN')}` : '';
+    return st + done + (o.completedAt ? ` · xong lúc ${fmtTime(o.completedAt)}` : ''); };
+  function invoiceText(o, inv, kind) {
+    const q = o.items?.[0]?.qty || 0, name = o.displayName || o.items?.[0]?.name || 'Dịch vụ';
+    const L = [kind === 'progress' ? `📊 CẬP NHẬT ĐƠN #${payCode(o)}` : `✅ XÁC NHẬN ĐƠN HÀNG #${payCode(o)}`,
+      `• Dịch vụ: ${name}`, o.link ? `• Link: ${o.link}` : '', `• Số lượng: ${q.toLocaleString('vi-VN')}`, `• Thành tiền: ${money(orderSell(o))}`,
+      `• Tạo lúc: ${fmtTime(o.at)}`, `• Trạng thái: ${progressLine(o)}`];
+    if (kind !== 'progress' && inv.acc) L.push('', `💳 Thanh toán: ${bankName(inv.bin) || 'Ngân hàng'} · STK ${inv.acc}${inv.holder ? ' · ' + inv.holder : ''}`, `   Nội dung CK: ${payCode(o)}`);
+    if (inv.note) L.push('', '📌 Lưu ý: ' + inv.note.trim());
+    return L.filter((l, i) => l !== '' || L[i - 1] !== '').join('\n').replace(/^\n+|\n+$/g, '');
+  }
+  async function loadImg(url) {
+    if (!url) return null;
+    let src = url;
+    if (!url.startsWith('data:')) {
+      if (window.metaDesktop?.svcImage) { const r = await window.metaDesktop.svcImage(url).catch(() => null); if (!r?.dataUrl) return null; src = r.dataUrl; }
+      else { try { const b = await fetch(url, { mode: 'cors' }).then(r => r.ok ? r.blob() : Promise.reject()); src = URL.createObjectURL(b); } catch { return null; } }
+    }
+    return new Promise(ok => { const im = new Image(); im.onload = () => ok(im); im.onerror = () => ok(null); im.src = src; });
+  }
+  async function invoiceImage(o, inv, kind) {
+    const page = App.pageById(o.pageKey), shop = page?.name || o.pageName || inv.shop || 'Cửa hàng';
+    const [logo, qr] = await Promise.all([loadImg(App.pageAvatarUrl(page) || o.pageAvatar), kind === 'progress' ? null : loadImg(qrUrl(inv, o))]);
+    const W = 760, P = 36, c = document.createElement('canvas'), x = c.getContext('2d');
+    const font = (w, sz) => `${w} ${sz}px "Plus Jakarta Sans","Inter","Segoe UI",Arial,sans-serif`;
+    const wrap = (text, maxW, f) => { x.font = f; const out = []; for (const para of String(text).split('\n')) { let line = '';
+      for (const w of para.split(/(\s+)/)) { const t = line + w; if (x.measureText(t).width > maxW && line.trim()) { out.push(line.trim()); line = w.trimStart(); } else line = t; }
+      out.push(line.trim()); } return out; };
+    const q = o.items?.[0]?.qty || 0;
+    const rows = [['Mã đơn', '#' + payCode(o)], ['Ngày tạo', fmtTime(o.at)], o.customer?.name ? ['Khách hàng', o.customer.name] : null, ['Dịch vụ', o.displayName || o.items?.[0]?.name || 'Dịch vụ'],
+      o.link ? ['Link', o.link] : null, ['Số lượng', q.toLocaleString('vi-VN')], ['Trạng thái', progressLine(o)]].filter(Boolean);
+    const valW = W - P * 2 - 150, rowLines = rows.map(([, v]) => wrap(v, valW, font(600, 16)));
+    const noteLinesW = inv.note ? wrap(inv.note.trim(), W - P * 2 - 24, font(500, 14)) : [];
+    const hasPay = kind !== 'progress' && inv.acc;
+    let H = 120 + 50 + rowLines.reduce((s, l) => s + l.length * 24 + 12, 0) + 90 + (hasPay ? 230 : 0) + (noteLinesW.length ? noteLinesW.length * 21 + 50 : 0) + 60;
+    c.width = W * 2; c.height = H * 2; x.scale(2, 2);
+    x.fillStyle = '#f3f1ff'; x.fillRect(0, 0, W, H);
+    const card = (y, hgt) => { x.fillStyle = '#fff'; x.beginPath(); x.roundRect(P / 2, y, W - P, hgt, 18); x.fill(); };
+    card(P / 2, H - P);
+    // Đầu: ảnh + tên Page
+    const grad = x.createLinearGradient(P / 2, 0, W - P / 2, 0); grad.addColorStop(0, '#6c5ce7'); grad.addColorStop(1, '#00b894');
+    x.fillStyle = grad; x.beginPath(); x.roundRect(P / 2, P / 2, W - P, 100, [18, 18, 0, 0]); x.fill();
+    if (logo) { x.save(); x.beginPath(); x.arc(P + 32, P / 2 + 50, 32, 0, Math.PI * 2); x.clip(); x.drawImage(logo, P, P / 2 + 18, 64, 64); x.restore(); }
+    x.fillStyle = '#fff'; x.font = font(800, 24); x.fillText(shop.length > 34 ? shop.slice(0, 33) + '…' : shop, logo ? P + 80 : P, P / 2 + 46);
+    x.font = font(600, 15); x.fillText(kind === 'progress' ? 'CẬP NHẬT TIẾN ĐỘ ĐƠN HÀNG' : 'XÁC NHẬN ĐƠN HÀNG', logo ? P + 80 : P, P / 2 + 72);
+    let y = P / 2 + 140;
+    rows.forEach(([k], i) => { x.fillStyle = '#6b7280'; x.font = font(600, 14); x.fillText(k, P + 8, y);
+      x.fillStyle = '#111827'; x.font = font(600, 16); rowLines[i].forEach((l, j) => x.fillText(l, P + 158, y + j * 24));
+      y += rowLines[i].length * 24 + 12; });
+    x.strokeStyle = '#e5e7eb'; x.beginPath(); x.moveTo(P + 8, y); x.lineTo(W - P - 8, y); x.stroke(); y += 40;
+    x.fillStyle = '#6b7280'; x.font = font(700, 15); x.fillText('THÀNH TIỀN', P + 8, y);
+    x.fillStyle = '#6c5ce7'; x.font = font(800, 30); x.textAlign = 'right'; x.fillText(money(orderSell(o)), W - P - 8, y + 4); x.textAlign = 'left'; y += 46;
+    if (hasPay) {
+      x.fillStyle = '#f8f7ff'; x.beginPath(); x.roundRect(P + 4, y, W - P * 2 - 8, 210, 14); x.fill();
+      if (qr) x.drawImage(qr, P + 18, y + 14, 182, 182);
+      const tx = qr ? P + 220 : P + 22; x.fillStyle = '#111827';
+      [['Ngân hàng', bankName(inv.bin) || inv.bin], ['Số tài khoản', inv.acc], inv.holder ? ['Chủ tài khoản', inv.holder] : null, ['Nội dung CK', payCode(o)], ['Số tiền', money(orderSell(o))]].filter(Boolean)
+        .forEach(([k, v], i) => { x.fillStyle = '#6b7280'; x.font = font(600, 13); x.fillText(k, tx, y + 36 + i * 36); x.fillStyle = '#111827'; x.font = font(700, 16); x.fillText(String(v), tx, y + 54 + i * 36); });
+      y += 230;
+    }
+    if (noteLinesW.length) {
+      x.fillStyle = '#fff7e6'; x.beginPath(); x.roundRect(P + 4, y, W - P * 2 - 8, noteLinesW.length * 21 + 34, 12); x.fill();
+      x.fillStyle = '#8a5a00'; x.font = font(700, 14); x.fillText('📌 Lưu ý', P + 18, y + 24); x.font = font(500, 14);
+      noteLinesW.forEach((l, i) => x.fillText(l, P + 18, y + 46 + i * 21)); y += noteLinesW.length * 21 + 50;
+    }
+    x.fillStyle = '#9ca3af'; x.font = font(600, 13); x.textAlign = 'center'; x.fillText('Cảm ơn quý khách! ' + shop, W / 2, H - P / 2 - 18);
+    return { dataUrl: c.toDataURL('image/png'), qrMissing: hasPay && !qr };
+  }
+  async function invoiceDialog(o, kind = 'new') {
+    const inv = (await settings()).invoice || {};
+    const dlg = h('dialog', { className: 'svc-dialog svc-invoice', onclose: () => dlg.remove() });
+    const text = h('textarea', { rows: 11, value: invoiceText(o, inv, kind) });
+    const img = h('img', { alt: 'Ảnh hoá đơn', className: 'svc-inv-img' }), hint = h('div', { className: 'hint' }), withImg = h('input', { type: 'checkbox', checked: true });
+    let image = '';
+    const render = async () => { hint.textContent = 'Đang vẽ ảnh hoá đơn…'; const r = await invoiceImage(o, inv, kind); image = r.dataUrl; img.src = image;
+      hint.textContent = [r.qrMissing ? 'Không tải được mã QR (kiểm tra mạng hoặc số tài khoản); đơn vẫn có thông tin chuyển khoản.' : '', !inv.acc && kind !== 'progress' ? 'Chưa có thông tin thanh toán: thêm ở Dịch vụ › Cài đặt › Hoá đơn gửi khách.' : ''].filter(Boolean).join(' '); };
+    const openKey = App.inbox?.openKey?.() || '', canSend = o.customerKey && openKey === o.customerKey;
+    const sendBtn = h('button', { type: 'button', className: 'btn btn-primary', textContent: '📨 Gửi vào hội thoại', disabled: !canSend,
+      title: canSend ? 'Gửi chữ + ảnh vào hội thoại đang mở' : 'Mở hội thoại của khách này trong Hộp thư để gửi thẳng; hoặc Copy / Tải ảnh',
+      onclick: async () => { sendBtn.disabled = true; sendBtn.textContent = 'Đang gửi…';
+        const ok = await App.inbox.compose({ key: o.customerKey, text: text.value.trim(), image: withImg.checked ? image : '' });
+        if (ok) { toast('Đã gửi đơn vào hội thoại.'); await markSent(o, kind); dlg.close(); } else { sendBtn.disabled = false; sendBtn.textContent = '📨 Gửi vào hội thoại'; toast('Hội thoại của khách không còn mở trong Hộp thư.', 5000); } } });
+    dlg.append(h('div', { className: 'card-head' }, h('h3', { className: 'card-title', textContent: (kind === 'progress' ? 'Báo tiến độ' : 'Gửi đơn cho khách') + ` · #${payCode(o)}` }),
+        h('button', { type: 'button', className: 'icon-btn', 'aria-label': 'Đóng', textContent: '×', onclick: () => dlg.close() })),
+      h('div', { className: 'svc-inv-grid' },
+        h('div', { className: 'field' }, 'Tin nhắn (sửa được)', text, h('label', { className: 'row', style: 'gap:6px;font-weight:500' }, withImg, 'Gửi kèm ảnh hoá đơn')),
+        h('div', {}, img, hint)),
+      h('div', { className: 'row', style: 'gap:8px;justify-content:flex-end;flex-wrap:wrap' },
+        h('button', { type: 'button', className: 'btn btn-ghost', textContent: '📋 Copy chữ', onclick: () => navigator.clipboard.writeText(text.value).then(() => toast('Đã copy tin nhắn.')) }),
+        h('button', { type: 'button', className: 'btn btn-ghost', textContent: '🖼 Copy ảnh', onclick: async () => { try { const b = await (await fetch(image)).blob(); await navigator.clipboard.write([new ClipboardItem({ 'image/png': b })]); toast('Đã copy ảnh.'); } catch { toast('Không copy được ảnh, dùng Tải ảnh.', 5000); } } }),
+        h('button', { type: 'button', className: 'btn btn-ghost', textContent: '⬇ Tải ảnh', onclick: () => { const a = h('a', { href: image, download: `don-${payCode(o)}.png` }); a.click(); } }),
+        sendBtn));
+    document.body.append(dlg); dlg.showModal(); render();
+  }
+  async function markSent(o, kind) {
+    const all = await DB.get(ORDERS, []), x = all.find(y => y.id === o.id); if (!x) return;
+    x[kind === 'progress' ? 'progressSentAt' : 'invoiceSentAt'] = Date.now(); await DB.set(ORDERS, all); App.tabs.services?.refresh?.();
   }
   async function openWeb() {
     const s = await settings();
@@ -288,17 +432,20 @@
       $('svKpis').replaceChildren(...[['Đơn', all.length], ['Đang chạy', running], ['Doanh thu', money(sum.revenue)], ['Giá gốc', money(sum.cost)], ['Lời', money(sum.profit)]]
         .map(([l, v]) => h('div', { className: 'kpi' }, h('div', { className: 'label', textContent: l }), h('div', { className: 'value', textContent: v }))));
       $('svOrders').replaceChildren(list.length ? h('table', {},
-        h('thead', {}, h('tr', {}, ...['Tạo lúc', 'Khách / Page', 'Dịch vụ', 'Link', 'SL', 'Giá bán', 'Giá gốc', 'Lời', 'Trạng thái', 'Hoàn thành'].map(t => h('th', { textContent: t })))),
+        h('thead', {}, h('tr', {}, ...['Tạo lúc', 'Khách / Page', 'Dịch vụ', 'Link', 'SL', 'Giá bán', 'Giá gốc', 'Lời', 'Trạng thái', 'Hoàn thành', 'Gửi khách'].map(t => h('th', { textContent: t })))),
         h('tbody', {}, ...list.map(o => { const { sell, cost } = orderOf(o); return h('tr', {},
           h('td', { textContent: fmtTime(o.at) }),
           h('td', {}, o.customer?.name || '—', h('div', { className: 'hint', textContent: App.pageById(o.pageKey)?.name || '' })),
-          h('td', {}, o.serviceName || '', h('div', { className: 'hint', textContent: '#' + o.providerOrderId })),
+          h('td', {}, o.displayName || o.serviceName || '', h('div', { className: 'hint', textContent: `#${o.providerOrderId}${o.displayName ? ' · MC ' + o.serviceId : ''}` })),
           h('td', {}, o.link ? h('button', { type: 'button', className: 'btn btn-ghost btn-sm', title: o.link, textContent: '📋 Copy', onclick: () => navigator.clipboard.writeText(o.link).then(() => toast('Đã copy link.')) }) : ''),
           h('td', { textContent: (o.items?.[0]?.qty || 0).toLocaleString('vi-VN') }),
           h('td', { textContent: money(sell) }), h('td', { textContent: money(cost) + (o.charge ? '' : ' ≈') }),
           h('td', { className: sell - cost < 0 ? 'neg' : '', textContent: money(sell - cost) }),
           h('td', {}, h('span', { className: 'status ' + (o.status === 'done' ? 'ok' : o.status === 'cancelled' ? 'err' : 'pending'), textContent: statusVi(o.svcStatus) })),
-          h('td', { textContent: o.completedAt ? fmtTime(o.completedAt) : '' })); }))) : h('div', { className: 'empty', textContent: 'Chưa có đơn dịch vụ trong khoảng này. Tạo đơn từ Hộp thư (nút "＋ Tạo đơn dịch vụ") hoặc nút ＋ Tạo đơn.' }));
+          h('td', { textContent: o.completedAt ? fmtTime(o.completedAt) : '' }),
+          h('td', {}, h('div', { className: 'row', style: 'gap:4px;flex-wrap:nowrap' },
+            h('button', { type: 'button', className: 'btn btn-ghost btn-sm', title: o.invoiceSentAt ? 'Đã gửi đơn lúc ' + fmtTime(o.invoiceSentAt) : 'Xuất đơn gửi khách', textContent: o.invoiceSentAt ? '📤 ✓' : '📤 Đơn', onclick: () => invoiceDialog(o, 'new') }),
+            h('button', { type: 'button', className: 'btn btn-ghost btn-sm', title: o.progressSentAt ? 'Đã báo tiến độ lúc ' + fmtTime(o.progressSentAt) : 'Báo tiến độ cho khách', textContent: '📊', onclick: async () => { await refreshStatus([o]).catch(() => {}); const f = (await DB.get(ORDERS, [])).find(y => y.id === o.id) || o; invoiceDialog(f, 'progress'); } })))); }))) : h('div', { className: 'empty', textContent: 'Chưa có đơn dịch vụ trong khoảng này. Tạo đơn từ Hộp thư (nút "＋ Tạo đơn dịch vụ") hoặc nút ＋ Tạo đơn.' }));
       drawSettings(s, this);
       if (s.apiKey) call('balance').then(b => { $('svBalance').textContent = `Số dư: ${Number(b.balance).toLocaleString('vi-VN')} ${b.currency || ''}`; }).catch(e => { $('svBalance').textContent = e.message; });
       else $('svBalance').textContent = 'Chưa nhập API key';
@@ -398,6 +545,50 @@
       for (const x of shown) if (x.unitCost > 0 && (!onlyEmpty || p[x.id] == null)) { p[x.id] = Math.round(x.unitCost * (1 + k / 100) * 100) / 100; n++; }
       await saveSettings({ prices: p, markup: k }); toast(`Đã đặt giá cho ${n} dịch vụ (gốc + ${k}%).`); drawPrices();
     };
+    const pkgBox = h('div', { className: 'svc-pkgs' }), invBox = h('div', { className: 'svc-inv-set' });
+    const savePkgs = async list => saveSettings({ packages: list });
+    const drawPkgs = async () => {
+      let list = []; try { list = await services(); } catch { list = []; }
+      list = [...list].sort((a, b) => a.groupIndex - b.groupIndex || a.pos - b.pos || Number(a.id) - Number(b.id));
+      const pk = (await settings()).packages || [];
+      const upd = async (id, change) => { const cur = (await settings()).packages || []; await savePkgs(cur.map(p => p.id === id ? { ...p, ...change } : p)); drawPkgs(); };
+      const row = p => {
+        const svc = list.find(x => x.id === String(p.serviceId)), base = svc?.unitCost || 0;
+        const q = p.kind === 'fixed' ? Number(p.qty) || 0 : 1000, sell = p.kind === 'fixed' ? Number(p.price) || 0 : (Number(p.unitPrice) || 0) * 1000, cost = base * q;
+        const sel = h('select', { style: 'max-width:340px', onchange: e => upd(p.id, { serviceId: e.target.value }) },
+          h('option', { value: '', textContent: '— Chọn máy chủ gốc —' }),
+          ...list.map(x => { const [st, cls] = stateOf(x); return h('option', { value: x.id, selected: x.id === String(p.serviceId), textContent: `MC ${x.id} · ${x.name} · ${m2(x.unitCost)}/đv${cls === 'err' ? ' · ' + st : ''}` }); }));
+        return h('tr', {},
+          h('td', {}, h('input', { type: 'text', value: p.name || '', placeholder: 'Tên gói (khách thấy)', style: 'min-width:170px', onchange: e => upd(p.id, { name: e.target.value.trim() }) })),
+          h('td', {}, h('select', { onchange: e => upd(p.id, { kind: e.target.value }) }, h('option', { value: 'fixed', textContent: 'Cố định', selected: p.kind === 'fixed' }), h('option', { value: 'unit', textContent: 'Theo đơn vị', selected: p.kind === 'unit' }))),
+          h('td', {}, p.kind === 'fixed' ? h('input', { type: 'number', min: 1, step: 1, value: p.qty ?? '', placeholder: 'Số lượng', style: 'width:100px', onchange: e => upd(p.id, { qty: Number(e.target.value) || 0 }) }) : h('span', { className: 'hint', textContent: 'Nhập khi tạo đơn' })),
+          h('td', {}, p.kind === 'fixed'
+            ? h('input', { type: 'number', min: 0, step: 'any', value: p.price ?? '', placeholder: 'Giá cả gói (đ)', style: 'width:120px', onchange: e => upd(p.id, { price: Number(e.target.value) || 0 }) })
+            : h('input', { type: 'number', min: 0, step: 'any', value: p.unitPrice ?? '', placeholder: 'đ / đv', style: 'width:100px', onchange: e => upd(p.id, { unitPrice: Number(e.target.value) || 0 }) })),
+          h('td', {}, sel, svc && stateOf(svc)[1] === 'err' ? h('div', { className: 'neg', textContent: 'Máy chủ gốc đang bảo trì: đổi máy chủ khác.' }) : !svc && p.serviceId ? h('div', { className: 'neg', textContent: 'Máy chủ gốc không còn trong danh sách.' }) : null),
+          h('td', { className: 'num' }, svc ? h('div', {}, money(cost), h('div', { className: 'hint', textContent: p.kind === 'fixed' ? 'gốc cả gói' : 'gốc / 1.000' })) : '—'),
+          h('td', { className: 'num' + (sell - cost < 0 ? ' neg' : '') }, svc && sell ? money(sell - cost) + pct(sell, cost) : '—'),
+          h('td', {}, h('button', { type: 'button', className: 'btn btn-ghost btn-sm', textContent: 'Xoá', onclick: async () => { if (confirm(`Xoá gói "${p.name || 'chưa đặt tên'}"?`)) { await savePkgs(((await settings()).packages || []).filter(x => x.id !== p.id)); drawPkgs(); } } })));
+      };
+      pkgBox.replaceChildren(
+        pk.length ? h('div', { className: 'scroll' }, h('table', { className: 'svc-table' }, h('thead', {}, h('tr', {}, ...['Tên gói', 'Kiểu', 'Số lượng', 'Giá bán', 'Máy chủ gốc', 'Giá gốc', 'Lãi', ''].map(t => h('th', { textContent: t })))), h('tbody', {}, ...pk.map(row))))
+          : h('p', { className: 'hint', textContent: 'Chưa có gói nào.' }),
+        h('button', { type: 'button', className: 'btn btn-soft btn-sm', style: 'margin-top:8px', textContent: '＋ Thêm gói', onclick: async () => { await savePkgs([...((await settings()).packages || []), { id: uid('pkg'), name: '', kind: 'fixed', qty: 1000, price: 0, serviceId: '' }]); drawPkgs(); } }));
+    };
+    const drawInvoiceSettings = st => {
+      const inv = st.invoice || {};
+      const bin = h('select', {}, h('option', { value: '', textContent: '— Ngân hàng —' }), ...BANKS.map(([b, n]) => h('option', { value: b, textContent: n, selected: b === inv.bin })));
+      const acc = h('input', { type: 'text', value: inv.acc || '', placeholder: 'Số tài khoản', autocomplete: 'off' });
+      const holder = h('input', { type: 'text', value: inv.holder || '', placeholder: 'Tên chủ tài khoản (KHÔNG DẤU)' });
+      const shop = h('input', { type: 'text', value: inv.shop || '', placeholder: 'Tên shop (đơn tạo ngoài Hộp thư)' });
+      const note = h('textarea', { rows: 3, value: inv.note || '', placeholder: 'Lưu ý / bảo hành in trên đơn (vd: Đơn chạy trong 1–24 giờ. Bảo hành 30 ngày nếu tụt.)' });
+      invBox.replaceChildren(
+        h('p', { className: 'hint', textContent: 'Ảnh hoá đơn dùng tên và ảnh của Page khách đang nhắn. Mã QR VietQR tự điền số tiền và nội dung DV<mã đơn>; app tải ảnh QR từ img.vietqr.io (gửi số tài khoản, số tiền, nội dung lên đó).' }),
+        h('div', { className: 'form-grid' }, h('label', { className: 'field' }, 'Ngân hàng', bin), h('label', { className: 'field' }, 'Số tài khoản', acc), h('label', { className: 'field' }, 'Chủ tài khoản', holder), h('label', { className: 'field' }, 'Tên shop dự phòng', shop)),
+        h('label', { className: 'field', style: 'margin-top:10px' }, 'Lưu ý / bảo hành', note),
+        h('button', { type: 'button', className: 'btn btn-primary btn-sm', style: 'margin-top:8px', textContent: 'Lưu thông tin hoá đơn', onclick: async () => {
+          await saveSettings({ invoice: { bin: bin.value, acc: acc.value.replace(/\s+/g, ''), holder: holder.value.trim().toUpperCase(), shop: shop.value.trim(), note: note.value.trim() } }); toast('Đã lưu thông tin hoá đơn.'); } }));
+    };
     const reloadWeb = async () => {
       if (!window.metaDesktop?.svcCatalog) return toast('Đọc web dịch vụ chỉ có trong app Windows.', 5000);
       catalogMsg = 'Đang đọc web dịch vụ…'; catMsg.textContent = catalogMsg;
@@ -426,8 +617,14 @@
         h('span', { className: 'hint', textContent: 'Giá của tôi = gốc +' }), markup, h('span', { className: 'hint', textContent: '%' }),
         h('button', { type: 'button', className: 'btn btn-soft btn-sm', textContent: 'Điền cho dịch vụ chưa có giá', onclick: () => applyMarkup(true) }),
         h('button', { type: 'button', className: 'btn btn-ghost btn-sm', textContent: 'Đặt lại tất cả đang lọc', onclick: () => { if (confirm(`Đặt lại giá của tôi cho ${shown.length} dịch vụ đang lọc = giá gốc + ${markup.value}%?`)) applyMarkup(false); } })),
-      priceBox);
+      priceBox,
+      h('h4', { className: 'card-title', style: 'margin:22px 0 6px', textContent: 'Gói bán của tôi' }),
+      h('p', { className: 'hint', textContent: 'Gói là tên + giá bạn bán cho khách, gắn với một máy chủ gốc. Đổi máy chủ gốc bất cứ lúc nào (vd máy chủ cũ bảo trì); khách chỉ thấy tên gói.' }),
+      pkgBox,
+      h('h4', { className: 'card-title', style: 'margin:22px 0 6px', textContent: 'Hoá đơn gửi khách' }),
+      invBox);
     if (s.apiKey) drawPrices(); else priceBox.replaceChildren(h('p', { className: 'hint', textContent: 'Nhập API key rồi Lưu để tải danh sách dịch vụ.' }));
+    drawPkgs(); drawInvoiceSettings(s);
   }
-  App.services = { createDialog, inboxBox, refreshStatus, linksIn, call, openWeb, mapStatus, catalogProgress, noteLines, speedOf };
+  App.services = { createDialog, inboxBox, refreshStatus, linksIn, call, openWeb, mapStatus, catalogProgress, noteLines, speedOf, invoiceDialog, invoiceText };
 })();

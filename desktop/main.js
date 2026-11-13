@@ -273,6 +273,22 @@ app.whenReady().then(async () => {
       try { return { status: r.status, json: JSON.parse(text) }; } catch { return { status: r.status, error: `API trả về không phải JSON (HTTP ${r.status}): ${text.slice(0, 160)}` }; }
     } catch (err) { return { error: 'Không gọi được API dịch vụ: ' + err.message }; }
   });
+  // Ảnh cho hoá đơn dịch vụ (QR VietQR, ảnh Page): trang không đọc được ảnh khác nguồn để vẽ lên canvas,
+  // nên tải ở tiến trình chính. Chỉ nhận đúng các nguồn này, tối đa 3 MB, trả data URL.
+  const IMG_HOSTS = /^(img\.vietqr\.io|[\w-]+\.fbcdn\.net|graph\.facebook\.com|platform-lookaside\.fbsbx\.com)$/i;
+  ipcMain.handle('svc-image', async (e, url) => {
+    if (!fromPage(e)) return { error: 'denied' };
+    let u; try { u = new URL(url); } catch { return { error: 'URL ảnh không hợp lệ.' }; }
+    if (u.protocol !== 'https:' || !IMG_HOSTS.test(u.hostname)) return { error: 'Nguồn ảnh không được phép.' };
+    try {
+      const r = await net.fetch(u.href);
+      const type = r.headers.get('content-type') || '';
+      if (!r.ok || !/^image\//.test(type)) return { error: 'Không tải được ảnh (HTTP ' + r.status + ').' };
+      const buf = Buffer.from(await r.arrayBuffer());
+      if (buf.length > 3e6) return { error: 'Ảnh quá lớn.' };
+      return { dataUrl: `data:${type.split(';')[0]};base64,${buf.toString('base64')}` };
+    } catch (err) { return { error: 'Không tải được ảnh: ' + err.message }; }
+  });
   // Danh mục dịch vụ từ trang web (ghi chú gốc, giá web, bảo trì, thời gian TB): đọc bằng phiên cột Dịch vụ, chỉ đọc.
   let svcCatalogRun = null;
   ipcMain.handle('svc-catalog', async (e, { origin } = {}) => {

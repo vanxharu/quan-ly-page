@@ -669,6 +669,15 @@
     if (v.startsWith('/') && !$('ibPicker').hidden) { const t = await S.picker.first(); if (t) pickTemplate(t); return; }
     send();
   }
+  // Tab khác (vd Dịch vụ › gửi đơn cho khách) gửi tin + ảnh vào đúng hội thoại đang mở; khác khách thì không gửi.
+  App.inbox.compose = async ({ key, text = '', image = '', autoSend = true }) => {
+    const c = S.conv;
+    if (!c || !key || c.key !== key || !S.draftReady || S.sending) return false;
+    $('ibText').value = text; S.image = image; S.tpl = null; drawAttach(); await saveDraft(); updateSendState();
+    if (autoSend) await send();
+    return true;
+  };
+  App.inbox.openKey = () => S.conv?.key || '';
   async function send() {
     const c = S.conv, text = $('ibText').value.trim();
     if (S.sending || !S.draftReady || !c?.other.id || (!text && !S.image)) return;
