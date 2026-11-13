@@ -259,28 +259,49 @@ function createMetaAuto({ worker, composer, metaView, showMeta = () => () => {},
   };
   // Đưa ảnh vào khung trả lời của Business Suite, thử lần lượt 3 cách (giao diện Meta hay đổi):
   //  1) ô chọn file có sẵn trong trang; 2) bấm nút đính kèm ảnh và bắt hộp chọn file; 3) dán ảnh từ clipboard vào ô nhập.
+  // Tìm ô soạn tin trên toàn trang (Business Suite 11/2026: ô trả lời nằm NGOÀI khung detail_column, có thể là textarea).
+  // Đánh dấu ô nhập [data-ga-editor] và vùng soạn quanh nó [data-ga-composer] để các bước sau dùng selector cố định.
+  function markComposer() {
+    document.querySelectorAll('[data-ga-editor],[data-ga-composer]').forEach(e => { e.removeAttribute('data-ga-editor'); e.removeAttribute('data-ga-composer'); });
+    const vis = el => { const r = el.getBoundingClientRect(); return r.width > 40 && r.height > 8 && getComputedStyle(el).visibility !== 'hidden' && getComputedStyle(el).display !== 'none'; };
+    const W = innerWidth;
+    const cands = [...document.querySelectorAll('[contenteditable="true"], textarea, [role="textbox"]')].filter(vis)
+      .filter(el => el.getBoundingClientRect().left > W * 0.25 && !el.closest('[role="search"]') && !/tìm|search/i.test(el.getAttribute('aria-label') || el.getAttribute('placeholder') || ''));
+    if (!cands.length) return null;
+    const ed = cands.sort((a, b) => b.getBoundingClientRect().bottom - a.getBoundingClientRect().bottom)[0];
+    ed.setAttribute('data-ga-editor', '1');
+    let box = ed; while (box.parentElement && box.parentElement !== document.body && box.parentElement.getBoundingClientRect().height < 400) box = box.parentElement;
+    box.setAttribute('data-ga-composer', '1');
+    return { tag: ed.tagName.toLowerCase(), label: ed.getAttribute('aria-label') || ed.getAttribute('placeholder') || '', files: box.querySelectorAll('input[type="file"]').length,
+      buttons: [...box.querySelectorAll('[role="button"],button,[aria-label]')].map(b => b.getAttribute('aria-label') || '').filter(Boolean).slice(0, 15) };
+  }
+  const findComposer = async (wc, wait = 10000) => {
+    const end = Date.now() + wait; let r = null;
+    do { r = await wc.executeJavaScript(`(${markComposer})()`).catch(() => null); if (r) return r; await sleep(700); } while (Date.now() < end);
+    return null;
+  };
+  const describe = c => c ? `ô nhập: ${c.tag}${c.label ? ' "' + c.label + '"' : ''} · ô file: ${c.files} · nút: ${c.buttons.join(' | ') || '—'}` : 'không thấy ô nhập';
+  // Đưa ảnh vào khung trả lời, thử lần lượt: ô file → giả dán → giả kéo-thả → nút đính kèm → dán clipboard thật. Ảnh hiện trong vùng soạn mới tính là xong.
   const attachImage = async (wc, image) => {
-    const dbg = wc.debugger, COL = '[data-surface$="lib:inbox:detail_column"]';
-    const fileInput = async () => (await dbg.sendCommand('Runtime.evaluate', { expression: `(() => { const col = document.querySelector('${COL}');
-      const all = [...(col ? col.querySelectorAll('input[type="file"]') : []), ...document.querySelectorAll('input[type="file"]')];
+    const dbg = wc.debugger, tried = [];
+    const fileInput = async () => (await dbg.sendCommand('Runtime.evaluate', { expression: `(() => { const box = document.querySelector('[data-ga-composer]');
+      const all = [...(box ? box.querySelectorAll('input[type="file"]') : []), ...document.querySelectorAll('input[type="file"]')];
       return all.find(i => /image|\\*/.test(i.accept || '*')) || null; })()` }).catch(() => null))?.result?.objectId || '';
-    // Đếm ảnh/khung xem trước trong cột hội thoại: tăng lên sau khi đưa ảnh = Business Suite đã nhận ảnh.
-    // Chỉ đếm trong vùng soạn tin (quanh ô nhập, cao < 360px) để ảnh trong tin cũ tải chậm không làm tưởng nhầm.
-    const pics = () => wc.executeJavaScript(`(() => { const col = document.querySelector('${COL}') || document, ed = col.querySelector('[contenteditable="true"]');
-      if (!ed) return 0; let box = ed; while (box.parentElement && box.parentElement !== col && box.parentElement.getBoundingClientRect().height < 360) box = box.parentElement;
-      return box.querySelectorAll('img, video, [style*="background-image"]').length; })()`).catch(() => 0);
+    const pics = () => wc.executeJavaScript(`(() => { const box = document.querySelector('[data-ga-composer]'); return box ? box.querySelectorAll('img, video, [style*="background-image"]').length : 0; })()`).catch(() => 0);
+    const comp = await findComposer(wc);
+    attachImage.last = { tried, comp };
+    if (!comp) { tried.push('không thấy ô nhập tin'); return false; }
     const before = await pics();
     const waitPreview = async () => { for (let i = 0; i < 10; i++) { await sleep(500); if (await pics() > before) return true; } return false; };
-    const tried = [];
     // 1) ô chọn file có sẵn
     let id = await fileInput();
-    tried.push(id ? 'ô file: có' : 'ô file: không thấy');
+    tried.push(id ? 'ô file: có' : 'ô file: không');
     if (id && await putImage(dbg, id, image, 'anh') && await waitPreview()) return true;
-    // 2) giả sự kiện dán / kéo-thả ảnh ngay trên ô nhập (khung soạn của Messenger nhận ảnh qua paste/drop, không cần ô file)
-    const edId = (await dbg.sendCommand('Runtime.evaluate', { expression: `(() => { const col = document.querySelector('${COL}') || document; return col.querySelector('[contenteditable="true"]'); })()` }).catch(() => null))?.result?.objectId || '';
+    // 2–3) giả dán / kéo-thả ngay trên ô nhập
+    const edId = (await dbg.sendCommand('Runtime.evaluate', { expression: `document.querySelector('[data-ga-editor]')` }).catch(() => null))?.result?.objectId || '';
     const m = String(image).match(/^data:(image\/(\w+));base64,(.+)$/);
     for (const kind of ['paste', 'drop']) {
-      if (!edId || !m) { tried.push(kind + ': không thấy ô nhập'); break; }
+      if (!edId || !m) break;
       const r = await dbg.sendCommand('Runtime.callFunctionOn', { objectId: edId, returnByValue: true, arguments: [{ value: m[3] }, { value: m[1] }, { value: 'anh.' + (m[2] === 'jpeg' ? 'jpg' : m[2]) }, { value: kind }],
         functionDeclaration: `function (b64, type, name, kind) {
           const bin = atob(b64), bytes = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
@@ -289,40 +310,32 @@ function createMetaAuto({ worker, composer, metaView, showMeta = () => () => {},
           let ok = false; for (const t of ['dragenter', 'dragover', 'drop']) { const ev = new DragEvent(t, { dataTransfer: dt, bubbles: true, cancelable: true }); this.dispatchEvent(ev); ok = ok || ev.defaultPrevented; }
           return ok; }` }).catch(e => ({ error: e.message }));
       if (await waitPreview()) return true;
-      tried.push(`${kind}: ${r?.error ? 'lỗi ' + r.error : r?.result?.value ? 'trang nhận nhưng chưa thấy ảnh' : 'trang không nhận'}`);
+      tried.push(`${kind}: ${r?.error ? 'lỗi ' + r.error : r?.result?.value ? 'nhận nhưng chưa thấy ảnh' : 'không nhận'}`);
     }
-    // 3) bấm nút đính kèm, bắt hộp chọn file
+    // 4) bấm nút đính kèm, bắt hộp chọn file
     try {
       await dbg.sendCommand('Page.enable');
       await dbg.sendCommand('Page.setInterceptFileChooserDialog', { enabled: true });
       const chooser = new Promise(resolve => { const on = (_e, method, params) => { if (method === 'Page.fileChooserOpened') { dbg.removeListener('message', on); resolve(params); } };
         dbg.on('message', on); setTimeout(() => { dbg.removeListener('message', on); resolve(null); }, 5000); });
-      const clicked = await mouse(wc, { selector: `${COL} [role="button"], ${COL} button`, text: /đính kèm|ảnh|photo|image|attach|tệp|file/i.source });
+      const clicked = await mouse(wc, { selector: '[data-ga-composer] [role="button"], [data-ga-composer] button, [data-ga-composer] [aria-label]', text: /đính kèm|ảnh|photo|image|attach|tệp|file/i.source });
       const params = clicked ? await chooser : null;
       id = params?.backendNodeId ? (await dbg.sendCommand('DOM.resolveNode', { backendNodeId: params.backendNodeId }).catch(() => null))?.object?.objectId : '';
       if (!id && clicked) id = await fileInput();
-      tried.push(clicked ? (params ? 'nút đính kèm: mở hộp chọn' : 'nút đính kèm: bấm nhưng không mở hộp chọn') : 'nút đính kèm: không thấy');
+      tried.push(clicked ? (params ? 'nút đính kèm: mở hộp chọn' : 'nút đính kèm: không mở hộp chọn') : 'nút đính kèm: không thấy');
       if (id && await putImage(dbg, id, image, 'anh') && await waitPreview()) return true;
     } catch (e) { tried.push('nút đính kèm lỗi: ' + e.message); } finally { await dbg.sendCommand('Page.setInterceptFileChooserDialog', { enabled: false }).catch(() => {}); }
-    // 4) dán ảnh thật từ clipboard vào ô nhập (giữ lại chữ trong clipboard của bạn)
-    const img = nativeImage.createFromDataURL(image);
+    // 5) dán ảnh thật từ clipboard (trả lại chữ cũ trong clipboard sau đó)
     let oldText = ''; try { oldText = String(clipboard.readText() || ''); } catch {}
     try {
-      if (img.isEmpty()) { tried.push('ảnh hỏng'); return false; }
-      if (!await mouse(wc, { selector: `${COL} [contenteditable="true"]` })) { tried.push('dán: không thấy ô nhập'); return false; }
+      const img = nativeImage.createFromDataURL(image); if (img.isEmpty()) { tried.push('ảnh hỏng'); return false; }
+      if (!await mouse(wc, { selector: '[data-ga-editor]' })) { tried.push('dán: không bấm được ô nhập'); return false; }
       await sleep(200); clipboard.writeImage(img); wc.paste();
       if (await waitPreview()) return true;
-      tried.push('dán: không thấy ảnh hiện lên');
+      tried.push('dán: không thấy ảnh');
       return false;
     } catch (e) { tried.push('dán lỗi: ' + e.message); return false; }
-    finally {
-      setTimeout(() => { try { if (oldText) clipboard.writeText(oldText); } catch {} }, 1500);
-      // Ghi lại để biết giao diện Meta đang thế nào (gửi cho người hỗ trợ khi cần).
-      if (tried.length) attachImage.last = { at: Date.now(), tried, dom: await wc.executeJavaScript(`(() => { const col = document.querySelector('${COL}');
-        return { col: !!col, files: document.querySelectorAll('input[type="file"]').length, accepts: [...document.querySelectorAll('input[type="file"]')].map(i => i.accept).slice(0, 5),
-          editors: (col || document).querySelectorAll('[contenteditable="true"]').length,
-          buttons: [...(col || document).querySelectorAll('[role="button"],button')].map(b => b.getAttribute('aria-label') || '').filter(Boolean).slice(-25) }; })()`).catch(() => null) };
-    }
+    finally { setTimeout(() => { try { if (oldText) clipboard.writeText(oldText); } catch {} }, 1500); }
   };
   const threadArgs = ({ pageId, uid }) => /^\d+$/.test(String(pageId)) && /^\d+$/.test(String(uid));
   const readThread = args => queue(async () => {
@@ -346,9 +359,10 @@ function createMetaAuto({ worker, composer, metaView, showMeta = () => () => {},
     const picsBefore = myPics(await read());
     if (image && !await attachImage(wc, image)) {
       const d = attachImage.last;
-      return { error: 'Không đưa được ảnh vào Business Suite.' + (d ? ` [${d.tried.join(' · ')}${d.dom ? ` · khung:${d.dom.col ? 'có' : 'không'} · ô file:${d.dom.files} · ô nhập:${d.dom.editors} · nút: ${d.dom.buttons.join(' | ')}` : ''}]` : '') };
+      return { error: `Không đưa được ảnh vào Business Suite. [${d?.tried.join(' · ')} · ${describe(d?.comp)}]` };
     }
-    if (!await mouse(wc, { selector: '[data-surface$="lib:inbox:detail_column"] [contenteditable="true"]' })) return { error: 'Không thấy ô nhập tin của Business Suite.' };
+    const comp = await findComposer(wc, image ? 2000 : 10000);
+    if (!comp || !await mouse(wc, { selector: '[data-ga-editor]' })) return { error: `Không thấy ô nhập tin của Business Suite. [${describe(comp)}]` };
     await sleep(300);
     const lines = text ? text.split('\n') : [];
     for (const [i, line] of lines.entries()) {
