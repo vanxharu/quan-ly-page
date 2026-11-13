@@ -173,3 +173,6 @@ body:has([data-panel=inbox]:not([hidden])) main{padding-top:12px;padding-bottom:
 .svc-inv-grid textarea{min-height:260px;font-size:12.5px;line-height:1.55}
 .svc-inv-img{width:100%;border-radius:12px;border:1px solid var(--border);background:var(--bg-input);min-height:120px;max-height:62vh;object-fit:contain}
 @media (max-width:760px){.svc-inv-grid{grid-template-columns:1fr}}
+.svc-checks{display:grid;gap:6px;margin:10px 0;padding:10px 12px;border:1px solid var(--border);border-radius:10px;background:var(--bg-input);font-size:12.5px}
+.svc-inbox-quotes{display:grid;gap:6px}
+.svc-inbox-quotes:empty{display:none}

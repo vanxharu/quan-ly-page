@@ -4,6 +4,15 @@
  * Lưu: svcSettingsV1 { home, apiUrl, apiKey, prices: { [serviceId]: giá bán/1 đơn vị } }, svcServicesV1 { at, list }. */
 (() => {
   const SET = 'svcSettingsV1', CACHE = 'svcServicesV1', ORDERS = 'shopOrdersV1';
+  // Báo giá (khách trả tiền trước rồi mới tạo đơn Baostar): kho riêng, không tính doanh thu.
+  // { id, payCode, at, expiresAt, state: 'quote' | 'paid' (đã thu, chưa tạo đơn), paidAmount, paidAt, payNote, lastError,
+  //   link, qty, sell, cost, costManual, displayName, packageId, serviceId, serviceName, customerKey, pageKey, pageName, pageAvatar, customer, sentAt }
+  const QUOTES = 'svcQuotesV1', QUOTE_TTL = 24 * 3600e3;
+  const quotes = () => DB.get(QUOTES, []);
+  const saveQuote = async q => { const all = await quotes(), i = all.findIndex(x => x.id === q.id); if (i < 0) all.push(q); else all[i] = q; await DB.set(QUOTES, all); return q; };
+  const dropQuote = async id => DB.set(QUOTES, (await quotes()).filter(x => x.id !== id));
+  const expired = q => q.state === 'quote' && Date.now() > (q.expiresAt || Infinity);
+  const newPayCode = () => 'DV' + Array.from(crypto.getRandomValues(new Uint8Array(6)), b => 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'[b % 31]).join('');
   const DEFAULTS = { home: 'https://smm.baostar.net', apiUrl: 'https://smm.baostar.net/api/v2', apiKey: '', prices: {} };
   // dichvu.baostar.net là hệ thống khác; key API thuộc smm.baostar.net → tự đổi cài đặt cũ.
   const settings = async () => { const s = { ...DEFAULTS, ...(await DB.get(SET, {})) };
@@ -211,27 +220,18 @@
       if (!/^https?:\/\//i.test(linkIn.value.trim())) return fail('Link phải bắt đầu bằng http(s)://');
       if (n < svc.min || n > svc.max) return fail(`Số lượng phải từ ${svc.min} đến ${svc.max}.`);
       if (stateOf(svc)[1] === 'err') return fail(`Máy chủ #${svc.id} đang bảo trì trên web. Chọn máy chủ khác hoặc đổi máy chủ gốc của gói.`);
-      if (!confirm(`Tạo đơn trên web dịch vụ?\n\nMáy chủ: MC ${svc.id} · ${svc.name}\nSố lượng: ${n.toLocaleString('vi-VN')}\nLink: ${linkIn.value.trim()}\n\nWeb sẽ trừ khoảng ${money(estCost(svc, n))} trong số dư.\nKhách trả: ${money(sell)}`)) return;
-      const btn = form.querySelector('button[type=submit]'); btn.disabled = true; btn.textContent = 'Đang tạo đơn…';
-      try {
-        const r = await call('add', { service: Number(svc.id), link: linkIn.value.trim(), quantity: n });
-        if (r && !r.order) r.order = r.order_id ?? r.orderId ?? r.id;
-        if (!r?.order) throw Error('Web dịch vụ không trả mã đơn.');
-        if (!p && remember.checked && unit.value !== '' && touched(unit)) await saveSettings({ prices: { ...(await settings()).prices, [svc.id]: Number(unit.value) } });
-        const label = shown.value.trim() || p?.name || svc.category || 'Dịch vụ';
-        const order = { id: uid('ord'), at: Date.now(), updatedAt: Date.now(), source: 'service', provider: new URL(s.apiUrl).hostname, providerOrderId: String(r.order),
-          serviceId: svc.id, serviceName: svc.name, displayName: label, packageId: p?.id || '', link: linkIn.value.trim(), customerKey: ctx.key || '', pageKey: ctx.page?.id || '', pageName: ctx.page?.name || '', pageAvatar: App.pageAvatarUrl(ctx.page) || '',
-          customer: { name: ctx.name || '', phone: '', address: '' }, items: [{ name: label, qty: n, price: sell / n, cost: cost / n }], costManual: touched(costIn),
-          discount: 0, shipFee: 0, shipCost: 0, status: 'new', svcStatus: 'Pending', note: 'Đơn dịch vụ #' + r.order };
-        await DB.set(ORDERS, [...await DB.get(ORDERS, []), order]);
-        if (ctx.key) App.crm?.update?.(ctx.key, { pageId: ctx.page?.id, pageName: ctx.page?.name, name: ctx.name, orderStatus: 'Đã đặt hàng' }).catch(() => {});
-        dlg.close(); toast(`Đã tạo đơn dịch vụ #${r.order}.`, 5000);
-        refreshStatus([order]).catch(() => {});
-        App.tabs.services?.refresh?.();
-        invoiceDialog(order, 'new');
-      } catch (e2) { fail(e2.message); btn.disabled = false; btn.textContent = 'Tạo đơn'; }
+      if (!(sell > 0)) return fail('Nhập thành tiền khách trả.');
+      if (!p && remember.checked && unit.value !== '' && touched(unit)) await saveSettings({ prices: { ...(await settings()).prices, [svc.id]: Number(unit.value) } });
+      const label = shown.value.trim() || p?.name || svc.category || 'Dịch vụ', now = Date.now();
+      const q = await saveQuote({ id: uid('quo'), payCode: newPayCode(), at: now, expiresAt: now + QUOTE_TTL, state: 'quote', paidAmount: 0,
+        link: linkIn.value.trim(), qty: n, sell, cost, costManual: touched(costIn), displayName: label, packageId: p?.id || '', serviceId: svc.id, serviceName: svc.name,
+        customerKey: ctx.key || '', pageKey: ctx.page?.id || '', pageName: ctx.page?.name || '', pageAvatar: App.pageAvatarUrl(ctx.page) || '', customer: { name: ctx.name || '' } });
+      if (ctx.key) App.crm?.update?.(ctx.key, { pageId: ctx.page?.id, pageName: ctx.page?.name, name: ctx.name, orderStatus: 'Chờ thanh toán' }).catch(() => {});
+      dlg.close(); toast(`Đã tạo báo giá ${q.payCode}. Gửi cho khách, khi nhận tiền bấm "Đã nhận tiền".`, 6000);
+      App.tabs.services?.refresh?.();
+      invoiceDialog(q, 'quote');
     } },
-      h('div', { className: 'card-head' }, h('h3', { className: 'card-title', textContent: 'Tạo đơn dịch vụ' + (ctx.name ? ' · ' + ctx.name : '') }),
+      h('div', { className: 'card-head' }, h('h3', { className: 'card-title', textContent: 'Báo giá dịch vụ' + (ctx.name ? ' · ' + ctx.name : '') }),
         h('button', { type: 'button', className: 'icon-btn', 'aria-label': 'Đóng', textContent: '×', onclick: () => dlg.close() })),
       h('label', { className: 'field' }, 'Link cần làm', linkIn),
       h('label', { className: 'field' }, 'Gói của tôi', pkgSel),
@@ -244,7 +244,7 @@
       rememberBox, info, err,
       h('div', { className: 'row', style: 'gap:8px;justify-content:flex-end' },
         h('button', { type: 'button', className: 'btn btn-ghost', textContent: 'Mở web dịch vụ ↗', onclick: () => { if (linkIn.value) navigator.clipboard?.writeText(linkIn.value).catch(() => {}); openWeb(); } }),
-        h('button', { type: 'submit', className: 'btn btn-primary', textContent: 'Tạo đơn' })));
+        h('button', { type: 'submit', className: 'btn btn-primary', textContent: 'Tạo báo giá' })));
     dlg.append(form); document.body.append(dlg); draw(); dlg.showModal(); (link ? pkgSel : linkIn).focus();
   }
   // ── Xuất đơn gửi khách: tin nhắn chữ + ảnh hoá đơn (tên gói của bạn, không lộ máy chủ gốc) ──
@@ -255,18 +255,30 @@
     ['970433', 'VietBank'], ['970427', 'VietABank'], ['970430', 'PGBank'], ['970438', 'BaoVietBank'], ['970400', 'SaigonBank'], ['970424', 'ShinhanBank'],
     ['546034', 'CAKE'], ['546035', 'Ubank'], ['963388', 'Timo'], ['970406', 'Vikki'], ['970414', 'MBV'], ['971005', 'ViettelMoney'], ['971011', 'VNPTMoney']];
   const bankName = bin => (BANKS.find(b => b[0] === String(bin)) || [, ''])[1];
-  const payCode = o => 'DV' + o.providerOrderId;
-  const orderSell = o => (o.items?.[0]?.price || 0) * (o.items?.[0]?.qty || 0);
-  const qrUrl = (inv, o) => inv.bin && inv.acc ? `https://img.vietqr.io/image/${inv.bin}-${encodeURIComponent(inv.acc)}-qr_only.png?amount=${Math.round(orderSell(o))}&addInfo=${encodeURIComponent(payCode(o))}&accountName=${encodeURIComponent(inv.holder || '')}` : '';
-  const progressLine = o => { const st = statusVi(o.svcStatus), q = o.items?.[0]?.qty || 0;
+  // Dùng chung cho báo giá (sell, qty) và đơn đã tạo (items).
+  const payCode = o => o.payCode || 'DV' + o.providerOrderId;
+  const qtyOf = o => o.qty ?? o.items?.[0]?.qty ?? 0;
+  const orderSell = o => o.sell ?? (o.items?.[0]?.price || 0) * (o.items?.[0]?.qty || 0);
+  const amountDue = o => Math.max(0, Math.round(orderSell(o) - (o.paidAmount || 0)));
+  const hasPayBlock = kind => kind === 'quote' || kind === 'new';
+  const qrUrl = (inv, o) => inv.bin && inv.acc ? `https://img.vietqr.io/image/${inv.bin}-${encodeURIComponent(inv.acc)}-qr_only.png?amount=${amountDue(o)}&addInfo=${encodeURIComponent(payCode(o))}&accountName=${encodeURIComponent(inv.holder || '')}` : '';
+  const progressLine = o => { if (o.payCode && !o.providerOrderId) return o.paidAmount ? `Đã nhận ${money(o.paidAmount)} · còn thiếu ${money(amountDue(o))}` : 'Chờ thanh toán';
+    const st = statusVi(o.svcStatus), q = qtyOf(o);
     const done = o.startCount != null && o.remains != null ? ` · đã lên ${Math.max(0, q - Number(o.remains)).toLocaleString('vi-VN')}/${q.toLocaleString('vi-VN')}` : '';
     return st + done + (o.completedAt ? ` · xong lúc ${fmtTime(o.completedAt)}` : ''); };
+  const KIND_TITLE = { quote: '🧾 BÁO GIÁ', paid: '✅ ĐÃ NHẬN THANH TOÁN · ĐƠN ĐANG CHẠY', progress: '📊 CẬP NHẬT ĐƠN', new: '✅ XÁC NHẬN ĐƠN HÀNG' };
+  const KIND_HEAD = { quote: 'BÁO GIÁ · CHỜ THANH TOÁN', paid: 'ĐÃ NHẬN THANH TOÁN · ĐƠN ĐANG CHẠY', progress: 'CẬP NHẬT TIẾN ĐỘ ĐƠN HÀNG', new: 'XÁC NHẬN ĐƠN HÀNG' };
   function invoiceText(o, inv, kind) {
-    const q = o.items?.[0]?.qty || 0, name = o.displayName || o.items?.[0]?.name || 'Dịch vụ';
-    const L = [kind === 'progress' ? `📊 CẬP NHẬT ĐƠN #${payCode(o)}` : `✅ XÁC NHẬN ĐƠN HÀNG #${payCode(o)}`,
-      `• Dịch vụ: ${name}`, o.link ? `• Link: ${o.link}` : '', `• Số lượng: ${q.toLocaleString('vi-VN')}`, `• Thành tiền: ${money(orderSell(o))}`,
-      `• Tạo lúc: ${fmtTime(o.at)}`, `• Trạng thái: ${progressLine(o)}`];
-    if (kind !== 'progress' && inv.acc) L.push('', `💳 Thanh toán: ${bankName(inv.bin) || 'Ngân hàng'} · STK ${inv.acc}${inv.holder ? ' · ' + inv.holder : ''}`, `   Nội dung CK: ${payCode(o)}`);
+    const q = qtyOf(o), name = o.displayName || o.items?.[0]?.name || 'Dịch vụ';
+    const L = [`${KIND_TITLE[kind] || KIND_TITLE.new} #${payCode(o)}`,
+      `• Dịch vụ: ${name}`, o.link ? `• Link: ${o.link}` : '', `• Số lượng: ${q.toLocaleString('vi-VN')}`, `• Thành tiền: ${money(orderSell(o))}`];
+    if (kind === 'quote') {
+      if (o.paidAmount) L.push(`• Đã nhận: ${money(o.paidAmount)} · Còn thiếu: ${money(amountDue(o))}`);
+      L.push(`• Hạn thanh toán: ${fmtTime(o.expiresAt)}`);
+    } else if (kind === 'paid') L.push(`• Đã thanh toán: ${money(o.paidAmount || orderSell(o))}`, `• Lên đơn lúc: ${fmtTime(o.at)}`, `• Trạng thái: ${progressLine(o)}`);
+    else L.push(`• Tạo lúc: ${fmtTime(o.at)}`, `• Trạng thái: ${progressLine(o)}`);
+    if (hasPayBlock(kind) && inv.acc) L.push('', `💳 Chuyển khoản ${money(amountDue(o))}: ${bankName(inv.bin) || 'Ngân hàng'} · STK ${inv.acc}${inv.holder ? ' · ' + inv.holder : ''}`, `   Nội dung CK: ${payCode(o)}`);
+    if (kind === 'quote') L.push('', '⏳ Shop lên đơn ngay khi nhận được thanh toán.');
     if (inv.note) L.push('', '📌 Lưu ý: ' + inv.note.trim());
     return L.filter((l, i) => l !== '' || L[i - 1] !== '').join('\n').replace(/^\n+|\n+$/g, '');
   }
@@ -281,18 +293,19 @@
   }
   async function invoiceImage(o, inv, kind) {
     const page = App.pageById(o.pageKey), shop = page?.name || o.pageName || inv.shop || 'Cửa hàng';
-    const [logo, qr] = await Promise.all([loadImg(App.pageAvatarUrl(page) || o.pageAvatar), kind === 'progress' ? null : loadImg(qrUrl(inv, o))]);
+    const [logo, qr] = await Promise.all([loadImg(App.pageAvatarUrl(page) || o.pageAvatar), hasPayBlock(kind) ? loadImg(qrUrl(inv, o)) : null]);
     const W = 760, P = 36, c = document.createElement('canvas'), x = c.getContext('2d');
     const font = (w, sz) => `${w} ${sz}px "Plus Jakarta Sans","Inter","Segoe UI",Arial,sans-serif`;
     const wrap = (text, maxW, f) => { x.font = f; const out = []; for (const para of String(text).split('\n')) { let line = '';
       for (const w of para.split(/(\s+)/)) { const t = line + w; if (x.measureText(t).width > maxW && line.trim()) { out.push(line.trim()); line = w.trimStart(); } else line = t; }
       out.push(line.trim()); } return out; };
-    const q = o.items?.[0]?.qty || 0;
-    const rows = [['Mã đơn', '#' + payCode(o)], ['Ngày tạo', fmtTime(o.at)], o.customer?.name ? ['Khách hàng', o.customer.name] : null, ['Dịch vụ', o.displayName || o.items?.[0]?.name || 'Dịch vụ'],
-      o.link ? ['Link', o.link] : null, ['Số lượng', q.toLocaleString('vi-VN')], ['Trạng thái', progressLine(o)]].filter(Boolean);
+    const q = qtyOf(o);
+    const rows = [[kind === 'quote' ? 'Mã thanh toán' : 'Mã đơn', '#' + payCode(o)], [kind === 'quote' ? 'Ngày báo giá' : 'Ngày tạo', fmtTime(o.at)], o.customer?.name ? ['Khách hàng', o.customer.name] : null, ['Dịch vụ', o.displayName || o.items?.[0]?.name || 'Dịch vụ'],
+      o.link ? ['Link', o.link] : null, ['Số lượng', q.toLocaleString('vi-VN')], kind === 'quote' ? ['Hạn thanh toán', fmtTime(o.expiresAt)] : null,
+      kind === 'paid' ? ['Đã thanh toán', money(o.paidAmount || orderSell(o))] : null, ['Trạng thái', progressLine(o)]].filter(Boolean);
     const valW = W - P * 2 - 150, rowLines = rows.map(([, v]) => wrap(v, valW, font(600, 16)));
     const noteLinesW = inv.note ? wrap(inv.note.trim(), W - P * 2 - 24, font(500, 14)) : [];
-    const hasPay = kind !== 'progress' && inv.acc;
+    const hasPay = hasPayBlock(kind) && inv.acc;
     let H = 120 + 50 + rowLines.reduce((s, l) => s + l.length * 24 + 12, 0) + 90 + (hasPay ? 230 : 0) + (noteLinesW.length ? noteLinesW.length * 21 + 50 : 0) + 60;
     c.width = W * 2; c.height = H * 2; x.scale(2, 2);
     x.fillStyle = '#f3f1ff'; x.fillRect(0, 0, W, H);
@@ -303,19 +316,20 @@
     x.fillStyle = grad; x.beginPath(); x.roundRect(P / 2, P / 2, W - P, 100, [18, 18, 0, 0]); x.fill();
     if (logo) { x.save(); x.beginPath(); x.arc(P + 32, P / 2 + 50, 32, 0, Math.PI * 2); x.clip(); x.drawImage(logo, P, P / 2 + 18, 64, 64); x.restore(); }
     x.fillStyle = '#fff'; x.font = font(800, 24); x.fillText(shop.length > 34 ? shop.slice(0, 33) + '…' : shop, logo ? P + 80 : P, P / 2 + 46);
-    x.font = font(600, 15); x.fillText(kind === 'progress' ? 'CẬP NHẬT TIẾN ĐỘ ĐƠN HÀNG' : 'XÁC NHẬN ĐƠN HÀNG', logo ? P + 80 : P, P / 2 + 72);
+    x.font = font(600, 15); x.fillText(KIND_HEAD[kind] || KIND_HEAD.new, logo ? P + 80 : P, P / 2 + 72);
     let y = P / 2 + 140;
     rows.forEach(([k], i) => { x.fillStyle = '#6b7280'; x.font = font(600, 14); x.fillText(k, P + 8, y);
       x.fillStyle = '#111827'; x.font = font(600, 16); rowLines[i].forEach((l, j) => x.fillText(l, P + 158, y + j * 24));
       y += rowLines[i].length * 24 + 12; });
     x.strokeStyle = '#e5e7eb'; x.beginPath(); x.moveTo(P + 8, y); x.lineTo(W - P - 8, y); x.stroke(); y += 40;
-    x.fillStyle = '#6b7280'; x.font = font(700, 15); x.fillText('THÀNH TIỀN', P + 8, y);
-    x.fillStyle = '#6c5ce7'; x.font = font(800, 30); x.textAlign = 'right'; x.fillText(money(orderSell(o)), W - P - 8, y + 4); x.textAlign = 'left'; y += 46;
+    const due = kind === 'quote' && o.paidAmount;
+    x.fillStyle = '#6b7280'; x.font = font(700, 15); x.fillText(due ? 'CÒN PHẢI TRẢ' : kind === 'paid' ? 'ĐÃ THANH TOÁN' : 'THÀNH TIỀN', P + 8, y);
+    x.fillStyle = kind === 'paid' ? '#00a37a' : '#6c5ce7'; x.font = font(800, 30); x.textAlign = 'right'; x.fillText(money(due ? amountDue(o) : kind === 'paid' ? (o.paidAmount || orderSell(o)) : orderSell(o)), W - P - 8, y + 4); x.textAlign = 'left'; y += 46;
     if (hasPay) {
       x.fillStyle = '#f8f7ff'; x.beginPath(); x.roundRect(P + 4, y, W - P * 2 - 8, 210, 14); x.fill();
       if (qr) x.drawImage(qr, P + 18, y + 14, 182, 182);
       const tx = qr ? P + 220 : P + 22; x.fillStyle = '#111827';
-      [['Ngân hàng', bankName(inv.bin) || inv.bin], ['Số tài khoản', inv.acc], inv.holder ? ['Chủ tài khoản', inv.holder] : null, ['Nội dung CK', payCode(o)], ['Số tiền', money(orderSell(o))]].filter(Boolean)
+      [['Ngân hàng', bankName(inv.bin) || inv.bin], ['Số tài khoản', inv.acc], inv.holder ? ['Chủ tài khoản', inv.holder] : null, ['Nội dung CK', payCode(o)], ['Số tiền', money(amountDue(o))]].filter(Boolean)
         .forEach(([k, v], i) => { x.fillStyle = '#6b7280'; x.font = font(600, 13); x.fillText(k, tx, y + 36 + i * 36); x.fillStyle = '#111827'; x.font = font(700, 16); x.fillText(String(v), tx, y + 54 + i * 36); });
       y += 230;
     }
@@ -334,14 +348,14 @@
     const img = h('img', { alt: 'Ảnh hoá đơn', className: 'svc-inv-img' }), hint = h('div', { className: 'hint' }), withImg = h('input', { type: 'checkbox', checked: true });
     let image = '';
     const render = async () => { hint.textContent = 'Đang vẽ ảnh hoá đơn…'; const r = await invoiceImage(o, inv, kind); image = r.dataUrl; img.src = image;
-      hint.textContent = [r.qrMissing ? 'Không tải được mã QR (kiểm tra mạng hoặc số tài khoản); đơn vẫn có thông tin chuyển khoản.' : '', !inv.acc && kind !== 'progress' ? 'Chưa có thông tin thanh toán: thêm ở Dịch vụ › Cài đặt › Hoá đơn gửi khách.' : ''].filter(Boolean).join(' '); };
+      hint.textContent = [r.qrMissing ? 'Không tải được mã QR (kiểm tra mạng hoặc số tài khoản); đơn vẫn có thông tin chuyển khoản.' : '', !inv.acc && hasPayBlock(kind) ? 'Chưa có thông tin thanh toán: thêm ở Dịch vụ › Cài đặt › Hoá đơn gửi khách.' : ''].filter(Boolean).join(' '); };
     const openKey = App.inbox?.openKey?.() || '', canSend = o.customerKey && openKey === o.customerKey;
     const sendBtn = h('button', { type: 'button', className: 'btn btn-primary', textContent: '📨 Gửi vào hội thoại', disabled: !canSend,
       title: canSend ? 'Gửi chữ + ảnh vào hội thoại đang mở' : 'Mở hội thoại của khách này trong Hộp thư để gửi thẳng; hoặc Copy / Tải ảnh',
       onclick: async () => { sendBtn.disabled = true; sendBtn.textContent = 'Đang gửi…';
         const ok = await App.inbox.compose({ key: o.customerKey, text: text.value.trim(), image: withImg.checked ? image : '' });
         if (ok) { toast('Đã gửi đơn vào hội thoại.'); await markSent(o, kind); dlg.close(); } else { sendBtn.disabled = false; sendBtn.textContent = '📨 Gửi vào hội thoại'; toast('Hội thoại của khách không còn mở trong Hộp thư.', 5000); } } });
-    dlg.append(h('div', { className: 'card-head' }, h('h3', { className: 'card-title', textContent: (kind === 'progress' ? 'Báo tiến độ' : 'Gửi đơn cho khách') + ` · #${payCode(o)}` }),
+    dlg.append(h('div', { className: 'card-head' }, h('h3', { className: 'card-title', textContent: ({ quote: 'Gửi báo giá', paid: 'Báo khách đã nhận tiền', progress: 'Báo tiến độ' }[kind] || 'Gửi đơn cho khách') + ` · #${payCode(o)}` }),
         h('button', { type: 'button', className: 'icon-btn', 'aria-label': 'Đóng', textContent: '×', onclick: () => dlg.close() })),
       h('div', { className: 'svc-inv-grid' },
         h('div', { className: 'field' }, 'Tin nhắn (sửa được)', text, h('label', { className: 'row', style: 'gap:6px;font-weight:500' }, withImg, 'Gửi kèm ảnh hoá đơn')),
@@ -353,9 +367,96 @@
         sendBtn));
     document.body.append(dlg); dlg.showModal(); render();
   }
+  // ── Đã nhận tiền → (lệch thì hỏi) → kiểm tra → bạn bấm tạo đơn Baostar ──
+  function paymentDialog(q) {
+    const dlg = h('dialog', { className: 'svc-dialog', onclose: () => dlg.remove() });
+    const amt = h('input', { type: 'number', min: 0, step: 'any', value: amountDue(q), required: true });
+    const note = h('input', { type: 'text', placeholder: 'Ghi chú (vd: CK lúc 19:05, Vietcombank)' });
+    const msg = h('div', { className: 'svc-sum' }), acts = h('div', { className: 'row', style: 'gap:8px;justify-content:flex-end;flex-wrap:wrap' });
+    const record = async (state, extra = '') => {
+      const add = Number(amt.value) || 0, total = (q.paidAmount || 0) + add;
+      Object.assign(q, { paidAmount: total, paidAt: Date.now(), state, payNote: [q.payNote, note.value.trim(), extra].filter(Boolean).join(' · ') });
+      await saveQuote(q); dlg.close(); App.tabs.services?.refresh?.();
+      if (state === 'paid') confirmCreate(q); else { toast(`Đã ghi nhận ${money(add)}. Còn thiếu ${money(amountDue(q))}.`, 6000); invoiceDialog(q, 'quote'); }
+    };
+    const draw = () => {
+      const add = Number(amt.value) || 0, total = (q.paidAmount || 0) + add, diff = Math.round(total - q.sell);
+      msg.replaceChildren(h('span', {}, 'Khách phải trả ', h('strong', { textContent: money(q.sell) })), q.paidAmount ? h('span', {}, 'Đã nhận trước ', h('strong', { textContent: money(q.paidAmount) })) : null,
+        h('span', {}, 'Tổng đã nhận ', h('strong', { textContent: money(total) })),
+        diff ? h('span', { className: 'neg' }, diff < 0 ? `Thiếu ${money(-diff)}` : `Thừa ${money(diff)}`) : h('span', { className: 'status ok svc-pill', textContent: 'Đủ tiền' }));
+      const cancel = h('button', { type: 'button', className: 'btn btn-ghost', textContent: 'Huỷ', onclick: () => dlg.close() });
+      acts.replaceChildren(cancel, ...(diff === 0 ? [h('button', { type: 'button', className: 'btn btn-primary', textContent: 'Xác nhận đủ tiền → kiểm tra & tạo đơn', onclick: () => record('paid') })]
+        : diff < 0 ? [h('button', { type: 'button', className: 'btn btn-soft', textContent: 'Ghi nhận, chờ khách chuyển thêm', disabled: !add, onclick: () => record('quote') }),
+          h('button', { type: 'button', className: 'btn btn-danger', textContent: `Vẫn lên đơn (thiếu ${money(-diff)})`, onclick: () => confirm(`Khách còn thiếu ${money(-diff)}. Vẫn coi là đã thanh toán và sang bước tạo đơn?`) && record('paid', `thiếu ${money(-diff)}`) })]
+        : [h('button', { type: 'button', className: 'btn btn-primary', textContent: `Ghi nhận thừa ${money(diff)} → kiểm tra & tạo đơn`, onclick: () => confirm(`Khách chuyển thừa ${money(diff)}. App ghi chú số thừa để bạn xử lý (trả lại / trừ đơn sau). Tiếp tục?`) && record('paid', `thừa ${money(diff)}`) })]));
+    };
+    amt.oninput = draw;
+    dlg.append(h('div', { className: 'card-head' }, h('h3', { className: 'card-title', textContent: `Đã nhận tiền · ${q.payCode}` }),
+        h('button', { type: 'button', className: 'icon-btn', 'aria-label': 'Đóng', textContent: '×', onclick: () => dlg.close() })),
+      h('p', { className: 'hint', textContent: `${q.customer?.name || 'Khách'} · ${q.displayName} · ${qtyOf(q).toLocaleString('vi-VN')} · nội dung CK ${q.payCode}${expired(q) ? ' · báo giá đã quá hạn' : ''}` }),
+      h('label', { className: 'field' }, 'Số tiền vừa nhận (đ)', amt), h('label', { className: 'field', style: 'margin-top:8px' }, 'Ghi chú', note), msg, acts);
+    document.body.append(dlg); dlg.showModal(); draw(); amt.select();
+  }
+  async function confirmCreate(q) {
+    const s = await settings();
+    let list = []; try { list = await services(); } catch (e) { return toast(e.message, 7000); }
+    const dlg = h('dialog', { className: 'svc-dialog', onclose: () => dlg.remove() });
+    const opts = list.filter(x => stateOf(x)[1] !== 'err' || x.id === String(q.serviceId)).sort((a, b) => a.groupIndex - b.groupIndex || a.pos - b.pos || Number(a.id) - Number(b.id));
+    const pick = h('select', {}, ...opts.map(x => h('option', { value: x.id, selected: x.id === String(q.serviceId), textContent: `MC ${x.id} · ${x.name} · ${m2(x.unitCost)}/đv${stateOf(x)[1] === 'err' ? ' · ' + stateOf(x)[0] : ''}` })));
+    const checks = h('div', { className: 'svc-checks' }), err = h('div', { className: 'status err', hidden: true });
+    const btn = h('button', { type: 'button', className: 'btn btn-primary', textContent: 'Tạo đơn Baostar' });
+    let balance = null; call('balance').then(b => { balance = Number(b.balance); draw(); }).catch(e => { balance = e.message; draw(); });
+    const svc = () => list.find(x => x.id === pick.value);
+    const draw = () => {
+      const x = svc(), n = qtyOf(q), now = x ? estCost(x, n) : 0, quoted = q.cost || 0;
+      const [st, cls] = x ? stateOf(x) : ['Không còn máy chủ này', 'err'];
+      const rows = [
+        [cls === 'err' ? '✗' : '✓', `Máy chủ MC ${pick.value}: ${st}`, cls === 'err'],
+        [x && n >= x.min && n <= x.max ? '✓' : '✗', `Số lượng ${n.toLocaleString('vi-VN')} (cho phép ${x?.min ?? '?'}–${x?.max ?? '?'})`, !(x && n >= x.min && n <= x.max)],
+        [now > quoted * 1.001 && !q.costManual ? '!' : '✓', `Giá gốc bây giờ ≈ ${money(now)} (lúc báo giá ${money(quoted)}) · lãi ≈ ${money(q.sell - now)}${pct(q.sell, now)}`, q.sell - now < 0],
+        [typeof balance === 'number' ? (balance >= now ? '✓' : '✗') : '…', typeof balance === 'number' ? `Số dư Baostar ${money(balance)}` : balance ? 'Không đọc được số dư: ' + balance : 'Đang đọc số dư…', typeof balance === 'number' && balance < now],
+        ['💰', `Đã thu ${money(q.paidAmount)} / ${money(q.sell)}${q.payNote ? ' · ' + q.payNote : ''}`, false]];
+      checks.replaceChildren(...rows.map(([ic, t, bad]) => h('div', { className: bad ? 'neg' : '' }, h('strong', { textContent: ic + ' ' }), t)));
+      btn.disabled = cls === 'err' || !(x && n >= x.min && n <= x.max);
+    };
+    pick.onchange = draw;
+    btn.onclick = async () => {
+      const x = svc(), n = qtyOf(q); if (!x) return;
+      if (!confirm(`Tạo đơn trên Baostar?\n\nMC ${x.id} · ${x.name}\nSố lượng: ${n.toLocaleString('vi-VN')}\nLink: ${q.link}\nBaostar sẽ trừ khoảng ${money(estCost(x, n))}.`)) return;
+      btn.disabled = true; btn.textContent = 'Đang tạo đơn…'; err.hidden = true;
+      try {
+        const r = await call('add', { service: Number(x.id), link: q.link, quantity: n });
+        if (r && !r.order) r.order = r.order_id ?? r.orderId ?? r.id;
+        if (!r?.order) throw Error('Web dịch vụ không trả mã đơn.');
+        const cost = q.costManual && String(x.id) === String(q.serviceId) ? q.cost : estCost(x, n);
+        const order = { id: uid('ord'), at: Date.now(), updatedAt: Date.now(), source: 'service', provider: new URL(s.apiUrl).hostname, providerOrderId: String(r.order),
+          payCode: q.payCode, quoteAt: q.at, paidAmount: q.paidAmount, paidAt: q.paidAt, payNote: q.payNote || '',
+          serviceId: x.id, serviceName: x.name, displayName: q.displayName, packageId: q.packageId, link: q.link, customerKey: q.customerKey, pageKey: q.pageKey, pageName: q.pageName, pageAvatar: q.pageAvatar,
+          customer: { name: q.customer?.name || '', phone: '', address: '' }, items: [{ name: q.displayName, qty: n, price: q.sell / n, cost: cost / n }], costManual: q.costManual,
+          discount: 0, shipFee: 0, shipCost: 0, status: 'new', svcStatus: 'Pending', note: `Đơn dịch vụ #${r.order} · ${q.payCode}` };
+        await DB.set(ORDERS, [...await DB.get(ORDERS, []), order]);
+        await dropQuote(q.id);
+        if (q.customerKey) App.crm?.update?.(q.customerKey, { orderStatus: 'Đã đặt hàng' }).catch(() => {});
+        dlg.close(); toast(`Đã tạo đơn Baostar #${r.order}.`, 5000);
+        await refreshStatus([order]).catch(() => {});
+        App.tabs.services?.refresh?.();
+        invoiceDialog((await DB.get(ORDERS, [])).find(o => o.id === order.id) || order, 'paid');
+      } catch (e2) {
+        q.lastError = e2.message; await saveQuote(q); App.tabs.services?.refresh?.();
+        err.textContent = 'Chưa tạo được đơn: ' + e2.message + ' · Báo giá vẫn ở trạng thái "Đã thu, chưa tạo đơn".'; err.hidden = false; btn.disabled = false; btn.textContent = 'Thử lại';
+      }
+    };
+    dlg.append(h('div', { className: 'card-head' }, h('h3', { className: 'card-title', textContent: `Kiểm tra & tạo đơn · ${q.payCode}` }),
+        h('button', { type: 'button', className: 'icon-btn', 'aria-label': 'Đóng', textContent: '×', onclick: () => dlg.close() })),
+      h('p', { className: 'hint', textContent: `${q.customer?.name || 'Khách'} · ${q.displayName} · ${q.link}` }),
+      h('label', { className: 'field' }, 'Máy chủ (đổi được nếu máy chủ gốc bảo trì)', pick), checks, err,
+      h('div', { className: 'row', style: 'gap:8px;justify-content:flex-end' }, h('button', { type: 'button', className: 'btn btn-ghost', textContent: 'Để sau', onclick: () => dlg.close() }), btn));
+    document.body.append(dlg); dlg.showModal(); draw();
+  }
   async function markSent(o, kind) {
-    const all = await DB.get(ORDERS, []), x = all.find(y => y.id === o.id); if (!x) return;
-    x[kind === 'progress' ? 'progressSentAt' : 'invoiceSentAt'] = Date.now(); await DB.set(ORDERS, all); App.tabs.services?.refresh?.();
+    const field = kind === 'progress' ? 'progressSentAt' : kind === 'quote' ? 'sentAt' : 'invoiceSentAt';
+    const store = kind === 'quote' ? QUOTES : ORDERS, all = await DB.get(store, []), x = all.find(y => y.id === o.id); if (!x) return;
+    x[field] = Date.now(); await DB.set(store, all); App.tabs.services?.refresh?.();
   }
   async function openWeb() {
     const s = await settings();
@@ -390,21 +491,53 @@
 
   // ── Hộp thư: link khách gửi + nút tạo đơn ── (gắn dưới khung CRM của hội thoại)
   function inboxBox(ctx) {
-    const links = linksIn(ctx.messages);
-    return h('div', { className: 'svc-inbox' },
+    const links = linksIn(ctx.messages), qBox = h('div', { className: 'svc-inbox-quotes' });
+    if (ctx.key) quotes().then(qs => { const mine = qs.filter(q => q.customerKey === ctx.key);
+      qBox.replaceChildren(...mine.map(q => { const [st, cls] = quoteState(q); return h('div', { className: 'row', style: 'gap:6px;flex-wrap:wrap;align-items:center' },
+        h('strong', { textContent: q.payCode }), h('span', { textContent: `${q.displayName} · ${money(q.sell)}` }), h('span', { className: 'status svc-pill ' + cls, textContent: st }), quoteActions(q)); })); });
+    return h('div', { className: 'svc-inbox' }, qBox,
       h('div', { className: 'row', style: 'gap:6px;flex-wrap:wrap;align-items:center' },
         h('strong', { textContent: 'Dịch vụ' }),
-        h('button', { type: 'button', className: 'btn btn-soft btn-sm', textContent: '＋ Tạo đơn dịch vụ', onclick: () => createDialog(ctx, links[0] || '') })),
+        h('button', { type: 'button', className: 'btn btn-soft btn-sm', textContent: '＋ Báo giá dịch vụ', onclick: () => createDialog(ctx, links[0] || '') })),
       links.length ? h('div', { className: 'svc-links' }, ...links.slice(0, 5).map(l => h('div', { className: 'row', style: 'gap:6px' },
         h('a', { href: l, target: '_blank', rel: 'noopener noreferrer', className: 'hint', textContent: l.length > 60 ? l.slice(0, 57) + '…' : l, title: l }),
         h('button', { type: 'button', className: 'btn btn-ghost btn-sm', textContent: '📋 Copy', onclick: () => navigator.clipboard.writeText(l).then(() => toast('Đã copy link.')) }),
-        h('button', { type: 'button', className: 'btn btn-ghost btn-sm', textContent: 'Tạo đơn', onclick: () => createDialog(ctx, l) })))) : h('p', { className: 'hint', textContent: 'Chưa thấy link nào khách gửi trong hội thoại này.' }));
+        h('button', { type: 'button', className: 'btn btn-ghost btn-sm', textContent: 'Báo giá', onclick: () => createDialog(ctx, l) })))) : h('p', { className: 'hint', textContent: 'Chưa thấy link nào khách gửi trong hội thoại này.' }));
   }
 
   // ── Tab Dịch vụ ──
   const PERIODS = [['7d', '7 ngày'], ['30d', '30 ngày'], ['month', 'Tháng này'], ['all', 'Tất cả']];
   let period = '30d', q = '';
   const since = () => { const d = new Date(); if (period === '7d') return Date.now() - 7 * 864e5; if (period === '30d') return Date.now() - 30 * 864e5; if (period === 'month') return new Date(d.getFullYear(), d.getMonth(), 1).getTime(); return 0; };
+  const quoteState = q => q.state === 'paid' ? ['Đã thu, chưa tạo đơn', 'err'] : expired(q) ? ['Hết hạn', 'pending'] : q.paidAmount ? ['Thiếu ' + money(amountDue(q)), 'pending'] : ['Chờ thanh toán', 'pending'];
+  const quoteActions = q => h('div', { className: 'row', style: 'gap:4px;flex-wrap:wrap' },
+    q.state === 'paid' ? h('button', { type: 'button', className: 'btn btn-primary btn-sm', textContent: '🚀 Tạo đơn', onclick: () => confirmCreate(q) })
+      : h('button', { type: 'button', className: 'btn btn-primary btn-sm', textContent: '✅ Đã nhận tiền', onclick: () => paymentDialog(q) }),
+    q.state === 'quote' ? h('button', { type: 'button', className: 'btn btn-ghost btn-sm', title: q.sentAt ? 'Đã gửi lúc ' + fmtTime(q.sentAt) : 'Gửi báo giá cho khách', textContent: q.sentAt ? '📤 Gửi lại' : '📤 Gửi', onclick: () => invoiceDialog(q, 'quote') }) : null,
+    expired(q) ? h('button', { type: 'button', className: 'btn btn-ghost btn-sm', textContent: '⏱ Gia hạn 24h', onclick: async () => { q.expiresAt = Date.now() + QUOTE_TTL; await saveQuote(q); App.tabs.services?.refresh?.(); } }) : null,
+    h('button', { type: 'button', className: 'btn btn-ghost btn-sm', textContent: 'Huỷ', onclick: async () => {
+      if (!confirm(q.state === 'paid' || q.paidAmount ? `Huỷ báo giá ${q.payCode}? Khách đã chuyển ${money(q.paidAmount)}: nhớ hoàn tiền cho khách.` : `Huỷ báo giá ${q.payCode}?`)) return;
+      await dropQuote(q.id); if (q.customerKey) App.crm?.update?.(q.customerKey, { orderStatus: '' }).catch(() => {}); App.tabs.services?.refresh?.(); } }));
+  function drawQuotes(qs) {
+    const box = $('svQuotes'); if (!box) return;
+    const rank = q => q.state === 'paid' ? 0 : expired(q) ? 2 : 1;
+    const list = [...qs].sort((a, b) => rank(a) - rank(b) || b.at - a.at);
+    box.replaceChildren(h('div', { className: 'toolbar' }, h('h3', { className: 'card-title grow', textContent: 'Báo giá & chờ thanh toán' }),
+        h('span', { className: 'hint', textContent: 'Khách trả tiền trước → bấm "Đã nhận tiền" → kiểm tra → tạo đơn Baostar.' })),
+      list.length ? h('div', { className: 'scroll' }, h('table', {},
+        h('thead', {}, h('tr', {}, ...['Mã TT', 'Báo giá / hạn', 'Khách / Page', 'Dịch vụ', 'Link', 'SL', 'Khách trả', 'Lãi dự kiến', 'Trạng thái', ''].map(t => h('th', { textContent: t })))),
+        h('tbody', {}, ...list.map(q => { const [st, cls] = quoteState(q); return h('tr', { className: rank(q) === 2 ? 'svc-row off' : '' },
+          h('td', {}, h('strong', { textContent: q.payCode })),
+          h('td', {}, fmtTime(q.at), h('div', { className: 'hint', textContent: 'hạn ' + fmtTime(q.expiresAt) })),
+          h('td', {}, q.customer?.name || '—', h('div', { className: 'hint', textContent: App.pageById(q.pageKey)?.name || q.pageName || '' })),
+          h('td', {}, q.displayName, h('div', { className: 'hint', textContent: 'MC ' + q.serviceId })),
+          h('td', {}, q.link ? h('button', { type: 'button', className: 'btn btn-ghost btn-sm', title: q.link, textContent: '📋 Copy', onclick: () => navigator.clipboard.writeText(q.link).then(() => toast('Đã copy link.')) }) : ''),
+          h('td', { textContent: qtyOf(q).toLocaleString('vi-VN') }),
+          h('td', {}, money(q.sell), q.paidAmount ? h('div', { className: 'hint', textContent: 'đã nhận ' + money(q.paidAmount) }) : null),
+          h('td', { className: q.sell - q.cost < 0 ? 'neg' : '', textContent: money(q.sell - q.cost) }),
+          h('td', {}, h('span', { className: 'status svc-pill ' + cls, textContent: st }), q.lastError ? h('div', { className: 'neg hint', textContent: q.lastError }) : null, q.payNote ? h('div', { className: 'hint', textContent: q.payNote }) : null),
+          h('td', {}, quoteActions(q))); })))) : h('p', { className: 'hint', textContent: 'Chưa có báo giá nào đang chờ.' }));
+  }
   App.tab('services', {
     mount(el) {
       el.append(
@@ -414,8 +547,9 @@
           h('button', { className: 'btn btn-ghost', textContent: '↻ Cập nhật trạng thái', onclick: async () => { try { toast(`Đã cập nhật ${await refreshStatus()} đơn.`); this.refresh(); } catch (e) { toast(e.message, 6000); } } }),
           h('button', { className: 'btn btn-ghost', textContent: '＋ Thêm đơn theo mã', title: 'Đơn đã tạo thẳng trên web dịch vụ: nhập mã đơn để app theo dõi giá gốc, trạng thái', onclick: () => importById() }),
           h('button', { className: 'btn btn-ghost', textContent: 'Mở web dịch vụ ↗', onclick: () => openWeb() }),
-          h('button', { className: 'btn btn-primary', textContent: '＋ Tạo đơn', onclick: () => createDialog() })),
+          h('button', { className: 'btn btn-primary', textContent: '＋ Báo giá', onclick: () => createDialog() })),
         h('div', { className: 'kpis', id: 'svKpis' }),
+        h('div', { className: 'card', id: 'svQuotes' }),
         h('div', { className: 'card' },
           h('div', { className: 'toolbar' }, h('h3', { className: 'card-title grow', textContent: 'Đơn dịch vụ' }),
             h('input', { type: 'search', placeholder: '🔍 Khách, link, dịch vụ, mã đơn…', style: 'width:240px', oninput: e => { q = norm(e.target.value); this.refresh(); } })),
@@ -429,7 +563,9 @@
       const all = (await DB.get(ORDERS, [])).filter(o => o.source === 'service' && o.at >= from);
       const list = all.filter(o => !q || norm([o.customer?.name, o.link, o.serviceName, o.providerOrderId, App.pageById(o.pageKey)?.name].join(' ')).includes(q)).sort((a, b) => b.at - a.at);
       const sum = Pure.summarize(all), running = all.filter(o => ['new', 'shipping'].includes(o.status)).length;
-      $('svKpis').replaceChildren(...[['Đơn', all.length], ['Đang chạy', running], ['Doanh thu', money(sum.revenue)], ['Giá gốc', money(sum.cost)], ['Lời', money(sum.profit)]]
+      const qs = await quotes(), waiting = qs.filter(x => x.state === 'quote' && !expired(x));
+      drawQuotes(qs);
+      $('svKpis').replaceChildren(...[['Chờ thanh toán', `${waiting.length} · ${money(waiting.reduce((t, x) => t + amountDue(x), 0))}`], ['Đã thu, chưa tạo đơn', qs.filter(x => x.state === 'paid').length], ['Đơn', all.length], ['Đang chạy', running], ['Doanh thu', money(sum.revenue)], ['Giá gốc', money(sum.cost)], ['Lời', money(sum.profit)]]
         .map(([l, v]) => h('div', { className: 'kpi' }, h('div', { className: 'label', textContent: l }), h('div', { className: 'value', textContent: v }))));
       $('svOrders').replaceChildren(list.length ? h('table', {},
         h('thead', {}, h('tr', {}, ...['Tạo lúc', 'Khách / Page', 'Dịch vụ', 'Link', 'SL', 'Giá bán', 'Giá gốc', 'Lời', 'Trạng thái', 'Hoàn thành', 'Gửi khách'].map(t => h('th', { textContent: t })))),
@@ -444,7 +580,7 @@
           h('td', {}, h('span', { className: 'status ' + (o.status === 'done' ? 'ok' : o.status === 'cancelled' ? 'err' : 'pending'), textContent: statusVi(o.svcStatus) })),
           h('td', { textContent: o.completedAt ? fmtTime(o.completedAt) : '' }),
           h('td', {}, h('div', { className: 'row', style: 'gap:4px;flex-wrap:nowrap' },
-            h('button', { type: 'button', className: 'btn btn-ghost btn-sm', title: o.invoiceSentAt ? 'Đã gửi đơn lúc ' + fmtTime(o.invoiceSentAt) : 'Xuất đơn gửi khách', textContent: o.invoiceSentAt ? '📤 ✓' : '📤 Đơn', onclick: () => invoiceDialog(o, 'new') }),
+            h('button', { type: 'button', className: 'btn btn-ghost btn-sm', title: o.invoiceSentAt ? 'Đã gửi đơn lúc ' + fmtTime(o.invoiceSentAt) : 'Xuất đơn gửi khách', textContent: o.invoiceSentAt ? '📤 ✓' : '📤 Đơn', onclick: () => invoiceDialog(o, o.payCode ? 'paid' : 'new') }),
             h('button', { type: 'button', className: 'btn btn-ghost btn-sm', title: o.progressSentAt ? 'Đã báo tiến độ lúc ' + fmtTime(o.progressSentAt) : 'Báo tiến độ cho khách', textContent: '📊', onclick: async () => { await refreshStatus([o]).catch(() => {}); const f = (await DB.get(ORDERS, [])).find(y => y.id === o.id) || o; invoiceDialog(f, 'progress'); } })))); }))) : h('div', { className: 'empty', textContent: 'Chưa có đơn dịch vụ trong khoảng này. Tạo đơn từ Hộp thư (nút "＋ Tạo đơn dịch vụ") hoặc nút ＋ Tạo đơn.' }));
       drawSettings(s, this);
       if (s.apiKey) call('balance').then(b => { $('svBalance').textContent = `Số dư: ${Number(b.balance).toLocaleString('vi-VN')} ${b.currency || ''}`; }).catch(e => { $('svBalance').textContent = e.message; });
@@ -626,5 +762,5 @@
     if (s.apiKey) drawPrices(); else priceBox.replaceChildren(h('p', { className: 'hint', textContent: 'Nhập API key rồi Lưu để tải danh sách dịch vụ.' }));
     drawPkgs(); drawInvoiceSettings(s);
   }
-  App.services = { createDialog, inboxBox, refreshStatus, linksIn, call, openWeb, mapStatus, catalogProgress, noteLines, speedOf, invoiceDialog, invoiceText };
+  App.services = { createDialog, inboxBox, refreshStatus, linksIn, call, openWeb, mapStatus, catalogProgress, noteLines, speedOf, invoiceDialog, invoiceText, paymentDialog, confirmCreate, quotes };
 })();
