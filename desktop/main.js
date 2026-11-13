@@ -87,6 +87,8 @@ function wire(wc, win, asTab = true) {
 }
 
 if (!app.requestSingleInstanceLock()) app.quit();
+// Trang có "bạn có muốn rời trang?" (Business Suite đang soạn bài…) không được chặn app thoát: chặn thì bộ cập nhật không ghi đè được file.
+app.on('web-contents-created', (_e, wc) => wc.on('will-prevent-unload', ev => ev.preventDefault()));
 app.on('second-instance', () => {
   if (mainWindow) { if (mainWindow.isMinimized()) mainWindow.restore(); mainWindow.focus(); }
 });
@@ -283,7 +285,8 @@ app.whenReady().then(async () => {
   const getUpdater = () => {
     if (!updater) {
       updater = require('electron-updater').autoUpdater;
-      updater.autoDownload = true; updater.autoInstallOnAppQuit = true; updater.disableDifferentialDownload = true;
+      // Không tự cài lúc thoát app: tắt máy giữa lúc cài làm hỏng app (file app.asar còn 0 byte, mất app). Chỉ cài khi bấm Cập nhật.
+      updater.autoDownload = true; updater.autoInstallOnAppQuit = false; updater.disableDifferentialDownload = true;
       updater.on('update-downloaded', info => { downloaded = info.version; });
       updater.on('error', () => {}); // lỗi trả về qua lượt kiểm tra, không để văng thông báo lỗi của Electron
     }
@@ -308,7 +311,12 @@ app.whenReady().then(async () => {
     return checkUpdate();
   });
   // Cài im lặng rồi tự mở lại app: không hiện trình cài đặt, không phải bấm Next.
-  ipcMain.handle('update-install', e => { if (fromPage(e) && downloaded) getUpdater().quitAndInstall(true, true); });
+  // Đóng hẳn mọi cửa sổ trước (kể cả khung ẩn Business Suite / ChatGPT) để bộ cài ghi đè được file; còn tiến trình giữ file thì bộ cài hỏng giữa chừng.
+  ipcMain.handle('update-install', e => {
+    if (!fromPage(e) || !downloaded) return;
+    for (const w of BrowserWindow.getAllWindows()) if (!w.isDestroyed()) w.destroy();
+    getUpdater().quitAndInstall(true, true);
+  });
   layout();
   // Khoá app bằng mật khẩu (lớp phủ trên cùng); tạo sau mọi khung khác để luôn che được.
   const appLock = setupLock({ mainWindow, focusPage: () => pageView.webContents.focus(), sessions: [ses, metaSes] });
