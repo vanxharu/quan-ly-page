@@ -227,15 +227,56 @@ async function api(path, params = {}, method = 'GET', token = App.page()?.access
   const url = new URL(path.startsWith('http') ? path : App.GRAPH + path);
   let body;
   const enc = v => typeof v === 'object' ? JSON.stringify(v) : String(v);
-  if (params instanceof FormData) { body = params; body.append('access_token', token); }
+  if (params instanceof FormData) { body = params; body.set('access_token', token); }
   else if (method === 'GET' || method === 'DELETE') { for (const [k, v] of Object.entries(params)) url.searchParams.set(k, enc(v)); url.searchParams.set('access_token', token); }
   else { body = new URLSearchParams(); for (const [k, v] of Object.entries(params)) body.set(k, enc(v)); body.set('access_token', token); }
   const res = await fetch(url, { method, body, ...(options.signal?{signal:options.signal}:{}) });
   const json = await res.json().catch(() => ({ error: { message: `HTTP ${res.status}` } }));
   const limited=App.graphTraffic.observe(res,json.error,pageId);
   if(limited)throw limited;
-  if (json.error) throw Object.assign(new Error(json.error.error_user_msg || json.error.message), { code: json.error.code, sub: json.error.error_subcode });
+  if (json.error) {
+    // Token hết hạn (190): xin token mới ngầm rồi chạy lại đúng 1 lần với token mới của cùng tài khoản/Page.
+    if (Number(json.error.code) === 190 && !options.retried && token) {
+      let next = currentToken(token);
+      if (next === token) { await App.refreshToken().catch(() => {}); next = currentToken(token); } // chưa có token mới cho token này → xin
+      if (next === token) next = App.pages.find(p => String(p.id) === pageId)?.access_token;
+      if (next && next !== token) return api(path, params, method, next, { ...options, retried: true });
+    }
+    throw Object.assign(new Error(json.error.error_user_msg || json.error.message), { code: json.error.code, sub: json.error.error_subcode });
+  }
   return json;
+}
+// Token Facebook đăng nhập trong app chỉ sống ~1–2 giờ (lỗi "Session has expired"). Xin token mới bằng phiên Facebook sẵn có
+// (app Windows: khung ẩn dùng phiên của cột Meta; web: Facebook SDK), cập nhật token của mọi Page tại chỗ.
+// tokenAlias ghi token cũ → token mới, để lệnh đang chạy dở bằng token cũ đổi sang token mới mà không xin lại.
+// Trả false nếu Facebook đòi đăng nhập lại (khi đó hiện nút Đăng nhập lại).
+let tokenRefresh = null;
+const tokenAlias = new Map();
+const currentToken = t => { for (let i = 0; i < 20 && tokenAlias.has(t); i++) t = tokenAlias.get(t); return t; };
+App.refreshToken = () => tokenRefresh ||= (async () => {
+  let fresh = '';
+  if (window.metaDesktop?.refreshLogin) fresh = (await window.metaDesktop.refreshLogin({ appId: local.get('appId') || App.DEFAULT_APP_ID, configId: App.CONFIG_ID }).catch(() => ({})))?.token || '';
+  else if (window.FB) fresh = await new Promise(r => { try { FB.getLoginStatus(s => r(s.authResponse?.accessToken || ''), true); } catch { r(''); } });
+  if (!fresh) { askRelogin(); return false; }
+  const pages = await apiPaged('/me/accounts', { fields: 'id,access_token', limit: 100 }, fresh, 3);
+  const oldUser = App.userToken || local.get('fbTok'); // lúc mở app token đã lưu có thể đã hết hạn
+  if (oldUser && oldUser !== fresh) tokenAlias.set(oldUser, fresh);
+  for (const p of App.pages) { const n = pages.find(x => String(x.id) === String(p.id)); if (n?.access_token && n.access_token !== p.access_token) { tokenAlias.set(p.access_token, n.access_token); p.access_token = n.access_token; } }
+  App.userToken = fresh; local.set('fbTok', fresh);
+  return true;
+})().finally(() => { tokenRefresh = null; }); // lỗi dồn dập cùng lúc dùng chung một lần xin
+function askRelogin() {
+  if (document.getElementById('reloginBar')) return;
+  const bar = h('div', { id: 'reloginBar', className: 'status err', style: 'position:fixed;left:50%;top:60px;transform:translateX(-50%);z-index:90;display:flex;gap:10px;align-items:center;box-shadow:0 8px 24px #0004' },
+    'Phiên đăng nhập Facebook đã hết hạn.',
+    h('button', { className: 'btn btn-primary btn-sm', textContent: 'Đăng nhập lại', onclick: () => {
+      bar.remove();
+      const appId = local.get('appId') || App.DEFAULT_APP_ID;
+      if (window.metaDesktop?.loginFacebook) return window.metaDesktop.loginFacebook({ appId, configId: App.CONFIG_ID }); // xong thì app tự tải lại với token mới
+      try { FB.login(r => { if (r.authResponse) { tokenRefresh = null; App.refreshToken(); } }, { config_id: App.CONFIG_ID }); } catch {}
+    } }),
+    h('button', { className: 'btn btn-ghost btn-sm', textContent: '✕', 'aria-label': 'Đóng', onclick: () => bar.remove() }));
+  document.body.append(bar);
 }
 async function guard(target, fn) {
   try { await fn(); } catch (e) { target.replaceChildren(h('div', { className: 'status err', textContent: e.message })); }
@@ -585,9 +626,12 @@ async function startSession(userToken) {
     else if(e.rateLimited)local.set('fbTok',userToken);
     return false;
   }
+  userToken = currentToken(userToken); // token đã lưu hết hạn và vừa được làm mới trong lúc tải Page
   local.set('fbTok', userToken);
   $('token').value = '';
   App.userToken = userToken; // dùng để kết nối Page với máy chủ bot
+  // App Windows: làm mới token mỗi 45 phút, trước khi Facebook cho hết hạn (lịch đăng, hộp thư chạy ngầm không bị ngắt).
+  if (window.metaDesktop?.refreshLogin && !App.tokenTimer) App.tokenTimer = setInterval(() => App.refreshToken().catch(() => {}), 45 * 60e3);
   App.templateVars = (await DB.get('settings', {})).templateVars || {};
   const saved = await restoreSelectedPages();
   selected = new Set(saved.length ? saved : App.pages.map(p => p.id));

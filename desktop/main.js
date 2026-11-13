@@ -251,6 +251,29 @@ app.whenReady().then(async () => {
     if (!fromPage(e) || !/^\d+$/.test(String(a?.appId))) return;
     loginInBrowser(`https://www.facebook.com/dialog/oauth?client_id=${a.appId}${/^\d+$/.test(String(a.configId)) ? `&config_id=${a.configId}` : ''}`);
   });
+  // Token Facebook trong app chỉ sống ~1–2 giờ. Xin token mới ngầm: mở hộp thoại đăng nhập trong khung ẩn dùng phiên Facebook
+  // của cột Meta; app đã được cấp quyền thì Facebook chuyển thẳng về kèm token. Hỏi lại (cần bấm Tiếp tục) → trả rỗng sau 20 giây.
+  let refreshing = null;
+  ipcMain.handle('fb-refresh', (e, a = {}) => {
+    if (!fromPage(e) || !/^\d+$/.test(String(a.appId))) return {};
+    return refreshing ||= new Promise(resolve => {
+      const state = crypto.randomBytes(16).toString('hex');
+      const q = new URLSearchParams({ client_id: a.appId, redirect_uri: LOGIN_PAGE, response_type: 'token', state });
+      if (/^\d+$/.test(String(a.configId))) q.set('config_id', a.configId);
+      const win = new BrowserWindow({ show: false, webPreferences: { partition: META, offscreen: true, sandbox: true, contextIsolation: true } });
+      const done = token => { clearTimeout(timer); refreshing = null; if (!win.isDestroyed()) win.destroy(); resolve(token ? { token } : {}); };
+      const timer = setTimeout(() => done(''), 20000);
+      const check = (ev, url) => {
+        if (!String(url).startsWith(LOGIN_PAGE)) return;
+        ev?.preventDefault?.();
+        const h = new URLSearchParams(String(url).split('#')[1] || '');
+        done(h.get('state') === state ? h.get('access_token') : '');
+      };
+      for (const name of ['will-redirect', 'will-navigate']) win.webContents.on(name, check);
+      win.webContents.on('did-navigate', (_e, url) => check(null, url));
+      win.webContents.loadURL(`https://www.facebook.com/v25.0/dialog/oauth?${q}`).catch(() => {});
+    });
+  });
   ipcMain.on('tab-changed', (e, g) => { if (e.sender === pageView.webContents) { group = String(g); layout(); } });
   ipcMain.on('open-meta-inbox', (e, url) => { if (e.sender === pageView.webContents) openMetaInbox(url); });
   // Cập nhật: kiểm tra GitHub Releases, tải về, rồi khởi động lại để cài khi người dùng bấm.

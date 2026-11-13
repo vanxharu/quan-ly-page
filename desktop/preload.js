@@ -10,6 +10,7 @@ contextBridge.exposeInMainWorld('metaDesktop', {
   openThread: args => ipcRenderer.invoke('meta-open-thread', args),
   composePost: args => ipcRenderer.invoke('meta-compose', args),
   loginFacebook: args => ipcRenderer.send('fb-login', args),
+  refreshLogin: args => ipcRenderer.invoke('fb-refresh', args),
   lockSettings: () => ipcRenderer.send('app-lock', 'settings'),
   lockNow: () => ipcRenderer.send('app-lock', 'now'),
   lockState: () => ipcRenderer.invoke('lock-state'),
