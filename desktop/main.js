@@ -12,6 +12,12 @@ const EXT = app.isPackaged ? path.join(process.resourcesPath, 'extension') : pat
 const ICON = path.join(__dirname, 'icon.png');
 // Facebook/Google chặn đăng nhập trong "trình duyệt nhúng": bỏ chữ Electron khỏi User-Agent để giống Chrome.
 app.setAppUserModelId('com.vanxharu.metaassistant'); // biểu tượng + nhóm đúng trên taskbar Windows
+// Windows tự "cho ngủ" cửa sổ bị app khác che kín hoặc bị thu nhỏ (đúng lúc app tự khoá) → ChatGPT trong Studio AI
+// ngừng vẽ/đếm giờ và lượt tạo bài, tạo ảnh bị treo. Tắt hẳn để chạy ngầm như khi đang mở.
+app.commandLine.appendSwitch('disable-renderer-backgrounding');
+app.commandLine.appendSwitch('disable-background-timer-throttling');
+app.commandLine.appendSwitch('disable-backgrounding-occluded-windows');
+app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion,IntensiveWakeUpThrottling');
 app.userAgentFallback = app.userAgentFallback.replace(/ (Electron|meta-assistant)\/\S+/g, '');
 
 // Đăng nhập Facebook / ChatGPT phải mở trong app (cần window.opener); link khác mở bằng trình duyệt mặc định.
@@ -47,7 +53,7 @@ app.removeAsDefaultProtocolClient(PROTOCOL);
 let extensions, mainWindow, pageView, panelView, metaView, side = 'studio', group = '', studio; // side: cột phải 'studio' | 'meta' | ''; group: nhóm tab đang mở trên trang
 function newWindow(url, opts = {}) {
   const win = new BrowserWindow({ width: 1280, height: 860, icon: ICON, autoHideMenuBar: true, show: false, ...opts,
-    webPreferences: { sandbox: true, contextIsolation: true } });
+    webPreferences: { sandbox: true, contextIsolation: true, backgroundThrottling: false } });
   wire(win.webContents, win);
   win.once('ready-to-show', () => win.show());
   if (url) win.loadURL(url);
