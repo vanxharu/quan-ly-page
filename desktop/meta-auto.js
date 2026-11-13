@@ -2,7 +2,8 @@
 //  - lookupProfile: mở hội thoại của khách trong một khung ẩn, đọc ảnh đại diện + UID (link trang cá nhân);
 //  - composePost: mở trình soạn bài, điền sẵn nội dung + ảnh (qua debugger), người dùng bật nút Gửi tin nhắn / hẹn giờ rồi bấm Đăng.
 // Mỗi lần chỉ làm một việc, có nghỉ giữa các lượt, để giống thao tác người thật.
-const { clipboard, nativeImage } = require('electron');
+const { clipboard, nativeImage, app } = require('electron');
+const fs = require('fs'), path = require('path');
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const isLogin = url => /\/(login|checkpoint)|loginpage|two_step_verification/i.test(url);
 
@@ -276,6 +277,10 @@ function createMetaAuto({ worker, composer, metaView, showMeta = () => () => {},
       buttons: [...box.querySelectorAll('[role="button"],button,[aria-label]')].map(b => b.getAttribute('aria-label') || '').filter(Boolean).slice(0, 15) };
   }
   const findComposer = async (wc, wait = 10000) => {
+    // Khung ẩn bị coi là "không hiện" → Meta có thể chưa vẽ ô trả lời. Giả như đang hiện và có focus.
+    const dbg = wc.debugger;
+    await dbg.sendCommand('Emulation.setFocusEmulationEnabled', { enabled: true }).catch(() => {});
+    await dbg.sendCommand('Page.setWebLifecycleState', { state: 'active' }).catch(() => {});
     const end = Date.now() + wait; let r = null;
     do { r = await wc.executeJavaScript(`(${markComposer})()`).catch(() => null); if (r) return r; await sleep(700); } while (Date.now() < end);
     return null;
@@ -284,6 +289,25 @@ function createMetaAuto({ worker, composer, metaView, showMeta = () => () => {},
   const whyNoComposer = wc => wc.executeJavaScript(`(() => { const re = /không thể (trả lời|nhắn|gửi)|can.?t (reply|message|send)|unable to (reply|message)|7 ngày|24 giờ|7 days|24 hours|đã chặn|blocked|không còn khả dụng|unavailable/i;
     const hits = [...document.querySelectorAll('div,span')].filter(el => !el.childElementCount && re.test(el.innerText || '') && el.getBoundingClientRect().width > 0 && el.getBoundingClientRect().left > innerWidth * 0.25);
     return hits.map(el => el.innerText.trim()).filter((t, i, a) => t.length < 300 && a.indexOf(t) === i).slice(0, 2).join(' / '); })()`).catch(() => '');
+  // Ghi ảnh chụp + cấu trúc trang của khung ẩn ra Downloads/GetHelps-debug để tìm ô trả lời khi Meta đổi giao diện.
+  const dumpPage = async (wc, tag) => {
+    try {
+      const dir = path.join(app.getPath('downloads'), 'GetHelps-debug'); fs.mkdirSync(dir, { recursive: true });
+      const base = path.join(dir, `${tag}-${new Date().toISOString().replace(/[:.]/g, '-')}`);
+      const img = await wc.capturePage().catch(() => null); if (img) fs.writeFileSync(base + '.png', img.toPNG());
+      const info = await wc.executeJavaScript(`(() => {
+        const vis = el => { const r = el.getBoundingClientRect(); return [Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height)]; };
+        const edit = [...document.querySelectorAll('[contenteditable], textarea, input, [role="textbox"]')].map(el => ({ tag: el.tagName, ce: el.getAttribute('contenteditable'), role: el.getAttribute('role'), type: el.type, label: el.getAttribute('aria-label') || el.getAttribute('placeholder') || '', box: vis(el) }));
+        const btns = [...document.querySelectorAll('[aria-label]')].filter(el => el.getBoundingClientRect().left > innerWidth * 0.25).map(el => el.getAttribute('aria-label') + ' @' + vis(el).join(',')).slice(0, 120);
+        const frames = [...document.querySelectorAll('iframe')].map(f => f.src.slice(0, 120));
+        const surfaces = [...new Set([...document.querySelectorAll('[data-surface]')].map(e => e.getAttribute('data-surface').split(':').slice(-2).join(':')))].slice(0, 80);
+        const shadows = [...document.querySelectorAll('*')].filter(e => e.shadowRoot).length;
+        return JSON.stringify({ url: location.href, size: [innerWidth, innerHeight], visibility: document.visibilityState, focus: document.hasFocus(), edit, btns, frames, surfaces, shadows,
+          bottomText: [...document.querySelectorAll('div,span')].filter(e => !e.childElementCount && e.getBoundingClientRect().top > innerHeight * 0.6 && e.getBoundingClientRect().left > innerWidth * 0.25).map(e => e.innerText.trim()).filter(Boolean).slice(0, 60) }, null, 1); })()`).catch(e => 'lỗi: ' + e.message);
+      fs.writeFileSync(base + '.json', String(info));
+      return dir;
+    } catch { return ''; }
+  };
   const describe = c => c ? `ô nhập: ${c.tag}${c.label ? ' "' + c.label + '"' : ''} · ô file: ${c.files} · nút: ${c.buttons.join(' | ') || '—'}` : 'không thấy ô nhập';
   // Đưa ảnh vào khung trả lời, thử lần lượt: ô file → giả dán → giả kéo-thả → nút đính kèm → dán clipboard thật. Ảnh hiện trong vùng soạn mới tính là xong.
   const attachImage = async (wc, image) => {
@@ -294,7 +318,7 @@ function createMetaAuto({ worker, composer, metaView, showMeta = () => () => {},
     const pics = () => wc.executeJavaScript(`(() => { const box = document.querySelector('[data-ga-composer]'); return box ? box.querySelectorAll('img, video, [style*="background-image"]').length : 0; })()`).catch(() => 0);
     const comp = await findComposer(wc);
     attachImage.last = { tried, comp };
-    if (!comp) { const why = await whyNoComposer(wc); tried.push(why ? 'Meta báo: ' + why : 'trang không có ô trả lời'); attachImage.locked = true; return false; }
+    if (!comp) { const why = await whyNoComposer(wc), dir = await dumpPage(wc, 'khong-o-nhap'); tried.push(why ? 'Meta báo: ' + why : 'trang không có ô trả lời'); if (dir) tried.push('đã lưu ảnh chụp vào ' + dir); attachImage.locked = true; return false; }
     attachImage.locked = false;
     const before = await pics();
     const waitPreview = async () => { for (let i = 0; i < 10; i++) { await sleep(500); if (await pics() > before) return true; } return false; };
@@ -364,11 +388,11 @@ function createMetaAuto({ worker, composer, metaView, showMeta = () => () => {},
     const picsBefore = myPics(await read());
     if (image && !await attachImage(wc, image)) {
       const d = attachImage.last;
-      if (attachImage.locked) return { error: `Business Suite không cho trả lời hội thoại này (không có ô nhập tin). ${d?.tried.join(' · ')}. Thường do khách nhắn lần cuối đã quá 7 ngày: chờ khách nhắn lại, hoặc liên hệ qua Zalo/SĐT.` };
+      if (attachImage.locked) return { error: `Không thấy ô nhập tin trong Business Suite (khung ẩn). ${d?.tried.join(' · ')}` };
       return { error: `Không đưa được ảnh vào Business Suite. [${d?.tried.join(' · ')} · ${describe(d?.comp)}]` };
     }
     const comp = await findComposer(wc, image ? 2000 : 10000);
-    if (!comp) { const why = await whyNoComposer(wc); return { error: `Business Suite không cho trả lời hội thoại này (không có ô nhập tin).${why ? ' Meta báo: ' + why + '.' : ''} Thường do khách nhắn lần cuối đã quá 7 ngày: chờ khách nhắn lại, hoặc liên hệ qua Zalo/SĐT.` }; }
+    if (!comp) { const why = await whyNoComposer(wc), dir = await dumpPage(wc, 'khong-o-nhap'); if (dir) return { error: `Không thấy ô nhập tin trong Business Suite.${why ? ' Meta báo: ' + why + '.' : ''} Đã lưu ảnh chụp vào ${dir}` }; return { error: `Business Suite không cho trả lời hội thoại này (không có ô nhập tin).${why ? ' Meta báo: ' + why + '.' : ''} Thường do khách nhắn lần cuối đã quá 7 ngày: chờ khách nhắn lại, hoặc liên hệ qua Zalo/SĐT.` }; }
     if (!await mouse(wc, { selector: '[data-ga-editor]' })) return { error: `Không bấm được ô nhập tin của Business Suite. [${describe(comp)}]` };
     await sleep(300);
     const lines = text ? text.split('\n') : [];
