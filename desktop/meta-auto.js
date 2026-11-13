@@ -291,12 +291,14 @@ function createMetaAuto({ worker, composer, metaView, showMeta = () => () => {},
     await sleep(300);
     await dbg.sendCommand('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Enter', windowsVirtualKeyCode: 13, text: '\r', unmodifiedText: '\r' });
     await dbg.sendCommand('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Enter', windowsVirtualKeyCode: 13 });
-    const tail = lines.filter(Boolean).pop();
-    for (let i = 0; i < 20; i++) { // ảnh tải lên lâu hơn chữ
+    // So khớp bỏ khoảng trắng: Business Suite gộp/bỏ dấu cách đầu dòng (vd dòng thụt lề "   Nội dung CK") nên so nguyên văn sẽ trượt.
+    const norm = t => String(t || '').replace(/\s+/g, '').toLowerCase();
+    const tail = norm(lines.filter(l => l.trim()).pop()).slice(-40);
+    for (let i = 0; i < (image ? 40 : 20); i++) { // ảnh tải lên lâu hơn chữ
       await sleep(800);
       const r = await read();
-      const last = r?.messages?.filter(m => m.mine && m.text).pop();
-      if ((!tail || (last && last.text.includes(tail))) && (!image || myPics(r) > picsBefore)) return { done: true, ...r };
+      const mine = (r?.messages || []).filter(m => m.mine && m.text).slice(-3);
+      if ((!tail || mine.some(m => norm(m.text).includes(tail))) && (!image || myPics(r) > picsBefore)) return { done: true, ...r };
     }
     return { error: 'Đã bấm gửi nhưng chưa thấy tin trong Business Suite — kiểm tra lại trong cột Meta trước khi gửi lại.' };
   });

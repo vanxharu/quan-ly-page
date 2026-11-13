@@ -236,3 +236,15 @@ td.num.neg{font-weight:700}
 .svc-note-fold{margin-top:6px}
 .svc-note-fold>summary{cursor:pointer;font-size:11.5px;font-weight:700;color:var(--primary);margin-bottom:6px}
 .svc-dialog .svc-notes{padding:8px 10px}
+/* Đơn nhiều dịch vụ + số lượng từng cảm xúc */
+.svc-cart,.svc-lines{display:flex;flex-direction:column;gap:4px;margin:6px 0;padding:8px;border:1px solid var(--border,#2a2f3a);border-radius:10px;background:color-mix(in srgb,var(--accent,#6c5ce7) 6%,transparent)}
+.svc-cart-head{font-size:13px;margin-bottom:2px}
+.svc-line{display:flex;align-items:center;gap:8px;padding:5px 6px;border-radius:8px;background:var(--surface,rgba(255,255,255,.03))}
+.svc-line.done{opacity:.75}.svc-line.bad{outline:1px solid #e5484d66}
+.svc-line .cp-main{flex:1;min-width:0;display:flex;flex-direction:column}
+.svc-line .cp-sub{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.svc-line-no{width:20px;height:20px;border-radius:50%;display:grid;place-items:center;font-size:11px;font-weight:700;background:var(--accent,#6c5ce7);color:#fff;flex:none}
+.svc-react{margin:6px 0;padding:8px;border:1px dashed var(--border,#2a2f3a);border-radius:10px}
+.svc-react-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(92px,1fr));gap:6px;margin-top:6px}
+.svc-react-cell{display:flex;flex-direction:column;gap:2px;font-size:12px;font-weight:600}
+.svc-react-cell input{width:100%}

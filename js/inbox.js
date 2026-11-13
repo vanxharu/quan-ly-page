@@ -299,6 +299,7 @@
       if (S.conv === c) { if ($('ibText').value.trim() === text && S.image === image) { $('ibText').value = ''; S.image = ''; S.tpl = null; drawAttach(); await saveDraft(); } drawBs(c, r); }
       bsCache.delete(c.page.id);
     } catch (e) {
+      S.sendError = e.message;
       if (S.conv === c) $('ibThread').append(h('div', { className: 'status err' }, e.message));
       else toast(`${c.other.name}: ${e.message}`, 7000);
     } finally { S.sending = false; updateSendState(); }
@@ -672,12 +673,15 @@
   // Tab khác (vd Dịch vụ › gửi đơn cho khách) gửi tin + ảnh vào đúng hội thoại đang mở; khác khách thì không gửi.
   App.inbox.compose = async ({ key, text = '', image = '', autoSend = true }) => {
     const c = S.conv;
-    if (!c || !key || c.key !== key || !S.draftReady || S.sending) return false;
+    if (!c || !key || c.key !== key) return 'Hội thoại của khách không còn mở trong Hộp thư.';
+    if (!S.draftReady || S.sending) return 'Hộp thư đang bận gửi tin khác, thử lại sau vài giây.';
     $('ibText').value = text; S.image = image; S.tpl = null; drawAttach(); await saveDraft(); updateSendState();
     if (!autoSend) return true;
+    S.sendError = '';
     await send();
     // send() tự bắt lỗi và chỉ xoá ô nhập khi gửi thành công → còn chữ/ảnh nghĩa là chưa gửi được.
-    return S.conv === c && !$('ibText').value.trim() && !S.image;
+    if (S.conv === c && !$('ibText').value.trim() && !S.image) return true;
+    return S.sendError || 'Chưa gửi được (nội dung vẫn nằm trong ô nhập của Hộp thư).';
   };
   App.inbox.openKey = () => S.conv?.key || '';
   async function send() {
@@ -708,7 +712,7 @@
           if ((draft.text || '').trim() === text) await DB.set(draftKey(c), { ...draft, text: '' });
         }
       }
-      const message = (e.partialTextSent ? 'Chữ đã gửi, nhưng ảnh chưa gửi được. Gửi lại ảnh để tránh lặp nội dung. ' : '') + (e.window ? e.message : e.sub === 2018278 ? 'Đã quá 24 giờ kể từ tin cuối của khách, Meta không cho Page nhắn tiếp.' : e.message) + (e.code ? ` (mã ${e.code}${e.sub ? '/' + e.sub : ''})` : '');
+      const message = S.sendError = (e.partialTextSent ? 'Chữ đã gửi, nhưng ảnh chưa gửi được. Gửi lại ảnh để tránh lặp nội dung. ' : '') + (e.window ? e.message : e.sub === 2018278 ? 'Đã quá 24 giờ kể từ tin cuối của khách, Meta không cho Page nhắn tiếp.' : e.message) + (e.code ? ` (mã ${e.code}${e.sub ? '/' + e.sub : ''})` : '');
       if (S.conv && draftKey(S.conv) === draftKey(c)) {
         $('ibThread').append(h('div', { className: 'status err' }, message,
           e.window || Number(e.sub) === 2018300 ? h('div', { style: 'margin-top:6px' }, App.metaLink(App.businessInboxUrl(c.page.id, c.other.id), 'Mở hội thoại trong Business Suite ↗')) : null));
