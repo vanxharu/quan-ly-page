@@ -6,6 +6,7 @@
   if (window.__metaAssistantReader) return;
   window.__metaAssistantReader = true;
   const root = document.documentElement;
+  root.setAttribute('data-ma-reader', '1'); // để tiện ích biết đoạn đọc đã chạy trong trang
   const capturing = () => root.hasAttribute('data-ma-capture');
   const keep = text => { if (typeof text === 'string' && text) root.setAttribute('data-ma-copied', text.slice(-500000)); };
   const cb = navigator.clipboard;
@@ -24,6 +25,8 @@
       let text = '';
       try { text = viewOf(el)?.state?.doc?.toString?.() || ''; } catch {}
       if (text && el.getAttribute('data-ma-full') !== text) el.setAttribute('data-ma-full', text);
+      // Chẩn đoán: tên các thuộc tính nội bộ CodeMirror gắn trên phần tử (để biết đổi phiên bản).
+      if (!text) el.setAttribute('data-ma-keys', Object.keys(el).filter(k => /^cm|^__react/i.test(k)).join(',').slice(0, 200));
     }
   };
   setInterval(dump, 1000); dump();
