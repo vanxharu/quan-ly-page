@@ -281,8 +281,13 @@ function createMetaAuto({ worker, composer, metaView, showMeta = () => () => {},
     const dbg = wc.debugger;
     await dbg.sendCommand('Emulation.setFocusEmulationEnabled', { enabled: true }).catch(() => {});
     await dbg.sendCommand('Page.setWebLifecycleState', { state: 'active' }).catch(() => {});
-    const end = Date.now() + wait; let r = null;
-    do { r = await wc.executeJavaScript(`(${markComposer})()`).catch(() => null); if (r) return r; await sleep(700); } while (Date.now() < end);
+    const end = Date.now() + wait; let r = null, tookOver = false;
+    do {
+      r = await wc.executeJavaScript(`(${markComposer})()`).catch(() => null); if (r) return r;
+      // Meta Business AI đang trả lời hội thoại này → ô trả lời bị ẩn, chỉ có nút "Bạn hãy tự phản hồi". Bấm để giành lại quyền trả lời.
+      if (!tookOver && await mouse(wc, { text: /^(bạn hãy )?tự phản hồi$|^reply yourself$|^take over$|^tự trả lời$/i.source })) { tookOver = true; await sleep(1500); continue; }
+      await sleep(700);
+    } while (Date.now() < end);
     return null;
   };
   // Không có ô trả lời: thường do Meta khoá hội thoại (khách nhắn lần cuối quá 7 ngày, bị chặn…). Đọc dòng thông báo của Meta để báo đúng lý do.
