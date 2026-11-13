@@ -1,5 +1,5 @@
 (() => {
-  const $=id=>document.getElementById(id),panelId=crypto.randomUUID(),P=MetaAIProtocol,UI_VERSION='2.5.7';
+  const $=id=>document.getElementById(id),panelId=crypto.randomUUID(),P=MetaAIProtocol,UI_VERSION='2.5.8';
   $('appVersion').textContent='v'+UI_VERSION;
   $('postPrompt').textContent=P.POST_PROMPT;$('imagePrompt').textContent=P.IMAGE_PROMPT;
   let settingsKey='',updating=false,state={},catalogStamp=0,choices={},loadTimer,view='compose',transport='embedded',frameReady=false,frameLoaded=false,frameDelivered=false,pendingRun=null,frameTimer,runAckTimer,frameAck=false,frameClaimed=false,lastFrameInfo=null,versionMismatch=false,frameNavigationReady=false,bufferedReady=null,frameJobId='';
@@ -16,6 +16,9 @@
   function applyTheme(){const theme=state.studioTheme||state.pageCatalog?.theme||'light';document.documentElement.dataset.theme=theme;if(frameReady&&frameLoaded)$('gptFrame').contentWindow.postMessage({source:'META_STUDIO_PANEL',type:'FRAME_THEME',theme},'https://chatgpt.com');$('themeToggle').textContent=theme==='dark'?'☼':'☾';$('themeToggle').title=theme==='dark'?'Chuyển sang sáng, đồng bộ với web':'Chuyển sang tối, đồng bộ với web';}
   function footer(){$('updateExtension').disabled=!!busy();$('updateExtension').textContent=updating?'Đang cập nhật…':'Cập nhật';const n=ready().length,active=busy();$('generate').hidden=view!=='compose'||!!n;$('generate').disabled=!!active||!!n||versionMismatch;$('generate').textContent=updating?'Đang cập nhật…':active?'Đang tạo…':`✦ Tạo${selected().length?' '+selected().length*count():''} ${$('images').checked?'bài & ảnh':'bài viết'}`;$('transfer').hidden=view==='compose'&&!n;$('transfer').disabled=updating||!n||!!state.pendingTransfer;$('transfer').textContent=state.pendingTransfer?'Đang chờ web xác nhận…':n?`Đưa ${n} bản nháp sang web ↗`:'Chưa có bài sẵn sàng';$('cancel').hidden=!generating();$('transferHint').textContent=n?'Giữ đúng Page · Chuyển vào danh sách chờ duyệt':active?((state.panelJob?.transport||transport)==='embedded'?'Giữ bảng mở khi GPT đang tạo · Nháp tự lưu':'Đang xử lý · Không giới hạn thời gian chờ'):'Tạo từng bài + ảnh · Lưu trước khi tạo tiếp';}
   function scope(){$('historyHint').textContent='Ghi nhớ tối đa 8 bài gần đây mỗi Page · Từng bài và ảnh được lưu trước khi tạo tiếp.';$('selectedCount').textContent=`${selected().length} Page đã chọn`;$('scope').textContent=`${selected().length} Page × ${count()} bài = ${selected().length*count()} bài riêng. Tạo lần lượt từng bài và ảnh; tự lưu sau mỗi bài.`;footer();}
+  // Page đang chọn trên app/website → tự tick đúng các Page đó ở Studio mỗi khi lựa chọn trên app đổi (không đổi giữa lúc đang tạo bài).
+  let appSelection='';
+  function followAppSelection(){const pages=state.pageCatalog?.pages||[],sig=pages.filter(p=>p.selected).map(p=>p.id).join();if(!sig||sig===appSelection||busy())return;appSelection=sig;for(const p of pages)choices[p.id]={...(choices[p.id]||{index:0}),checked:p.selected};remember().catch(()=>{});}
   async function remember(){await chrome.storage.local.set({studioChoices:choices});scope();}
   function drawPages(){
     const pages=state.pageCatalog?.pages||[],search=normalized($('pageSearch').value);
@@ -79,7 +82,7 @@
   }
   function progressVisibility(){const active=generating(),job=state.panelJob;$('progressBox').hidden=(!job&&!state.externalRunning)||(!active&&(job?.status==='done'||!['gpt','drafts'].includes(view)));}
   async function load(){
-    state=await call('PANEL_STATUS');drawSettings();versionMismatch=state.version!==UI_VERSION;if(versionMismatch)notice('Bộ nền đang chạy bản '+(state.version||'không rõ')+'. Bấm Tải lại tiện ích tại chrome://extensions rồi mở bảng lại; F5 website không cập nhật bộ nền.',true);applyTheme();if(catalogStamp!==state.pageCatalog?.updatedAt){catalogStamp=state.pageCatalog?.updatedAt;}drawPages();
+    state=await call('PANEL_STATUS');drawSettings();versionMismatch=state.version!==UI_VERSION;if(versionMismatch)notice('Bộ nền đang chạy bản '+(state.version||'không rõ')+'. Bấm Tải lại tiện ích tại chrome://extensions rồi mở bảng lại; F5 website không cập nhật bộ nền.',true);applyTheme();if(catalogStamp!==state.pageCatalog?.updatedAt){catalogStamp=state.pageCatalog?.updatedAt;}followAppSelection();drawPages();
     const job=state.panelJob,active=generating(),locked=busy();['gptHome','customPostPrompt','customImagePrompt','useReddit','saveSettings','resetSettings'].forEach(id=>$(id).disabled=!!locked);if(job?.transport==='embedded'&&job.status==='running'&&job.frameClaimed){frameAck=true;frameClaimed=true;clearTimeout(runAckTimer);if(pendingRun?.id===job.id)pendingRun=null;$('frameStatus').textContent='Đang theo dõi lượt tạo';}document.querySelectorAll('#pages input,#pages select').forEach(el=>el.disabled=!!locked);$('selectAll').disabled=$('clearSelection').disabled=!!locked;
     $('gptMode').disabled=!!locked;$('reloadFrame').disabled=!!locked;progressVisibility();$('progressBox').dataset.state=job?.status||'';
     $('progressTitle').textContent=active?'Đang tạo nội dung':job?.status==='error'?'Lượt tạo trước cần kiểm tra':'Bản nháp đã lưu';const total=job?.input.items.length||1,complete=job?.completedKeys?.length||0;$('progress').value=Math.round(100*complete/total);$('loading').hidden=!active;$('progressCount').textContent=`${complete}/${job?.input.items.length||0}`;
@@ -109,7 +112,7 @@
   $('generate').onclick=async()=>{try{
     const pages=selected(),n=count();if(!pages.length)throw Error('Chọn ít nhất một Page.');if(!Number.isSafeInteger(n)||!Number.isSafeInteger(pages.length*n))throw Error('Số bài phải là số nguyên dương hợp lệ.');
     const items=[];for(const page of pages)for(let i=0;i<n;i++)items.push({key:'post-'+crypto.randomUUID(),pageId:page.id,pageName:page.name});
-    if(versionMismatch)throw Error('Cần tải lại toàn bộ tiện ích để nạp bộ nền 2.5.7.');
+    if(versionMismatch)throw Error('Cần tải lại toàn bộ tiện ích để nạp bộ nền 2.5.8.');
     $('generate').disabled=true;const result=await call('PANEL_GENERATE',{payload:{items,images:$('images').checked},transport,panelId});notice('');if(transport==='embedded'){if(!result.runJob)throw Error('Bộ nền chưa trả lệnh cho khung nhúng. Cần tải lại tiện ích.');await mountFrame(result.runJob);}switchView('gpt');await load();
   }catch(e){notice(e.message,true);await load().catch(()=>{});}};
   $('cancel').onclick=async()=>{try{pendingRun=null;const id=state.panelJob?.id;await call('PANEL_CANCEL');if(frameReady&&id)$('gptFrame').contentWindow.postMessage({source:'META_STUDIO_PANEL',type:'FRAME_CANCEL',jobId:id},'https://chatgpt.com');await load();}catch(e){notice(e.message,true);}};
