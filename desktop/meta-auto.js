@@ -232,6 +232,12 @@ function createMetaAuto({ worker, composer, metaView, showMeta = () => () => {},
     // Đang ở hộp thư của đúng Page (vd vừa mở hội thoại): đọc danh sách tại chỗ, không tải lại trang → hội thoại đang theo dõi vẫn giữ.
     const here = wc.getURL().includes(`asset_id=${pageId}`) && await wc.executeJavaScript(`!!document.querySelector('[data-maiba-contact-id]')`).catch(() => false);
     if (!here) { openedThread = ''; await wc.loadURL(`https://business.facebook.com/latest/inbox/messenger?asset_id=${pageId}&mailbox_id=${pageId}`).catch(() => {}); }
+    else { // lần đọc trước đã cuộn danh sách xuống: cuộn về đầu để lấy hội thoại mới nhất
+      await wc.executeJavaScript(`(() => { let box = document.querySelector('[data-maiba-contact-id]');
+        while (box && !(box.scrollHeight > box.clientHeight + 5 && /auto|scroll/.test(getComputedStyle(box).overflowY))) box = box.parentElement;
+        if (box) box.scrollTop = 0; })()`).catch(() => {});
+      await sleep(1200);
+    }
     const seen = new Map(), started = Date.now();
     // Business Suite trong khung ẩn có khi tải 15–20 giây: còn vòng xoay (progressbar / aria-busy) và chưa có dòng nào thì chờ tiếp, tối đa 30 giây.
     const loading = () => wc.executeJavaScript(`!!document.querySelector('[role="progressbar"],[aria-busy="true"]') && !document.querySelector('[data-maiba-contact-id]')`).catch(() => true);
