@@ -28,7 +28,7 @@ if (mode === 'unlock') {
     const form = el('form', { style: 'display:grid;gap:12px' },
       s.enabled ? el('label', {}, 'Mật khẩu hiện tại', cur) : '',
       el('label', {}, s.enabled ? 'Mật khẩu mới (để trống nếu giữ nguyên)' : 'Mật khẩu mới (ít nhất 4 ký tự)', next), el('label', {}, 'Nhập lại mật khẩu mới', again),
-      el('label', { className: 'check' }, onMin, 'Khoá khi thu nhỏ app hoặc khoá màn hình Windows'),
+      el('label', { className: 'check' }, onMin, 'Khoá khi thu nhỏ app, chuyển sang app khác hoặc khoá màn hình Windows'),
       el('label', {}, 'Tự khoá khi không dùng máy', idle), err,
       el('div', { className: 'row' }, s.enabled ? el('button', { type: 'button', id: 'off' }, 'Tắt mật khẩu') : '', el('button', { type: 'button', id: 'cancel' }, 'Huỷ'), el('button', { className: 'primary', type: 'submit' }, 'Lưu')));
     form.onsubmit = async e => { e.preventDefault(); if (next.value !== again.value) return err.textContent = 'Hai lần nhập mật khẩu mới không khớp.';

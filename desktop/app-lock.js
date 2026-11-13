@@ -1,6 +1,6 @@
 // Khoá app bằng mật khẩu: lớp phủ che toàn bộ cửa sổ khi mở app, khi thu nhỏ / khoá màn hình Windows / không dùng N phút.
 // Mật khẩu lưu dạng băm scrypt + muối trong thư mục dữ liệu app (không lưu mật khẩu gốc).
-const { app, ipcMain, powerMonitor, session, WebContentsView } = require('electron');
+const { app, BaseWindow, ipcMain, powerMonitor, session, WebContentsView } = require('electron');
 const crypto = require('crypto'), fs = require('fs'), path = require('path');
 
 const FILE = () => path.join(app.getPath('userData'), 'lock.json');
@@ -52,6 +52,15 @@ function setupLock({ mainWindow, focusPage, sessions = [] }) {
   });
 
   mainWindow.on('minimize', () => { if (cfg.onMinimize !== false) lock(); });
+  // Chuyển sang app khác cũng khoá. Không khoá khi cửa sổ của chính app đang được chọn (cửa sổ phụ app tự mở)
+  // hoặc cửa sổ chính bị vô hiệu tạm thời vì hộp thoại của app đang mở (chọn file ảnh, hỏi xác nhận…).
+  let blurTimer;
+  mainWindow.on('blur', () => {
+    if (cfg.onMinimize === false || !cfg.hash || locked) return;
+    clearTimeout(blurTimer);
+    blurTimer = setTimeout(() => { if (!BaseWindow.getFocusedWindow() && mainWindow.isEnabled() && !mainWindow.isMinimized()) lock(); }, 1200);
+  });
+  mainWindow.on('focus', () => clearTimeout(blurTimer));
   powerMonitor.on('lock-screen', lock);
   powerMonitor.on('suspend', lock);
   setInterval(() => { if (cfg.hash && cfg.idleMinutes > 0 && powerMonitor.getSystemIdleTime() >= cfg.idleMinutes * 60) lock(); }, 30e3);
