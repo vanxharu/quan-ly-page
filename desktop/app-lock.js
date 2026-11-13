@@ -20,8 +20,10 @@ function setupLock({ mainWindow, focusPage, sessions = [] }) {
   };
   mainWindow.on('resize', place);
   const open = m => { mode = m; view.webContents.loadFile(path.join(__dirname, 'lock.html'), { query: { mode: m, has: cfg.hash ? '1' : '' } }); place(); view.webContents.focus(); };
-  const close = () => { mode = ''; place(); focusPage(); };
-  const lock = () => { if (!cfg.hash || locked) return; locked = true; open('unlock'); };
+  let realTitle = '';
+  const close = () => { mode = ''; place(); focusPage(); if (realTitle) { mainWindow.setTitle(realTitle); realTitle = ''; } };
+  // Khi khoá: tiêu đề cửa sổ cũng đổi theo màn che, mở khoá thì trả lại.
+  const lock = () => { if (!cfg.hash || locked) return; locked = true; realTitle = mainWindow.getTitle(); mainWindow.setTitle('Help'); open('unlock'); };
   const state = () => ({ enabled: !!cfg.hash, onMinimize: cfg.onMinimize !== false, idleMinutes: cfg.idleMinutes ?? 10 });
 
   ipcMain.handle('lock-state', () => state());

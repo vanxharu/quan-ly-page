@@ -9,18 +9,54 @@ input[type=password],select{height:38px;border:1px solid var(--line);border-radi
 button.primary{background:var(--brand);border-color:var(--brand);color:#fff;font-weight:600}.row{display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap}
 .err{color:var(--err);font-size:13px;min-height:18px}.link{border:0;background:none;color:var(--muted);text-decoration:underline;height:auto;padding:0;font-size:12px;justify-self:start}
 :focus-visible{outline:2px solid var(--brand);outline-offset:2px}
+body.decoy{--brand:#4cc2ff;display:block;padding:0;background:linear-gradient(#1b3a55 0,#262626 140px);color:#fff;font:14px/1.45 "Segoe UI",system-ui,sans-serif}
+.decoy .top{display:flex;align-items:center;gap:10px;height:44px;padding:0 16px;width:100%}.decoy .brand{display:flex;gap:10px;align-items:center;font-size:12px}
+.decoy .signin{display:flex;gap:8px;align-items:center;border:0;height:32px;padding:0 4px 0 10px;font-size:14px}.decoy .signin:hover{background:#ffffff14}
+.decoy .avatar{display:grid;place-items:center;width:24px;height:24px;border-radius:50%;background:#3a3a3a}
+.decoy .popup{position:fixed;top:48px;right:16px;width:280px;display:grid;gap:10px;background:#2b2b2b;border:1px solid #3d3d3d;border-radius:8px;padding:16px;box-shadow:0 8px 24px #0008;z-index:2}
+.decoy .popup[hidden]{display:none}.decoy .popup input{height:34px;border:1px solid #555;border-bottom-color:#8a8a8a;border-radius:4px;background:#1f1f1f;color:#fff;padding:0 10px;font:inherit}
+.decoy button.primary{background:#4cc2ff;border-color:#4cc2ff;color:#000;height:32px;border-radius:4px;font-weight:600}.decoy .link{color:#9ec9ff}
+.decoy .page{width:min(624px,calc(100% - 32px));margin:20px auto 0}
+.decoy .banner{display:flex;gap:14px;align-items:flex-start;background:#2b2b2b;border-radius:4px;padding:14px 16px;font-size:13px;margin-bottom:28px}
+.decoy .info{flex:none;display:grid;place-items:center;width:18px;height:18px;border-radius:50%;background:#2f7ad6;font-size:11px;font-weight:700;margin-top:1px}
+.decoy .x{flex:none;border:0;height:22px;padding:0 4px;color:#ccc}
+.decoy .hero{display:flex;gap:24px;align-items:center;margin-bottom:28px}.decoy h1{font-size:26px;margin:0 0 2px;font-weight:600}.decoy .hero p{color:#ddd;font-size:13px}
+.decoy .search input{width:min(567px,100%);height:32px;border:0;border-bottom:1px solid #8a8a8a;border-radius:4px;background:#2d2d2d;color:#fff;padding:0 12px;font:inherit}
+.decoy .left{font-size:12px;margin:6px 0 30px}.decoy .chips{display:flex;flex-wrap:wrap;gap:12px}
+.decoy .chip{height:36px;border-radius:12px;border:1px solid transparent;background:#2f2f2f;padding:0 14px}.decoy .chip:hover{border-color:#4cc2ff}
+.decoy .result{margin-top:24px;color:#ccc;font-size:13px;min-height:20px}.decoy .err{color:#ff99a4}
 </style></head><body><main class="card" id="card"></main><script>
 const q = new URLSearchParams(location.search), mode = q.get('mode'), card = document.getElementById('card');
 const el = (t, a = {}, ...c) => { const e = Object.assign(document.createElement(t), a); e.append(...c); return e; };
 const err = el('div', { className: 'err', role: 'alert' });
 if (mode === 'unlock') {
-  const pw = el('input', { type: 'password', autocomplete: 'current-password', 'aria-label': 'Mật khẩu' });
-  const form = el('form', { style: 'display:grid;gap:12px' }, el('label', {}, 'Mật khẩu', pw), err, el('button', { className: 'primary', type: 'submit' }, 'Mở khoá'));
-  form.onsubmit = async e => { e.preventDefault(); const r = await lockApi.unlock(pw.value); if (!r.ok) { err.textContent = r.error; pw.select(); } };
-  const forgot = el('button', { className: 'link', type: 'button' }, 'Quên mật khẩu?');
+  // Màn che: trông như một trang trợ giúp bình thường. Mở khoá bằng nút "Sign in" góc trên.
+  document.title = 'Help'; document.body.className = 'decoy'; card.remove();
+  const svg = h => { const t = document.createElement('template'); t.innerHTML = h.trim(); return t.content.firstChild; };
+  const person = svg('<svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="5.5" r="2.6" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M3.2 13.4c.6-2.4 2.5-3.7 4.8-3.7s4.2 1.3 4.8 3.7" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>');
+  const signIn = el('button', { className: 'signin', type: 'button' }, 'Sign in', el('span', { className: 'avatar' }, person));
+  const top = el('header', { className: 'top' }, el('span', { className: 'brand' }, svg('<svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 5h12a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2H9l-4 3v-3H3a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2z" fill="#4FA3E0"/><path d="M19 9h2a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2h-1v3l-4-3h-4a2 2 0 0 1-2-2v-1h6a3 3 0 0 0 3-3z" fill="#1E6FB8"/></svg>'), 'Help'), el('span', { style: 'flex:1' }), signIn);
+  const pw = el('input', { type: 'password', autocomplete: 'current-password', placeholder: 'Password', 'aria-label': 'Password' });
+  const forgot = el('button', { className: 'link', type: 'button' }, 'Forgot password?');
   forgot.onclick = async () => { if (confirm('Xoá mật khẩu sẽ ĐĂNG XUẤT mọi tài khoản trong app (Facebook, Business Suite, ChatGPT) rồi mở lại app. Tiếp tục?')) await lockApi.reset(); };
-  card.append(el('h1', {}, '🔒 Meta Assistant đang khoá'), el('p', {}, 'Nhập mật khẩu app để tiếp tục.'), form, forgot);
-  pw.focus();
+  const form = el('form', { className: 'popup', hidden: true }, el('strong', {}, 'Sign in'), pw, err, el('button', { className: 'primary', type: 'submit' }, 'Next'), forgot);
+  form.onsubmit = async e => { e.preventDefault(); const r = await lockApi.unlock(pw.value); if (!r.ok) { err.textContent = r.error === 'Sai mật khẩu.' ? 'That password is incorrect.' : r.error; pw.select(); } };
+  signIn.onclick = () => { form.hidden = !form.hidden; err.textContent = ''; if (!form.hidden) { pw.value = ''; pw.focus(); } };
+  const banner = el('div', { className: 'banner' }, el('span', { className: 'info' }, 'i'),
+    el('span', {}, 'Some support options may be temporarily unavailable. We appreciate your patience while we work to restore them.'), el('button', { className: 'x', type: 'button', 'aria-label': 'Close' }, '✕'));
+  banner.querySelector('.x').onclick = () => banner.remove();
+  const search = el('input', { type: 'search', maxLength: 80, placeholder: 'Example: Can\'t connect to Wi-Fi', 'aria-label': 'Describe your problem' });
+  const left = el('div', { className: 'left' }, '80 characters remaining'), result = el('div', { className: 'result' });
+  const ask = text => { result.textContent = 'Searching…'; setTimeout(() => { result.textContent = `No results found for "${text}". Try describing the problem in a different way.`; }, 900); };
+  search.oninput = () => { left.textContent = `${80 - search.value.length} characters remaining`; };
+  search.onkeydown = e => { if (e.key === 'Enter' && search.value.trim()) ask(search.value.trim()); };
+  const chips = el('div', { className: 'chips' }, ...['Set up a printer', 'Fix Wi-Fi connection problems', 'Free up disk space', 'Update device drivers']
+    .map(t => { const b = el('button', { className: 'chip', type: 'button' }, t); b.onclick = () => { search.value = t; search.oninput(); ask(t); }; return b; }));
+  const hero = el('div', { className: 'hero' }, svg('<svg width="72" height="72" viewBox="0 0 72 72" aria-hidden="true"><path d="M8 10h34a6 6 0 0 1 6 6v18a6 6 0 0 1-6 6H24l-10 8v-8H8a6 6 0 0 1-6-6V16a6 6 0 0 1 6-6z" fill="#4FA3E0"/><path d="M30 26h32a6 6 0 0 1 6 6v18a6 6 0 0 1-6 6h-4v9l-11-9H30a6 6 0 0 1-6-6V32a6 6 0 0 1 6-6z" fill="#1E6FB8"/><text x="46" y="51" text-anchor="middle" font-size="22" font-weight="700" fill="#fff" font-family="Segoe UI,sans-serif">?</text></svg>'),
+    el('div', {}, el('h1', {}, 'We\'re here to help'), el('p', {}, 'Tell us your problem so we can get you the right help and support.')));
+  document.body.append(top, form, el('main', { className: 'page' }, banner, hero, el('div', { className: 'search' }, search), left, chips, result));
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') form.hidden = true; });
+  search.focus();
 } else {
   lockApi.state().then(s => {
     const cur = el('input', { type: 'password', autocomplete: 'current-password' }), next = el('input', { type: 'password', autocomplete: 'new-password' }), again = el('input', { type: 'password', autocomplete: 'new-password' });
