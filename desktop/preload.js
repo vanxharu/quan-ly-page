@@ -7,6 +7,7 @@ contextBridge.exposeInMainWorld('metaDesktop', {
   listThreads: args => ipcRenderer.invoke('meta-threads', args),
   readThread: args => ipcRenderer.invoke('meta-thread-read', args),
   sendThread: args => ipcRenderer.invoke('meta-thread-send', args),
+  openZalo: () => ipcRenderer.send('open-zalo'),
   openThread: args => ipcRenderer.invoke('meta-open-thread', args),
   composePost: args => ipcRenderer.invoke('meta-compose', args),
   loginFacebook: args => ipcRenderer.send('fb-login', args),

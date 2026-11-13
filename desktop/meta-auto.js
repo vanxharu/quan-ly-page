@@ -418,7 +418,7 @@ function createMetaAuto({ worker, composer, metaView, showMeta = () => () => {},
     const { pageId, text, when } = args;
     if (!/^\d+$/.test(String(pageId))) return { error: 'Thiếu Page.' };
     if (text) clipboard.writeText(String(text));
-    if (composer) {
+    if (composer && !args.visibleOnly) {
       const wc = composer.webContents, r = await fill(wc, args);
       if (r.error === 'login') return r;
       if (!r.error && r.done.image && r.done.text && r.done.button && r.done.schedule === true) {
@@ -430,8 +430,29 @@ function createMetaAuto({ worker, composer, metaView, showMeta = () => () => {},
           if (!(await r.ensureButton())) throw Error('Mất lựa chọn nút Gửi tin nhắn');
           progress({ id: 'publish', state: 'run' });
           if (await r.waitFor(publish, 60000) && await r.click(publish)) {
-            for (let i = 0; i < 60 && !leftComposer(wc); i++) await sleep(1000);
-            if (leftComposer(wc)) { progress({ id: 'publish', state: 'ok' }); wc.loadURL('about:blank').catch(() => {}); return { done: true, filled: r.done, hidden: true }; }
+            // Xong khi: rời trình soạn, hoặc Business Suite báo đã lên lịch/đã đăng. Hộp xác nhận hiện ra thì bấm luôn;
+            // nút Lên lịch còn nguyên và bấm được sau 8 giây = cú bấm chưa ăn → bấm lại một lần bằng element.click().
+            const DONE = /đã (được )?lên lịch|đã đăng|đã chia sẻ|has been scheduled|scheduled your post|post (was )?(published|shared)/i;
+            let reclicked = false;
+            for (let i = 0; i < 60 && !leftComposer(wc); i++) {
+              await sleep(1000);
+              const st = await wc.executeJavaScript(`(() => {
+                const t = [...document.querySelectorAll('[role="alert"],[role="status"],[aria-live]')].map(e => e.innerText || '').join('\\n');
+                const dlg = [...document.querySelectorAll('[role="dialog"] [role="button"],[role="dialog"] button')].find(b => /^(Lên lịch|Schedule|Tiếp tục|Continue|Xác nhận|Confirm|Đồng ý|OK)$/i.test((b.innerText || '').trim()) && b.getAttribute('aria-disabled') !== 'true');
+                if (dlg) { dlg.click(); return { text: t, dialog: true }; }
+                return { text: t };
+              })()`).catch(() => ({ text: '' }));
+              if (DONE.test(st.text)) break;
+              if (!reclicked && i >= 8 && !st.dialog) {
+                const again = await r.find(publish);
+                if (again) { reclicked = true; await wc.executeJavaScript(`(() => { const re = new RegExp(${JSON.stringify(publish.text)}, 'i'); const b = [...document.querySelectorAll('[role="button"],button')].filter(x => re.test((x.innerText || '').trim()) && x.getAttribute('aria-disabled') !== 'true').pop(); if (b) b.click(); })()`).catch(() => {}); }
+              }
+            }
+            const ok = leftComposer(wc) || DONE.test(await wc.executeJavaScript(`[...document.querySelectorAll('[role="alert"],[role="status"],[aria-live]')].map(e => e.innerText || '').join('\\n')`).catch(() => ''));
+            if (ok) { progress({ id: 'publish', state: 'ok' }); wc.loadURL('about:blank').catch(() => {}); return { done: true, filled: r.done, hidden: true }; }
+            // Đã bấm mà không chắc kết quả: KHÔNG mở cột Meta ngay (dễ đăng trùng). Trang web kiểm tra lịch thật trên Meta trước.
+            progress({ id: 'publish', state: 'run', note: 'Đang kiểm tra trên Meta xem bài đã lên lịch chưa…' });
+            return { uncertain: true, filled: r.done };
           }
         } catch {}
       }

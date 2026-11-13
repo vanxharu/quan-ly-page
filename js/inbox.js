@@ -147,6 +147,7 @@
             h('div', { className: 'chips', id: 'ibFilter' }, ...[['all', 'Tất cả'], ['unread', 'Chưa đọc'], ['unanswered', 'Chưa trả lời'], ['today', 'Hôm nay']].map(([f, t]) =>
               h('button', { className: 'chip', dataset: { f }, textContent: t, 'aria-pressed': String(f === S.filter), onclick: () => { S.filter = f; drawList(); } }))),
             h('select', { id: 'ibLabel', style: 'width:auto;padding:4px 8px;font-size:12px', onchange: () => drawList() }),
+            window.metaDesktop?.openZalo ? h('button', { type: 'button', className: 'btn btn-ghost btn-sm', title: 'Mở Zalo Web (Zalo cá nhân) ở cột phải · Ctrl+Shift+Z', onclick: () => window.metaDesktop.openZalo() }, 'Zalo') : null,
             window.metaDesktop?.listThreads ? h('select', { 'aria-label': 'Nguồn tin nhắn', title: 'Business Suite: đọc như hộp thư Meta, trả lời được cả tin quá 7 ngày (trong cột Meta). API: đọc và trả lời ngay trong app.', style: 'width:auto;padding:4px 8px;font-size:12px',
               onchange: e => { local.set('inboxSource', e.target.value); S.convs = []; S.more.clear(); load(false, { force: true }); } },
               h('option', { value: 'bs', textContent: 'Nguồn: Business Suite', selected: bsFirst() }), h('option', { value: 'api', textContent: 'Nguồn: API', selected: !bsFirst() })) : null,

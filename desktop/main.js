@@ -52,7 +52,7 @@ function handleDeepLink(link) {
 // Bản cũ (1.0.1–1.0.12) đăng ký metaassistant:// với Windows để đăng nhập qua Chrome; giờ không dùng nữa.
 app.removeAsDefaultProtocolClient(PROTOCOL);
 
-let extensions, mainWindow, pageView, panelView, metaView, side = 'studio', group = '', studio; // side: cột phải 'studio' | 'meta' | ''; group: nhóm tab đang mở trên trang
+let extensions, mainWindow, pageView, panelView, metaView, zaloView, side = 'studio', group = '', studio; // side: cột phải 'studio' | 'meta' | ''; group: nhóm tab đang mở trên trang
 function newWindow(url, opts = {}) {
   const win = new BrowserWindow({ width: 1280, height: 860, icon: ICON, autoHideMenuBar: true, show: false, ...opts,
     webPreferences: { sandbox: true, contextIsolation: true, backgroundThrottling: false } });
@@ -164,12 +164,17 @@ app.whenReady().then(async () => {
           platform: 'Windows', platformVersion: '15.0.0', architecture: 'x86', model: '', mobile: false, bitness: '64', wow64: false } });
     } catch (e) { console.error('Không giả Chrome được cho Business Suite:', e.message); }
   };
-  for (const wc of [metaView.webContents, worker.webContents, composer.webContents]) await asChrome(wc);
+  // Zalo cá nhân (không có API): chạy Zalo Web trong cột riêng, phiên đăng nhập riêng (quét QR một lần, app giữ đăng nhập).
+  const ZALO = 'persist:zalo', zaloSes = session.fromPartition(ZALO);
+  zaloSes.setUserAgent(app.userAgentFallback);
+  zaloView = new WebContentsView({ webPreferences: { partition: ZALO, sandbox: true, contextIsolation: true, backgroundThrottling: false } });
+  for (const wc of [metaView.webContents, worker.webContents, composer.webContents, zaloView.webContents]) await asChrome(wc);
   mainWindow.contentView.addChildView(panelView);
   mainWindow.contentView.addChildView(metaView);
+  mainWindow.contentView.addChildView(zaloView);
   // Độ rộng cột phải (tỉ lệ cửa sổ), nhớ giữa các lần mở app.
   const LAYOUT_FILE = path.join(app.getPath('userData'), 'layout.json');
-  let widths = { studio: 0.32, meta: 0.45 };
+  let widths = { studio: 0.32, meta: 0.45, zalo: 0.45 };
   try { widths = { ...widths, ...JSON.parse(require('fs').readFileSync(LAYOUT_FILE, 'utf8')) }; } catch {}
   const saveWidths = () => { try { require('fs').writeFileSync(LAYOUT_FILE, JSON.stringify(widths)); } catch {} };
   const BAR = 30;
@@ -183,14 +188,15 @@ app.whenReady().then(async () => {
     const w = cur ? Math.round(Math.min(0.8, Math.max(0.2, widths[cur])) * width) : 0;
     pageView.setBounds({ x: 0, y: 0, width: width - w, height });
     bar.setBounds(cur ? { x: width - w, y: 0, width: w, height: BAR } : { x: width, y: 0, width: 0, height: 0 });
-    for (const [name, v] of [['studio', panelView], ['meta', metaView]]) v.setBounds(cur === name ? { x: width - w, y: BAR, width: w, height: height - BAR } : { x: width, y: 0, width: 0, height: 0 });
-    const title = cur === 'meta' ? 'Hộp thư Meta' : cur === 'studio' ? 'Studio AI' : '';
+    for (const [name, v] of [['studio', panelView], ['meta', metaView], ['zalo', zaloView]]) v.setBounds(cur === name ? { x: width - w, y: BAR, width: w, height: height - BAR } : { x: width, y: 0, width: 0, height: 0 });
+    const title = cur === 'meta' ? 'Hộp thư Meta' : cur === 'studio' ? 'Studio AI' : cur === 'zalo' ? 'Zalo' : '';
     if (title && bar.webContents.__title !== title) { bar.webContents.__title = title; bar.webContents.loadFile(path.join(__dirname, 'bar.html'), { query: { t: title } }); }
   };
   mainWindow.on('resize', layout);
   wire(pageView.webContents, mainWindow);
   wire(panelView.webContents, mainWindow, false);
   wire(metaView.webContents, mainWindow, false);
+  wire(zaloView.webContents, mainWindow, false);
   // Luôn lấy index.html mới (GitHub Pages cho trình duyệt giữ bản cũ ~10 phút → trang chạy code cũ sau mỗi lần cập nhật web).
   pageView.webContents.loadURL(WEB, { extraHeaders: 'pragma: no-cache\ncache-control: no-cache\n' });
   if (studio) panelView.webContents.loadURL(`chrome-extension://${studio.id}/sidepanel.html?desktop=1`);
@@ -221,6 +227,8 @@ app.whenReady().then(async () => {
     metaView.webContents.loadURL('https://business.facebook.com/latest/inbox/all').catch(() => {});
     show('meta', true);
   }).catch(() => {});
+  const openZalo = () => { if (!zaloView.webContents.getURL().startsWith('https://chat.zalo.me')) zaloView.webContents.loadURL('https://chat.zalo.me/').catch(() => {}); show('zalo', true); };
+  ipcMain.on('open-zalo', e => { if (fromPage(e)) openZalo(); });
   const openMetaInbox = url => {
     if (!/^https:\/\/business\.facebook\.com\/latest\/inbox/.test(url)) return;
     if (metaView.webContents.getURL() !== url) metaView.webContents.loadURL(url);
@@ -321,11 +329,12 @@ app.whenReady().then(async () => {
   });
   layout();
   // Khoá app bằng mật khẩu (lớp phủ trên cùng); tạo sau mọi khung khác để luôn che được.
-  const appLock = setupLock({ mainWindow, focusPage: () => pageView.webContents.focus(), sessions: [ses, metaSes] });
+  const appLock = setupLock({ mainWindow, focusPage: () => pageView.webContents.focus(), sessions: [ses, metaSes, zaloSes] });
   ipcMain.on('app-lock', (e, what) => { if (!fromPage(e)) return; if (what === 'settings') appLock.settings(); else if (what === 'now') appLock.lock(); });
   Menu.setApplicationMenu(Menu.buildFromTemplate([
     { label: 'Studio AI', accelerator: 'Ctrl+Shift+A', click: () => toggleStudio() },
     { label: 'Bảo mật', submenu: [{ label: 'Khoá ngay', accelerator: 'Ctrl+L', click: () => appLock.lock() }, { label: 'Mật khẩu & tự khoá…', click: () => appLock.settings() }] },
+    { label: 'Zalo', accelerator: 'Ctrl+Shift+Z', click: () => side === 'zalo' ? show('zalo', false) : openZalo() },
     { label: 'Hộp thư Meta', accelerator: 'Ctrl+Shift+M', click: () => { if (!metaView.webContents.getURL()) metaView.webContents.loadURL('https://business.facebook.com/latest/inbox/all'); show('meta'); } },
     { label: 'Xem', submenu: [
       { label: 'Tải lại', accelerator: 'F5', click: () => pageView.webContents.reloadIgnoringCache() },
@@ -343,6 +352,16 @@ app.whenReady().then(async () => {
           if (img) require('fs').writeFileSync(path.join(dir, `meta-assistant-chan-doan-${name}-${stamp}.png`), img.toPNG());
         }
         shell.openPath(dir);
+      } },
+      // Lưu trang Zalo Web đang mở (danh sách hội thoại / hội thoại đang xem) để viết phần đọc tin Zalo theo giao diện thật.
+      { label: 'Lưu chẩn đoán Zalo', click: async () => {
+        const dir = app.getPath('desktop'), stamp = new Date().toISOString().replace(/[:.]/g, '-'), wc = zaloView.webContents;
+        if (!wc.getURL()) return openZalo();
+        const html = await wc.executeJavaScript('location.href + "\\n" + document.documentElement.outerHTML').catch(e => String(e));
+        require('fs').writeFileSync(path.join(dir, `get-helps-zalo-${stamp}.html`), html);
+        const img = await wc.capturePage().catch(() => null);
+        if (img) require('fs').writeFileSync(path.join(dir, `get-helps-zalo-${stamp}.png`), img.toPNG());
+        shell.openPath(dir);
       } }, { type: 'separator' },
       { label: 'Phóng to', accelerator: 'Ctrl+=', click: () => pageView.webContents.setZoomLevel(pageView.webContents.getZoomLevel() + 0.5) },
       { label: 'Thu nhỏ', accelerator: 'Ctrl+-', click: () => pageView.webContents.setZoomLevel(pageView.webContents.getZoomLevel() - 0.5) },
@@ -350,7 +369,7 @@ app.whenReady().then(async () => {
       { label: 'Công cụ lỗi', accelerator: 'F12', click: () => pageView.webContents.toggleDevTools() }] },
   ]));
   app.appLock = appLock;
-  app.toggleStudio = toggleStudio; app.views = { page: pageView, panel: panelView, meta: metaView, worker, bar };
+  app.toggleStudio = toggleStudio; app.views = { page: pageView, panel: panelView, meta: metaView, zalo: zaloView, worker, bar };
   mainWindow.on('closed', () => { mainWindow = null; for (const w of [worker, composer]) if (!w.isDestroyed()) w.destroy(); app.quit(); });
   if (app.isPackaged) { checkUpdate().catch(() => {}); setInterval(() => checkUpdate().catch(() => {}), 2 * 3600e3); }
 });

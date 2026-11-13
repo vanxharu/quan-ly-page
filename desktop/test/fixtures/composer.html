@@ -19,6 +19,10 @@ document.getElementById('pub').onclick = () => {
   if (document.getElementById('pub').getAttribute('aria-disabled') !== 'false') return;
   localStorage.setItem('lastPost', JSON.stringify([document.getElementById('pub').textContent, document.getElementById('ed').innerText, document.body.dataset.file, document.getElementById('js_i3').textContent,
     document.getElementById('sw').checked, document.getElementById('date').value, document.getElementById('hh').getAttribute('aria-valuenow'), document.getElementById('mm').getAttribute('aria-valuenow')]));
+  const mode = window.MODE || '';
+  if (mode === 'toast') { document.body.insertAdjacentHTML('beforeend', '<div role="status">Đã lên lịch bài viết của bạn.</div>'); return; } // báo xong nhưng ở lại trang
+  if (mode === 'stuck') return; // không phản hồi gì
+  if (mode === 'dialog' && !document.getElementById('cf')) { document.body.insertAdjacentHTML('beforeend', '<div role="dialog"><p>Lên lịch bài viết này?</p><div role="button" id="cf">Lên lịch</div></div>'); document.getElementById('cf').onclick = () => { location.href = 'https://business.facebook.com/latest/inbox/all?posted=1'; }; return; }
   location.href = 'https://business.facebook.com/latest/inbox/all?posted=1';
 };
 // Hẹn giờ: bật công tắc thì hiện ô ngày/giờ; Enter ở ô ngày đổi sang "13 Tháng 11, 2026"; ô giờ/phút nhận 2 chữ số.
