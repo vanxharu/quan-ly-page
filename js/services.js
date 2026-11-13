@@ -4,8 +4,11 @@
  * Lưu: svcSettingsV1 { home, apiUrl, apiKey, prices: { [serviceId]: giá bán/1 đơn vị } }, svcServicesV1 { at, list }. */
 (() => {
   const SET = 'svcSettingsV1', CACHE = 'svcServicesV1', ORDERS = 'shopOrdersV1';
-  const DEFAULTS = { home: 'https://dichvu.baostar.net', apiUrl: 'https://smm.baostar.net/api/v2', apiKey: '', prices: {} };
-  const settings = async () => ({ ...DEFAULTS, ...(await DB.get(SET, {})) });
+  const DEFAULTS = { home: 'https://smm.baostar.net', apiUrl: 'https://smm.baostar.net/api/v2', apiKey: '', prices: {} };
+  // dichvu.baostar.net là hệ thống khác; key API thuộc smm.baostar.net → tự đổi cài đặt cũ.
+  const settings = async () => { const s = { ...DEFAULTS, ...(await DB.get(SET, {})) };
+    if (/^https?:\/\/dichvu\.baostar\.net/i.test(s.home)) { s.home = DEFAULTS.home; await DB.set(SET, s); }
+    return s; };
   const saveSettings = async change => DB.set(SET, { ...(await settings()), ...change });
   // Trạng thái của web dịch vụ → trạng thái đơn chung (Bán hàng chỉ tính tiền đơn done/returned).
   const FINAL = /^(completed|partial|canceled|cancelled|refunded)$/i;
@@ -60,6 +63,25 @@
     d.querySelectorAll('div,li,p,br,h1,h2,h3,h4,h5,h6,tr').forEach(x => x.append('\n'));
     return d.body.textContent.split('\n').map(l => l.replace(/\s+/g, ' ').trim()).filter(Boolean);
   }
+  // Ghi chú gốc hiển thị như web: dựng lại từ thẻ định dạng an toàn + lớp màu của web (note-row note-green, alert, badge bg-…).
+  // Không giữ script/style/thuộc tính sự kiện/link/ảnh; mọi chữ đi vào bằng textContent.
+  const NOTE_TAGS = new Set(['DIV', 'SPAN', 'STRONG', 'B', 'EM', 'U', 'SMALL', 'P', 'UL', 'OL', 'LI', 'BR', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'HR', 'CODE', 'MARK', 'TABLE', 'TBODY', 'TR', 'TD', 'TH']);
+  function safeNotes(html) {
+    const wrap = document.createElement('div'); wrap.className = 'svc-web-note';
+    if (!html) return wrap;
+    const src = new DOMParser().parseFromString(String(html), 'text/html').body;
+    const copy = (from, to) => { for (const n of from.childNodes) {
+      if (n.nodeType === 3) { to.append(n.nodeValue); continue; }
+      if (n.nodeType !== 1 || /^(STYLE|SCRIPT|TEMPLATE|IFRAME|OBJECT|SVG|IMG|VIDEO|AUDIO|LINK|META)$/.test(n.tagName)) continue;
+      if (n.tagName === 'I' && /\b(ri|fa[a-z]*|bi|ti)-/.test(n.className)) continue; // biểu tượng font của web: app không có
+      const el = document.createElement(NOTE_TAGS.has(n.tagName) ? n.tagName : (n.tagName === 'I' ? 'EM' : 'SPAN'));
+      const cls = String(n.getAttribute('class') || '').split(/\s+/).filter(c => /^[\w-]{1,40}$/.test(c)).join(' ');
+      if (cls) el.className = cls;
+      copy(n, el); to.append(el);
+    } };
+    copy(src, wrap);
+    return wrap;
+  }
   // Tốc độ: dòng "Tốc độ" trong ghi chú gốc, không có thì đoán theo tên dịch vụ.
   function speedOf(svc) {
     const lines = noteLines(svc.notes);
@@ -90,11 +112,13 @@
     const merged = list.map(x => { const w = byId.get(x.id);
       return { ...x, web: !!w, webChecked: !!cat, name: w?.name || x.name, category: w?.group || x.category, platform: w?.platform || '',
         notes: w?.notes || '', status: w?.status || '', avgTime: w?.avgTime || '', startTime: w?.startTime || '', refill: w ? w.refill : x.refill,
-        min: w?.min || x.min, max: w?.max || x.max, unitCost: w?.rate || (x.rate ? x.rate / 1000 : 0), costFromWeb: !!w?.rate }; });
+        min: w?.min || x.min, max: w?.max || x.max, unitCost: w?.rate || (x.rate ? x.rate / 1000 : 0), costFromWeb: !!w?.rate,
+        groupIndex: w?.groupIndex ?? 999, pos: w?.pos ?? 0, parent: w?.parent || '', child: w?.child || '', labels: w?.labels || '' }; });
     // Dịch vụ chỉ có trên web (API chưa liệt kê) vẫn hiện để xem ghi chú, giá.
     const ids = new Set(list.map(x => x.id));
     for (const w of cat?.list || []) if (!ids.has(w.id)) merged.push({ id: w.id, name: w.name, category: w.group, platform: w.platform, web: true, webChecked: true, webOnly: true,
-      notes: w.notes, status: w.status, avgTime: w.avgTime, startTime: w.startTime, refill: w.refill, min: w.min || 1, max: w.max || 1e9, rate: 0, unitCost: w.rate, costFromWeb: true });
+      notes: w.notes, status: w.status, avgTime: w.avgTime, startTime: w.startTime, refill: w.refill, min: w.min || 1, max: w.max || 1e9, rate: 0, unitCost: w.rate, costFromWeb: true,
+      groupIndex: w.groupIndex ?? 999, pos: w.pos ?? 0, parent: w.parent || '', child: w.child || '', labels: w.labels || '' });
     return merged;
   }
   // Giá gốc ước tính = giá gốc 1 đơn vị × số lượng. Giá thật lấy theo "charge" khi web đã nhận đơn.
@@ -127,7 +151,7 @@
     const chosen = () => list.find(x => x.id === pick.value);
     const draw = () => {
       const q = norm(search.value), plat = platformOf(linkIn.value);
-      const rows = list.filter(x => !q || norm(x.name + ' ' + x.category + ' ' + x.id).includes(q)).sort((a, b) => (plat && norm(b.category + b.name).includes(plat)) - (plat && norm(a.category + a.name).includes(plat)));
+      const rows = [...list].sort((a, b) => a.groupIndex - b.groupIndex || a.pos - b.pos || Number(a.id) - Number(b.id)).filter(x => stateOf(x)[1] !== 'err' && (!q || norm(x.name + ' ' + x.category + ' ' + x.id).includes(q))).sort((a, b) => (plat && norm(b.category + b.name).includes(plat)) - (plat && norm(a.category + a.name).includes(plat)));
       const keep = pick.value;
       pick.replaceChildren(...rows.slice(0, 300).map(x => { const [st] = stateOf(x);
         return h('option', { value: x.id, textContent: `#${x.id} · ${x.name} · gốc ${m2(x.unitCost)}/đv · ${x.min}–${x.max}${x.web ? ' · ' + st : ''}`, selected: x.id === keep }); }));
@@ -144,7 +168,7 @@
             sp.text ? h('span', { className: 'svc-pill svc-speed ' + sp.kind, textContent: '⚡ ' + sp.text }) : null,
             svc.avgTime ? h('span', { className: 'svc-pill', textContent: '⏱ TB ' + svc.avgTime }) : null,
             h('span', { className: 'svc-pill', textContent: `Gốc ${m2(svc.unitCost)}/đv` })),
-          ...noteLines(svc.notes).map(l => h('div', { textContent: l }))); }
+          svc.notes ? safeNotes(svc.notes) : null); }
       else noteBox.replaceChildren();
       info.replaceChildren(
         h('span', {}, 'Giá gốc ≈ ', h('strong', { textContent: money(cost) })), h('span', {}, 'Giá bán ', h('strong', { textContent: money(sell) })),
@@ -312,38 +336,61 @@
     const catMsg = h('span', { className: 'hint', id: 'svCatMsg', textContent: catalogMsg });
     let shown = [];
     const savePrice = async (id, v) => { const p = { ...(await settings()).prices }; if (v === '' || v == null) delete p[id]; else p[id] = Number(v); await saveSettings({ prices: p }); };
-    const rowOf = (x, prices) => {
+    const COLS = 7;
+    const rowOf = (x, prices, kids = []) => {
       const [st, cls] = stateOf(x), sp = speedOf(x), mine = prices[x.id];
-      const profit = h('td', { className: 'num' }), notes = noteLines(x.notes);
+      const profit = h('td', { className: 'num' });
       const drawProfit = v => { const sell = Number(v); profit.className = 'num' + (v !== '' && v != null && sell < x.unitCost ? ' neg' : '');
         profit.textContent = v === '' || v == null ? '—' : m2(sell - x.unitCost) + pct(sell, x.unitCost); };
+      const kidInputs = [];
+      // Dòng cha có cảm xúc: nhập giá ở đây là áp cho mọi cảm xúc cùng máy chủ.
       const input = h('input', { type: 'number', min: 0, step: 'any', placeholder: 'đ / đv', value: mine ?? '', style: 'width:96px',
-        oninput: e => drawProfit(e.target.value), onchange: e => savePrice(x.id, e.target.value) });
+        title: kids.length ? 'Áp cho mọi cảm xúc của máy chủ này' : '',
+        oninput: e => { drawProfit(e.target.value); for (const k of kidInputs) { k.value = e.target.value; k.oninput({ target: k }); } },
+        onchange: async e => { await savePrice(x.id, e.target.value); for (const k of kids) await savePrice(k.id, e.target.value); } });
       drawProfit(mine ?? '');
-      const noteRow = h('tr', { className: 'svc-note-row', hidden: true }, h('td', { colSpan: 7 }, h('div', { className: 'svc-notes' },
-        ...(notes.length ? notes.map(l => h('div', { textContent: l })) : [h('div', { className: 'hint', textContent: x.web ? 'Web không có ghi chú cho dịch vụ này.' : 'Chưa có ghi chú: bấm "Đọc lại web dịch vụ" (cần app Windows).' })]),
-        h('div', { className: 'hint', textContent: [`Mã API ${x.id}`, `Min ${x.min} – Max ${x.max}`, x.refill ? 'Có bảo hành (refill)' : '', x.startTime ? 'Bắt đầu ' + x.startTime : '', x.webOnly ? 'Chỉ thấy trên web, API chưa liệt kê' : ''].filter(Boolean).join(' · ') }))));
+      const noteRow = h('tr', { className: 'svc-note-row', hidden: true }, h('td', { colSpan: COLS },
+        x.notes ? safeNotes(x.notes) : h('div', { className: 'hint', textContent: x.web ? 'Web không có ghi chú cho máy chủ này.' : 'Chưa có ghi chú: bấm "Đọc lại web dịch vụ" (cần app Windows).' }),
+        h('div', { className: 'hint', style: 'margin-top:6px', textContent: [`Mã API ${x.id}`, `Min ${x.min.toLocaleString('vi-VN')} – Max ${x.max.toLocaleString('vi-VN')}`, x.refill ? 'Có bảo hành (refill)' : '', x.startTime ? 'Bắt đầu ' + x.startTime : '', x.webOnly ? 'Chỉ thấy trên web, API chưa liệt kê' : ''].filter(Boolean).join(' · ') })));
+      const kidRows = kids.map(k => { const [r] = rowOf(k, prices); r.classList.add('svc-kid'); r.hidden = true; kidInputs.push(r.querySelector('input')); return r; });
+      const toggle = kids.length ? h('button', { type: 'button', className: 'btn btn-primary btn-sm svc-plus', title: 'Xem từng cảm xúc', textContent: '+',
+        onclick: e => { e.stopPropagation(); const open = kidRows[0].hidden; kidRows.forEach(r => { r.hidden = !open; }); e.target.textContent = open ? '−' : '+'; } }) : null;
       const main = h('tr', { className: 'svc-row' + (cls === 'err' ? ' off' : '') },
-        h('td', { className: 'hint', textContent: '#' + x.id }),
-        h('td', { className: 'svc-name', title: 'Bấm để xem ghi chú gốc', onclick: () => { noteRow.hidden = !noteRow.hidden; } },
-          h('div', { textContent: (notes.length ? '▸ ' : '') + x.name }), h('div', { className: 'hint', textContent: [x.platform && x.platform[0].toUpperCase() + x.platform.slice(1), x.category].filter(Boolean).join(' · ') })),
-        h('td', { className: 'num', textContent: m2(x.unitCost) + (x.costFromWeb || !x.unitCost ? '' : ' ≈'), title: x.costFromWeb ? 'Giá trên web (đ / 1 đơn vị)' : 'Giá API ÷ 1000' }),
+        h('td', {}, h('span', { className: 'svc-mc', textContent: 'MC ' + x.id })),
+        h('td', { className: 'svc-name', title: x.parent ? '' : 'Bấm để xem ghi chú gốc', onclick: () => { if (!x.parent) noteRow.hidden = !noteRow.hidden; } },
+          h('div', { className: 'svc-name-in' }, toggle, h('span', { className: 'svc-title', textContent: x.parent ? `( ${x.child} )` : x.name }),
+            x.labels ? h('span', { className: 'svc-pill', textContent: x.labels }) : null,
+            !x.parent && x.notes ? h('span', { className: 'hint', textContent: 'ghi chú ▾' }) : null)),
+        h('td', { className: 'num' }, h('span', { className: 'svc-price', textContent: m2(x.unitCost).replace('đ', '') + ' VND' + (x.costFromWeb || !x.unitCost ? '' : ' ≈'), title: x.costFromWeb ? 'Giá trên web (đ / 1 đơn vị)' : 'Giá API ÷ 1000' })),
         h('td', {}, input), profit,
         h('td', {}, h('span', { className: 'status svc-pill ' + cls, textContent: st })),
-        h('td', {}, sp.text ? h('span', { className: 'svc-pill svc-speed ' + sp.kind, title: sp.text, textContent: sp.text.length > 40 ? sp.text.slice(0, 38) + '…' : sp.text }) : null,
-          x.avgTime ? h('div', { className: 'hint', textContent: '⏱ TB ' + x.avgTime }) : null));
-      return [main, noteRow];
+        h('td', {}, sp.text && !x.parent ? h('span', { className: 'svc-pill svc-speed ' + sp.kind, title: sp.text, textContent: sp.text.length > 40 ? sp.text.slice(0, 38) + '…' : sp.text }) : null,
+          x.avgTime && !x.parent ? h('div', { className: 'hint', textContent: '⏱ TB ' + x.avgTime }) : null));
+      return [main, ...kidRows, noteRow];
     };
     const drawPrices = async () => {
       let list = []; try { list = await services(); } catch (e) { return priceBox.replaceChildren(h('p', { className: 'hint', textContent: e.message })); }
       const prices = (await settings()).prices, f = norm(filt.q);
-      const plats = [...new Set(list.map(x => x.platform).filter(Boolean))].sort();
-      if (platSel.options.length !== plats.length + 1) platSel.replaceChildren(h('option', { value: '', textContent: 'Mọi nền tảng' }), ...plats.map(p => h('option', { value: p, textContent: p[0].toUpperCase() + p.slice(1), selected: p === filt.plat })));
-      shown = list.filter(x => (!f || norm(x.name + ' ' + x.category + ' ' + x.id + ' ' + noteLines(x.notes).join(' ')).includes(f)) && (!filt.plat || x.platform === filt.plat)
-        && (!filt.state || (filt.state === 'nofill' ? prices[x.id] == null : filt.state === 'fast' || filt.state === 'slow' ? speedOf(x).kind === filt.state : stateOf(x)[1] === filt.state)));
-      const head = h('thead', {}, h('tr', {}, ...['Mã', 'Dịch vụ (bấm xem ghi chú gốc)', 'Giá gốc / đv', 'Giá của tôi / đv', 'Lãi / đv', 'Trạng thái', 'Tốc độ'].map(t => h('th', { textContent: t }))));
-      priceBox.replaceChildren(shown.length ? h('table', { className: 'svc-table' }, head, h('tbody', {}, ...shown.slice(0, filt.limit).flatMap(x => rowOf(x, prices)))) : h('p', { className: 'hint', textContent: 'Không có dịch vụ nào khớp bộ lọc.' }),
-        shown.length > filt.limit ? h('button', { type: 'button', className: 'btn btn-ghost btn-sm', style: 'margin:8px', textContent: `Xem thêm (${shown.length - filt.limit} dịch vụ)`, onclick: () => { filt.limit += 200; drawPrices(); } }) : null);
+      list = [...list].sort((a, b) => a.groupIndex - b.groupIndex || a.pos - b.pos || (a.parent ? 1 : 0) - (b.parent ? 1 : 0) || Number(a.id) - Number(b.id));
+      const plats = [...new Set(list.map(x => x.platform).filter(Boolean))];
+      if (platSel.options.length !== plats.length + 1) platSel.replaceChildren(h('option', { value: '', textContent: 'Mọi nền tảng' }), ...plats.map(p => h('option', { value: p, textContent: p, selected: p === filt.plat })));
+      const ok = x => (!f || norm(x.name + ' ' + x.category + ' ' + x.id + ' ' + noteLines(x.notes).join(' ')).includes(f)) && (!filt.plat || x.platform === filt.plat)
+        && (!filt.state || (filt.state === 'nofill' ? prices[x.id] == null : filt.state === 'fast' || filt.state === 'slow' ? speedOf(x).kind === filt.state : stateOf(x)[1] === filt.state));
+      const kidsOf = new Map(); for (const x of list) if (x.parent) (kidsOf.get(x.parent) || kidsOf.set(x.parent, []).get(x.parent)).push(x);
+      const heads = list.filter(x => !x.parent || !list.some(y => y.id === x.parent));
+      const top = heads.filter(x => ok(x) || (kidsOf.get(x.id) || []).some(ok));
+      shown = top.flatMap(x => [x, ...(kidsOf.get(x.id) || [])]);
+      const body = []; let lastPlat = null, lastGroup = null, n = 0;
+      for (const x of top) {
+        if (n++ >= filt.limit) break;
+        const plat = x.web ? x.platform : 'Không thấy trên web', group = x.web ? x.category : '';
+        if (plat !== lastPlat) { body.push(h('tr', { className: 'svc-plat' }, h('td', { colSpan: COLS, textContent: plat }))); lastPlat = plat; lastGroup = null; }
+        if (group && group !== lastGroup) { body.push(h('tr', { className: 'svc-group' }, h('td', { colSpan: COLS, textContent: group }))); lastGroup = group; }
+        body.push(...rowOf(x, prices, kidsOf.get(x.id) || []));
+      }
+      const head = h('thead', {}, h('tr', {}, ...['Máy chủ', 'Dịch vụ (bấm xem ghi chú gốc)', 'Giá gốc / đv', 'Giá của tôi / đv', 'Lãi / đv', 'Trạng thái', 'Tốc độ'].map(t => h('th', { textContent: t }))));
+      priceBox.replaceChildren(top.length ? h('table', { className: 'svc-table' }, head, h('tbody', {}, ...body)) : h('p', { className: 'hint', textContent: 'Không có dịch vụ nào khớp bộ lọc.' }),
+        top.length > filt.limit ? h('button', { type: 'button', className: 'btn btn-ghost btn-sm', style: 'margin:8px', textContent: `Xem thêm (${top.length - filt.limit} máy chủ)`, onclick: () => { filt.limit += 200; drawPrices(); } }) : null);
     };
     const applyMarkup = async onlyEmpty => {
       const k = Number(markup.value); if (!(k >= 0)) return toast('Nhập % lãi hợp lệ.', 4000);

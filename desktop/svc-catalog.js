@@ -14,17 +14,20 @@ function attrs(tag) {
 }
 
 // Một trang nhóm dịch vụ → danh sách dịch vụ (kèm dịch vụ con: like/love/care… của cùng máy chủ).
-function parseGroupPage(html, path) {
-  const title = decode((html.match(/<h4[^>]*class="[^"]*mb-sm-0[^"]*"[^>]*>([^<]*)/i) || [])[1] || '').trim();
+// Tên nền tảng theo menu của web (đường dẫn /dich-vu/<nền tảng>-<loại>).
+const PLATFORMS = { facebook: 'Facebook', tiktok: 'TikTok', instagram: 'Instagram', youtube: 'Youtube', shopee: 'Shopee', google: 'Google', telegram: 'Telegram', start: 'Telegram', x: 'X-Twitter', threads: 'Threads', lazada: 'Lazada' };
+function parseGroupPage(html, path, groupIndex = 0) {
+  const title = decode((html.match(/<h4[^>]*class="[^"]*mb-sm-0[^"]*"[^>]*>([^<]*)/i) || [])[1] || '').replace(/\s+/g, ' ').trim();
   const slug = path.split('/').pop() || '';
-  const platform = slug.split('-')[0] || '';
-  const out = [];
+  const key = slug.split('-')[0] || '';
+  const platform = PLATFORMS[key] || (key ? key[0].toUpperCase() + key.slice(1) : '');
+  const out = []; let pos = 0;
   for (const m of html.matchAll(/<input\b[^>]*\bname="service"[^>]*>/gi)) {
     const a = attrs(m[0]);
     const id = a['data-id'] || a.value; if (!id) continue;
     const time = v => (v && v !== '--' ? v : '');
     const base = {
-      id: String(id), name: a['data-name'] || a['data-desc'] || '', group: title, platform, path,
+      id: String(id), name: (a['data-name'] || a['data-desc'] || '').trim(), group: title, platform, path, groupIndex, pos: pos++, type: a['data-type'] || '',
       rate: Number(a['data-rate']) || 0, min: Number(a['data-min']) || 0, max: Number(a['data-max']) || 0,
       status: a['data-status'] || '', avgTime: time(a['data-average_time']), startTime: time(a['data-start_time']),
       refill: a['data-refill'] === '1', cancel: a['data-cancel'] === '1', labels: a['data-labels'] || '', notes: a['data-notes'] || '',
@@ -32,8 +35,9 @@ function parseGroupPage(html, path) {
     out.push(base);
     let kids = {}; try { kids = JSON.parse(a['data-services-child'] || '{}'); if (typeof kids === 'string') kids = JSON.parse(kids); } catch { kids = {}; }
     for (const k of Object.values(kids || {})) {
-      if (!k?.id || String(k.id) === base.id) continue;
-      out.push({ ...base, id: String(k.id), name: `${base.name} ${k.name || ''}`.trim(), rate: Number(k.rate) || base.rate, parent: base.id });
+      if (!k?.id) continue;
+      if (String(k.id) === base.id) { base.child = String(k.name || '').replace(/[()]/g, '').trim(); continue; }
+      out.push({ ...base, id: String(k.id), name: `${base.name} ${k.name || ''}`.trim(), child: String(k.name || '').replace(/[()]/g, '').trim(), rate: Number(k.rate) || base.rate, parent: base.id });
     }
   }
   return out;
@@ -50,7 +54,7 @@ async function readCatalog(origin, fetchText, { onProgress } = {}) {
   const queue = [...paths];
   const workers = Array.from({ length: 3 }, async () => {
     for (let p; (p = queue.shift());) {
-      try { for (const s of parseGroupPage(await fetchText(origin + p), p)) if (!all.has(s.id) || !s.parent) all.set(s.id, s); } catch { /* bỏ qua nhóm lỗi */ }
+      try { for (const s of parseGroupPage(await fetchText(origin + p), p, paths.indexOf(p))) if (!all.has(s.id) || !s.parent) all.set(s.id, s); } catch { /* bỏ qua nhóm lỗi */ }
       onProgress?.(++done, paths.length);
     }
   });
