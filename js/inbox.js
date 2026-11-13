@@ -284,6 +284,7 @@
     if (S.conv !== c) return;
     $('ibCrm').hidden = false;
     if (render) await App.crm.renderPanel($('ibCrm'), { page: c.page, psid, name: c.other.name || '', messages: S.messages, isCurrent: () => draftKey(S.conv) === draftKey(c) });
+    if (render && App.services && S.conv === c) $('ibCrm').append(App.services.inboxBox({ page: c.page, key: c.key, name: c.other.name || '', messages: S.messages }));
     drawList();
   }
   async function sendBs(c, text) {

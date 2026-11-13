@@ -8,6 +8,8 @@ contextBridge.exposeInMainWorld('metaDesktop', {
   readThread: args => ipcRenderer.invoke('meta-thread-read', args),
   sendThread: args => ipcRenderer.invoke('meta-thread-send', args),
   openZalo: () => ipcRenderer.send('open-zalo'),
+  openService: url => ipcRenderer.send('open-svc', url),
+  svcApi: args => ipcRenderer.invoke('svc-api', args),
   openThread: args => ipcRenderer.invoke('meta-open-thread', args),
   composePost: args => ipcRenderer.invoke('meta-compose', args),
   loginFacebook: args => ipcRenderer.send('fb-login', args),

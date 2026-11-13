@@ -1,6 +1,6 @@
 // Meta Assistant cho Windows: mở trang web (luôn là bản mới nhất trên GitHub Pages) trong cửa sổ riêng
 // và chạy sẵn tiện ích Studio AI (ChatGPT) bên trong, không cần Chrome.
-const { app, BaseWindow, BrowserWindow, Menu, WebContentsView, clipboard, ipcMain, session, shell } = require('electron');
+const { app, BaseWindow, BrowserWindow, Menu, WebContentsView, clipboard, ipcMain, net, session, shell } = require('electron');
 const path = require('path'), crypto = require('crypto');
 const { ElectronChromeExtensions } = require('electron-chrome-extensions');
 const { createMetaAuto } = require('./meta-auto');
@@ -52,7 +52,7 @@ function handleDeepLink(link) {
 // Bản cũ (1.0.1–1.0.12) đăng ký metaassistant:// với Windows để đăng nhập qua Chrome; giờ không dùng nữa.
 app.removeAsDefaultProtocolClient(PROTOCOL);
 
-let extensions, mainWindow, pageView, panelView, metaView, zaloView, side = 'studio', group = '', studio; // side: cột phải 'studio' | 'meta' | ''; group: nhóm tab đang mở trên trang
+let extensions, mainWindow, pageView, panelView, metaView, zaloView, svcView, side = 'studio', group = '', studio; // side: cột phải 'studio' | 'meta' | ''; group: nhóm tab đang mở trên trang
 function newWindow(url, opts = {}) {
   const win = new BrowserWindow({ width: 1280, height: 860, icon: ICON, autoHideMenuBar: true, show: false, ...opts,
     webPreferences: { sandbox: true, contextIsolation: true, backgroundThrottling: false } });
@@ -187,13 +187,18 @@ app.whenReady().then(async () => {
   const ZALO = 'persist:zalo', zaloSes = session.fromPartition(ZALO);
   zaloSes.setUserAgent(app.userAgentFallback);
   zaloView = new WebContentsView({ webPreferences: { partition: ZALO, sandbox: true, contextIsolation: true, backgroundThrottling: false } });
+  // Web dịch vụ (vd dichvu.baostar.net): cột riêng, phiên đăng nhập riêng.
+  const svcSes = session.fromPartition('persist:svc');
+  svcSes.setUserAgent(app.userAgentFallback);
+  svcView = new WebContentsView({ webPreferences: { partition: 'persist:svc', sandbox: true, contextIsolation: true } });
   for (const wc of [metaView.webContents, worker.webContents, composer.webContents, zaloView.webContents]) await asChrome(wc);
   mainWindow.contentView.addChildView(panelView);
   mainWindow.contentView.addChildView(metaView);
   mainWindow.contentView.addChildView(zaloView);
+  mainWindow.contentView.addChildView(svcView);
   // Độ rộng cột phải (tỉ lệ cửa sổ), nhớ giữa các lần mở app.
   const LAYOUT_FILE = path.join(app.getPath('userData'), 'layout.json');
-  let widths = { studio: 0.32, meta: 0.45, zalo: 0.45 };
+  let widths = { studio: 0.32, meta: 0.45, zalo: 0.45, svc: 0.5 };
   try { widths = { ...widths, ...JSON.parse(require('fs').readFileSync(LAYOUT_FILE, 'utf8')) }; } catch {}
   const saveWidths = () => { try { require('fs').writeFileSync(LAYOUT_FILE, JSON.stringify(widths)); } catch {} };
   const BAR = 30;
@@ -207,8 +212,8 @@ app.whenReady().then(async () => {
     const w = cur ? Math.round(Math.min(0.8, Math.max(0.2, widths[cur])) * width) : 0;
     pageView.setBounds({ x: 0, y: 0, width: width - w, height });
     bar.setBounds(cur ? { x: width - w, y: 0, width: w, height: BAR } : { x: width, y: 0, width: 0, height: 0 });
-    for (const [name, v] of [['studio', panelView], ['meta', metaView], ['zalo', zaloView]]) v.setBounds(cur === name ? { x: width - w, y: BAR, width: w, height: height - BAR } : { x: width, y: 0, width: 0, height: 0 });
-    const title = cur === 'meta' ? 'Hộp thư Meta' : cur === 'studio' ? 'Studio AI' : cur === 'zalo' ? 'Zalo' : '';
+    for (const [name, v] of [['studio', panelView], ['meta', metaView], ['zalo', zaloView], ['svc', svcView]]) v.setBounds(cur === name ? { x: width - w, y: BAR, width: w, height: height - BAR } : { x: width, y: 0, width: 0, height: 0 });
+    const title = cur === 'meta' ? 'Hộp thư Meta' : cur === 'studio' ? 'Studio AI' : cur === 'zalo' ? 'Zalo' : cur === 'svc' ? 'Dịch vụ' : '';
     if (title && bar.webContents.__title !== title) { bar.webContents.__title = title; bar.webContents.loadFile(path.join(__dirname, 'bar.html'), { query: { t: title } }); }
   };
   mainWindow.on('resize', layout);
@@ -216,6 +221,7 @@ app.whenReady().then(async () => {
   wire(panelView.webContents, mainWindow, false);
   wire(metaView.webContents, mainWindow, false);
   wire(zaloView.webContents, mainWindow, false);
+  wire(svcView.webContents, mainWindow, false);
   // Luôn lấy index.html mới (GitHub Pages cho trình duyệt giữ bản cũ ~10 phút → trang chạy code cũ sau mỗi lần cập nhật web).
   pageView.webContents.loadURL(WEB, { extraHeaders: 'pragma: no-cache\ncache-control: no-cache\n' });
   if (studio) panelView.webContents.loadURL(`chrome-extension://${studio.id}/sidepanel.html?desktop=1`);
@@ -248,6 +254,24 @@ app.whenReady().then(async () => {
   }).catch(() => {});
   const openZalo = () => { if (!zaloView.webContents.getURL().startsWith('https://chat.zalo.me')) zaloView.webContents.loadURL('https://chat.zalo.me/').catch(() => {}); show('zalo', true); };
   ipcMain.on('open-zalo', e => { if (fromPage(e)) openZalo(); });
+  // Mở web dịch vụ ở cột phải (trang chủ do người dùng đặt trong tab Dịch vụ; chỉ https).
+  ipcMain.on('open-svc', (e, url) => {
+    if (!fromPage(e)) return;
+    try { const u = new URL(url); if (u.protocol !== 'https:') return; if (svcView.webContents.getURL() !== u.href) svcView.webContents.loadURL(u.href).catch(() => {}); } catch { return; }
+    show('svc', true);
+  });
+  // API dịch vụ (SMM, vd smm.baostar.net/api/v2): gọi từ tiến trình chính vì trang web gọi thẳng bị chặn CORS.
+  // Chỉ POST JSON tới URL https người dùng đặt; khoá API chỉ đi tới đúng URL đó.
+  ipcMain.handle('svc-api', async (e, { url, body } = {}) => {
+    if (!fromPage(e)) return { error: 'denied' };
+    let u; try { u = new URL(url); } catch { return { error: 'URL API không hợp lệ.' }; }
+    if (u.protocol !== 'https:') return { error: 'URL API phải là https.' };
+    try {
+      const r = await net.fetch(u.href, { method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json' }, body: JSON.stringify(body || {}) });
+      const text = await r.text();
+      try { return { status: r.status, json: JSON.parse(text) }; } catch { return { status: r.status, error: `API trả về không phải JSON (HTTP ${r.status}): ${text.slice(0, 160)}` }; }
+    } catch (err) { return { error: 'Không gọi được API dịch vụ: ' + err.message }; }
+  });
   const openMetaInbox = url => {
     if (!/^https:\/\/business\.facebook\.com\/latest\/inbox/.test(url)) return;
     if (metaView.webContents.getURL() !== url) metaView.webContents.loadURL(url);
@@ -348,7 +372,7 @@ app.whenReady().then(async () => {
   });
   layout();
   // Khoá app bằng mật khẩu (lớp phủ trên cùng); tạo sau mọi khung khác để luôn che được.
-  const appLock = setupLock({ mainWindow, focusPage: () => pageView.webContents.focus(), sessions: [ses, metaSes, zaloSes] });
+  const appLock = setupLock({ mainWindow, focusPage: () => pageView.webContents.focus(), sessions: [ses, metaSes, zaloSes, svcSes] });
   ipcMain.on('app-lock', (e, what) => { if (!fromPage(e)) return; if (what === 'settings') appLock.settings(); else if (what === 'now') appLock.lock(); });
   Menu.setApplicationMenu(Menu.buildFromTemplate([
     { label: 'Studio AI', accelerator: 'Ctrl+Shift+A', click: () => toggleStudio() },
@@ -388,7 +412,7 @@ app.whenReady().then(async () => {
       { label: 'Công cụ lỗi', accelerator: 'F12', click: () => pageView.webContents.toggleDevTools() }] },
   ]));
   app.appLock = appLock;
-  app.toggleStudio = toggleStudio; app.views = { page: pageView, panel: panelView, meta: metaView, zalo: zaloView, worker, bar };
+  app.toggleStudio = toggleStudio; app.views = { page: pageView, panel: panelView, meta: metaView, zalo: zaloView, svc: svcView, worker, bar };
   mainWindow.on('closed', () => { mainWindow = null; for (const w of [worker, composer]) if (!w.isDestroyed()) w.destroy(); app.quit(); });
   if (app.isPackaged) { checkUpdate().catch(() => {}); setInterval(() => checkUpdate().catch(() => {}), 2 * 3600e3); }
 });

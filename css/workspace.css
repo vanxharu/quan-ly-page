@@ -108,3 +108,12 @@ body:has([data-panel=inbox]:not([hidden])) main{padding-top:12px;padding-bottom:
 .dark-mode .sc-b-ok{color:#6fb0ff}.dark-mode .sc-b-soon{color:#ffab5e}.dark-mode .sc-b-late{color:#ff7d8a}.dark-mode .sc-b-app{color:#b39dff}.dark-mode .sc-b-ext{color:#b0b0bf}
 .sc-row.sc-s-soon{box-shadow:inset 3px 0 #e67e22}.sc-row.sc-s-late{box-shadow:inset 3px 0 #dc3545}.sc-row.sc-s-ok{box-shadow:inset 3px 0 #2f7ad6}
 .sc-wcard.sc-s-ok{border-left:3px solid #2f7ad6}.sc-wcard.sc-s-soon{border-left:3px solid #e67e22}.sc-wcard.sc-s-late{border-left:3px solid #dc3545}.sc-wcard.sc-from-app .sc-wpage::after{content:' · từ app';color:#7c5ce6}
+/* Dịch vụ */
+.svc-dialog{width:min(620px,calc(100vw - 32px));border:1px solid var(--border);border-radius:14px;padding:20px;background:var(--bg-card);color:var(--text-primary)}
+.svc-dialog::backdrop{background:#0812208c}
+.svc-dialog form{display:grid;gap:10px}
+.svc-sum{display:flex;flex-wrap:wrap;gap:14px;font-size:13px}
+.svc-inbox{margin-top:12px;padding-top:10px;border-top:1px solid var(--border);display:grid;gap:6px}
+.svc-links a{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:260px}
+.svc-prices{display:grid;gap:4px;max-height:360px;overflow:auto;margin-top:8px}
+.neg{color:var(--err-text)}

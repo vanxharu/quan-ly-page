@@ -10,7 +10,7 @@
     botlog: 'Xem hoạt động của bot và những đơn hàng mới.', comments: 'Lắng nghe và phản hồi các cuộc thảo luận.',
     scanner: 'Khám phá những nội dung đang được quan tâm.', dashboard: 'Một góc nhìn chung cho tất cả Page đang quản lý.',
     calendar: 'Bức tranh nội dung của bạn, theo từng ngày.', stats: 'Hiểu hiệu quả nội dung để quyết định bước tiếp theo.',
-    sales: 'Quản lý đơn hàng và theo dõi kết quả kinh doanh.', settings: 'Thiết lập không gian làm việc phù hợp với bạn.'
+    sales: 'Quản lý đơn hàng và theo dõi kết quả kinh doanh.', services: 'Đơn dịch vụ (like, follow…) tạo qua API web dịch vụ: giá gốc, giá bán, lời.', settings: 'Thiết lập không gian làm việc phù hợp với bạn.'
   };
   const side = h('aside', { id: 'workspaceSidebar', className: 'workspace-sidebar', hidden: true, 'aria-label': 'Các chức năng' });
   const search = h('input', { type: 'search', placeholder: 'Tìm chức năng…', 'aria-label': 'Tìm chức năng' });
