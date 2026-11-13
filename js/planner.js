@@ -13,9 +13,39 @@
   App.planner = { STATUS, pageOf: item => App.pageById(item.pageKey) || App.pages.find(p => String(item.pageKey || '').includes(p.id)) || App.pages.find(p => norm(p.name) === norm(item.pageName)) };
   const pageOf = App.planner.pageOf;
   const getSettings = async () => ({ ...defaults(), ...(await DB.get(SETTINGS, {})) });
+  // ── Giờ vàng ── Khung giờ tương tác cao nhất của chính Page: từ ~100 bài gần nhất, điểm mỗi bài = cảm xúc + 2×bình luận + 3×chia sẻ,
+  // gom theo giờ đăng (giờ máy), làm mượt để giờ ít bài không lấn át, lấy 3 giờ cao nhất. Ít dữ liệu → giờ cao điểm phổ biến ở VN.
+  const GOLDEN_FALLBACK = '11:30–13:00, 20:00–22:00';
+  function goldenWindows(posts) {
+    const rows = posts.map(p => ({ hour: new Date(p.created_time).getHours(), score: (p.reactions?.summary?.total_count || 0) + 2 * (p.comments?.summary?.total_count || 0) + 3 * (p.shares?.count || 0) }))
+      .filter(r => Number.isFinite(r.hour));
+    if (rows.length < 15) return null;
+    const mean = rows.reduce((a, r) => a + r.score, 0) / rows.length, PRIOR = 3, by = new Map();
+    for (const r of rows) { const b = by.get(r.hour) || { n: 0, sum: 0 }; b.n++; b.sum += r.score; by.set(r.hour, b); }
+    const ranked = [...by].filter(([, b]) => b.n >= 2).map(([hour, b]) => ({ hour, score: (b.sum + PRIOR * mean) / (b.n + PRIOR) })).sort((a, b) => b.score - a.score);
+    if (ranked.length < 2) return null;
+    const hours = ranked.slice(0, 3).map(r => r.hour).sort((a, b) => a - b);
+    return Pure.windowsLabel(hours.map(h => [h * 60, Math.min(1440, h * 60 + 60)]));
+  }
+  App.planner.goldenWindows = goldenWindows;
+  // Đọc lại giờ vàng mỗi tuần cho các Page đang bật giờ vàng; lưu vào cài đặt (s.golden[pageId] = { at, windows, n }).
+  async function ensureGolden(s, keys) {
+    const want = keys.filter(k => (s.pages?.[k]?.goldenHours ?? s.goldenHours) && !(Date.now() - (s.golden?.[k]?.at || 0) < 7 * 864e5));
+    if (!want.length) return;
+    s.golden ||= {};
+    for (const key of want) {
+      const page = App.pageById(key);
+      try {
+        const posts = page ? await apiPaged(`/${key}/posts`, { fields: 'created_time,reactions.summary(total_count).limit(0),comments.summary(total_count).limit(0),shares', limit: 100 }, page.access_token, 1) : [];
+        s.golden[key] = { at: Date.now(), windows: goldenWindows(posts) || '', n: posts.length };
+      } catch { s.golden[key] = { at: Date.now() - 6 * 864e5, windows: '', n: 0 }; } // lỗi: thử lại sau 1 ngày
+    }
+    await DB.set(SETTINGS, { ...(await DB.get(SETTINGS, {})), golden: s.golden });
+  }
   const cfgFor = (s, key) => {
     const src = s.pages?.[key] || s;
-    return { windows: Pure.parseWindows(src.windows ?? s.windows), perDay: Math.min(5, Math.max(1, Number(src.perDay) || 1)),
+    const golden = src.goldenHours ?? s.goldenHours;
+    return { windows: Pure.parseWindows(golden ? (s.golden?.[key]?.windows || GOLDEN_FALLBACK) : (src.windows ?? s.windows)), perDay: Math.min(5, Math.max(1, Number(src.perDay) || 1)),
       weekdays: Array.isArray(src.weekdays) ? src.weekdays : s.weekdays, ...(Array.isArray(src.days) && s.pages?.[key] ? { days: src.days } : {}) };
   };
 
@@ -313,6 +343,7 @@
   async function assignTimes(s, queue, waiting) {
     const byKey = new Map();
     for (const i of waiting) { const k = pageOf(i).id; (byKey.get(k) || byKey.set(k, []).get(k)).push(i); }
+    await ensureGolden(s, [...byKey.keys()]);
     // Bỏ ngày đăng đã qua (không còn hiện trên lịch chọn) để không xếp 0 bài mà không rõ lý do.
     const days = Pure.activeDays(s.days);
     if ((s.days || []).some(d => !days.includes(d))) { s.days = (s.days || []).filter(d => days.includes(d)); await DB.set(SETTINGS, { ...(await DB.get(SETTINGS, {})), days: s.days }); }
@@ -328,8 +359,13 @@
     $('plLog').replaceChildren();
     const s = await getSettings();
     const queue = await DB.get(QUEUE, []);
-    const waiting = queue.filter(i => ['draft', 'approved'].includes(i.status) && !i.at && pageOf(i) && App.isSelected(pageOf(i).id));
-    if (!waiting.length) return log('err', 'Không có bài nháp nào chưa xếp giờ.');
+    // Mọi bài chưa hẹn trên Facebook (nháp, đã duyệt, lỗi, lỡ giờ) của Page đang chọn; bài đã có giờ thì hỏi trước khi xếp lại.
+    let waiting = queue.filter(i => ['draft', 'approved', 'error', 'missed'].includes(i.status) && !i.aiGenerating && pageOf(i) && App.isSelected(pageOf(i).id));
+    if (!waiting.length) return log('err', 'Không có bài nào chưa hẹn trên Facebook để xếp giờ.');
+    const timed = waiting.filter(i => i.at);
+    if (timed.length && !confirm(`${timed.length} bài đã có giờ đăng. Xếp lại giờ cho cả những bài này?\n\nOK: xếp lại tất cả · Huỷ: chỉ xếp bài chưa có giờ`)) waiting = waiting.filter(i => !i.at);
+    if (!waiting.length) return log('err', 'Không có bài nào chưa có giờ.');
+    for (const i of waiting) { i.at = 0; if (['error', 'missed'].includes(i.status)) Object.assign(i, { status: 'approved', error: '' }); }
     const { n, byKey, days } = await assignTimes(s, queue, waiting);
     await DB.set(QUEUE, queue);
     const left = [...byKey.values()].reduce((a, l) => a + l.length, 0);
@@ -341,7 +377,8 @@
       if (!days.some(d => cfg.weekdays.includes(new Date(d + 'T00:00').getDay()))) return `${name}: các ngày đăng đã chọn không rơi vào ngày trong tuần của Page này`;
       return `${name}: đã kín ${cfg.perDay} bài/ngày trong các ngày đã chọn`;
     });
-    log(left ? 'pending' : 'ok', `Đã xếp giờ ${n} bài.${left ? ` Còn ${left} bài chưa có chỗ — ${why.join('; ')}. Chọn thêm ngày đăng, ngày trong tuần hoặc tăng số bài/ngày.` : ''}`);
+    const goldenNote = [...byKey.keys()].filter(k => s.pages?.[k]?.goldenHours ?? s.goldenHours).map(k => `${App.pageById(k)?.name || k}: ${s.golden?.[k]?.windows || GOLDEN_FALLBACK + ' (giờ phổ biến)'}`);
+    log(left ? 'pending' : 'ok', `Đã xếp giờ ${n} bài.${goldenNote.length ? ` Giờ vàng — ${goldenNote.join('; ')}.` : ''}${left ? ` Còn ${left} bài chưa có chỗ — ${why.join('; ')}. Chọn thêm ngày đăng, ngày trong tuần hoặc tăng số bài/ngày.` : ''}`);
     refresh();
   }
 
@@ -357,7 +394,14 @@
       h('div', { className: 'card-head' }, h('h3', { className: 'card-title', textContent: 'Khung giờ & số bài' }),
         h('select', { style: 'width:auto;max-width:200px', onchange: e => { scope = e.target.value; refresh(); } },
           h('option', { value: 'default', textContent: 'Mặc định mọi Page' }), ...App.selected().map(p => h('option', { value: p.id, textContent: (s.pages[p.id] ? '★ ' : '') + p.name, selected: p.id === scope })))),
-      h('label', { className: 'field' }, 'Khung giờ tương tác', h('input', { type: 'text', value: src.windows ?? s.windows, placeholder: Pure.DEFAULT_WINDOWS,
+      h('label', { className: 'row', style: 'gap:8px;margin-bottom:8px' }, h('input', { type: 'checkbox', checked: !!(src.goldenHours ?? s.goldenHours), onchange: e => save({ goldenHours: e.target.checked }) }),
+        '⭐ Đăng vào giờ vàng (giờ Page có nhiều tương tác nhất)'),
+      (src.goldenHours ?? s.goldenHours) ? h('p', { className: 'hint', style: 'margin:-4px 0 8px' }, (() => {
+        const keys = scope === 'default' ? App.selected().map(p => p.id) : [scope];
+        const known = keys.map(k => s.golden?.[k] ? `${App.pageById(k)?.name || k}: ${s.golden[k].windows || GOLDEN_FALLBACK + ' (ít bài, dùng giờ phổ biến)'}` : '').filter(Boolean);
+        return `Tính từ ~100 bài gần nhất (cảm xúc + 2×bình luận + 3×chia sẻ theo giờ đăng), cập nhật mỗi tuần khi bấm Xếp giờ tự động.${known.length ? ' ' + known.join(' · ') : ''}`;
+      })()) : null,
+      h('label', { className: 'field' }, (src.goldenHours ?? s.goldenHours) ? 'Khung giờ tương tác (không dùng khi bật giờ vàng)' : 'Khung giờ tương tác', h('input', { type: 'text', value: src.windows ?? s.windows, placeholder: Pure.DEFAULT_WINDOWS, disabled: !!(src.goldenHours ?? s.goldenHours),
         onchange: e => save({ windows: Pure.windowsLabel(Pure.parseWindows(e.target.value)) || Pure.DEFAULT_WINDOWS }) })),
       h('div', { className: 'row', style: 'margin-top:10px' },
         h('label', { className: 'row', style: 'gap:6px' }, 'Bài/ngày', h('select', { style: 'width:auto', onchange: e => save({ perDay: Number(e.target.value) }) },

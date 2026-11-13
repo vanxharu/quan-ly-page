@@ -14,7 +14,7 @@ const section=planner.slice(planner.indexOf('  const metaCache = new Map();'),pl
     getSettings:async()=>({windows:window.Pure.DEFAULT_WINDOWS,perDay:1,weekdays:[0,1,2,3,4,5,6],days:[],pages:{}}),
     cfgFor:(s)=>({windows:window.Pure.parseWindows(s.windows),perDay:s.perDay,weekdays:s.weekdays}),
     norm:v=>String(v||'').toLowerCase(),fmtTime:t=>new Date(t).toISOString(),refresh:()=>{},log:(c,t)=>logs.push(t),logLinks:()=>{},
-    $:()=>({replaceChildren(){},disabled:false}),api:async()=>({data:[]}),
+    $:()=>({replaceChildren(){},disabled:false}),api:async()=>({data:[]}),ensureGolden:async()=>{},
     App:{planner:{},plannerRunning:new Set(),batchProgress:null,publish:async(p,text,o)=>{published.push(o?.scheduledAt||o?.at||text);return {id:'X'+published.length};}},
     patch:async(id,ch)=>{db.fbScheduleQueueV1=db.fbScheduleQueueV1.map(i=>i.id===id?{...i,...ch}:i);},Date,Map,Set,Math,Number,String,Error,Object,Promise,JSON});
   vm.runInContext(section+';this.all=scheduleAll;',ctx);
