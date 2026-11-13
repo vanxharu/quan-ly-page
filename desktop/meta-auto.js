@@ -104,8 +104,13 @@ function readMessages(scrollUp) {
   }
   const area = col.getBoundingClientRect(), mid = area.left + area.width / 2, items = [];
   for (const el of blocks) {
-    const r = el.getBoundingClientRect(), mine = r.left + r.width / 2 > mid;
-    const text = [...el.querySelectorAll('[dir="auto"]')].filter(x => !x.parentElement.closest('[dir="auto"]')).map(x => (x.innerText || '').trim()).filter(Boolean).join('\n');
+    // Khối [data-message-id] có khi rộng cả cột → xét chính nội dung (chữ/ảnh): sát lề phải = tin của Page, sát lề trái = tin khách.
+    const r = el.getBoundingClientRect();
+    const parts = [...el.querySelectorAll('[dir="auto"]')].filter(x => !x.parentElement.closest('[dir="auto"]'));
+    const boxes = [...parts, ...el.querySelectorAll('img')].map(x => x.getBoundingClientRect()).filter(b => b.width > 4 && b.height > 4);
+    const L = boxes.length ? Math.min(...boxes.map(b => b.left)) : r.left, R = boxes.length ? Math.max(...boxes.map(b => b.right)) : r.right;
+    const mine = boxes.length ? (L - area.left) > (area.right - R) : r.left + r.width / 2 > mid;
+    const text = parts.map(x => (x.innerText || '').trim()).filter(Boolean).join('\n');
     if (text) items.push({ y: r.top, mine, text });
     for (const img of el.querySelectorAll('img')) {
       const b = img.getBoundingClientRect(), src = img.currentSrc || img.src;
