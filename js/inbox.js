@@ -258,7 +258,20 @@
     if (!older) c.bsSig = sig;
     drawBs(c, r, { silent, older });
     S.messages = (r.messages || []).filter(m => !m.sep).map(m => ({ isCustomer: !m.mine, text: m.text || '' }));
+    clearIfSent(c, r.messages || []);
     if (!older) await tagAndCrm(c, { render: !silent });
+  }
+  // Ô nhập vẫn còn nội dung đã thực sự gửi (vd lần gửi trước báo lỗi nhầm): thấy tin của Page trùng nội dung trong hội thoại thì dọn ô nhập.
+  // So khớp bỏ dấu cách, emoji, ký tự đặc biệt (Business Suite hiện emoji dạng ảnh nên chữ đọc được thiếu emoji).
+  const bare = t => String(t || '').normalize('NFC').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
+  function clearIfSent(c, msgs) {
+    if (S.conv !== c || S.sending) return;
+    const t = bare($('ibText').value); if (t.length < 12) return;
+    const head = t.slice(0, 60), tail = t.slice(-40);
+    const sent = msgs.filter(m => m.mine && m.text).slice(-5).some(m => { const b = bare(m.text); return b.includes(head) && b.includes(tail); });
+    if (!sent) return;
+    $('ibText').value = ''; S.image = ''; S.tpl = null; drawAttach(); saveDraft(); updateSendState();
+    toast('Tin này đã có trong hội thoại: đã dọn ô nhập để tránh gửi lặp.', 5000);
   }
   function drawBs(c, r, { silent = false, older = false } = {}) {
     const thread = $('ibThread'), atBottom = thread.scrollHeight - thread.clientHeight - thread.scrollTop < 70;
