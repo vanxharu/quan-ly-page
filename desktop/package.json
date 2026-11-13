@@ -1,6 +1,6 @@
 {
   "name": "meta-assistant",
-  "version": "1.0.50",
+  "version": "1.0.51",
   "description": "Meta Assistant cho Windows: quản lý Page Facebook + Studio AI",
   "main": "main.js",
   "scripts": {
@@ -52,7 +52,8 @@
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
-      "shortcutName": "Get Helps"
+      "shortcutName": "Get Helps",
+      "include": "build/installer.nsh"
     },
     "publish": {
       "provider": "github",
