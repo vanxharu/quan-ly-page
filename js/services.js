@@ -24,13 +24,24 @@
       catch (e) { throw Error('Trình duyệt chặn gọi API dịch vụ (CORS). Dùng app Windows để tạo đơn dịch vụ.'); }
     }
     if (r.error) throw Error(r.error);
-    if (r.json?.error) throw Error('Web dịch vụ: ' + r.json.error);
-    return r.json;
+    const j = r.json;
+    if (j?.error) throw Error('Web dịch vụ: ' + j.error);
+    // Baostar bọc kết quả: { success, message, status, data }. API SMM chuẩn thì trả thẳng.
+    if (j && typeof j === 'object' && !Array.isArray(j) && 'success' in j) {
+      if (j.success === false || j.success === 0 || j.success === 'false') throw Error('Web dịch vụ: ' + (j.message || j.msg || `lỗi HTTP ${j.status || r.status}`));
+      return j.data ?? j;
+    }
+    return j;
   }
+  // Danh sách dịch vụ có thể là mảng, { data: [...] }, { services: [...] } hoặc object theo mã dịch vụ.
+  const asList = v => Array.isArray(v) ? v : Array.isArray(v?.data) ? v.data : Array.isArray(v?.services) ? v.services
+    : v && typeof v === 'object' ? Object.values(v).filter(x => x && typeof x === 'object') : [];
   async function services(force = false) {
     const c = await DB.get(CACHE, null);
     if (!force && c?.list?.length && Date.now() - c.at < 864e5) return c.list;
-    const list = (await call('services')).map(x => ({ id: String(x.service), name: String(x.name || ''), category: String(x.category || ''), rate: Number(x.rate) || 0, min: Number(x.min) || 1, max: Number(x.max) || 1e9 }));
+    const raw = asList(await call('services'));
+    if (!raw.length) throw Error('Web dịch vụ không trả về dịch vụ nào. Kiểm tra lại API key và URL API.');
+    const list = raw.map(x => ({ id: String(x.service ?? x.id ?? x.service_id), name: String(x.name || ''), category: String(x.category || ''), rate: Number(x.rate) || 0, min: Number(x.min) || 1, max: Number(x.max) || 1e9 }));
     await DB.set(CACHE, { at: Date.now(), list });
     return list;
   }
@@ -88,6 +99,7 @@
       const btn = form.querySelector('button[type=submit]'); btn.disabled = true; btn.textContent = 'Đang tạo đơn…';
       try {
         const r = await call('add', { service: Number(svc.id), link: linkIn.value.trim(), quantity: n });
+        if (r && !r.order) r.order = r.order_id ?? r.orderId ?? r.id;
         if (!r?.order) throw Error('Web dịch vụ không trả mã đơn.');
         if (remember.checked && price) await saveSettings({ prices: { ...(await settings()).prices, [svc.id]: price } });
         const order = { id: uid('ord'), at: Date.now(), updatedAt: Date.now(), source: 'service', provider: new URL(s.apiUrl).hostname, providerOrderId: String(r.order),
