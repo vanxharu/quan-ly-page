@@ -67,7 +67,7 @@ function readRows(scroll) {
 
 // Chạy trong trang Business Suite: các hội thoại đang hiện, kèm tin cuối, giờ (chữ Meta ghi) và chưa đọc (tin cuối in đậm).
 function readThreads(scroll) {
-  const isTime = s => /^(vừa xong|now|\d+\s*(giây|phút|giờ|ngày|tuần|tháng|năm|[smhdwy])|\d{1,2}:\d{2}|th\s?[2-7]|cn|\d{1,2}\s*thg\s*\d{1,2}|\d{1,2}\/\d{1,2}(\/\d{2,4})?)$/i.test(s);
+  const isTime = s => /^(vừa xong|now|\d+\s*(giây|phút|giờ|ngày|tuần|tháng|năm|[smhdwy])|\d{1,2}:\d{2}|th\s?[2-7]|cn|\d{1,2}\s*(thg|tháng)\s*\d{1,2}(,\s*\d{4})?|\d{1,2}\/\d{1,2}(\/\d{2,4})?)$/i.test(s);
   const rows = [...document.querySelectorAll('[data-maiba-contact-id][data-maiba-contact-type="fb_user"]')].map(el => {
     const title = el.querySelector('[data-surface$="lib:thread_title"]'), name = (title?.innerText || '').trim();
     const leaves = [...el.querySelectorAll('span,div,abbr')].filter(x => x.childElementCount === 0 && !title?.contains(x));
@@ -89,33 +89,38 @@ function readThreads(scroll) {
   return rows;
 }
 
-// Chạy trong trang Business Suite: tin của hội thoại đang mở. Không dựa vào tên class (Meta đổi liên tục) mà dựa vào bố cục:
-// vùng cuộn lớn nhất trong cột hội thoại; bong bóng lệch phải = Page gửi, lệch trái = khách, nằm giữa = mốc giờ.
+// Chạy trong trang Business Suite: tin của hội thoại đang mở. Mỗi tin là một khối [data-message-id] trong cột hội thoại
+// (theo giao diện thật 11/2026); bong bóng lệch phải = Page gửi, lệch trái = khách; dòng mốc "20:55 28 Tháng 10, 2026" = mốc giờ.
 // scrollUp=true thì cuộn lên đầu để Business Suite tải tin cũ hơn.
 function readMessages(scrollUp) {
   const col = document.querySelector('[data-surface$="lib:inbox:detail_column"]');
   if (!col) return null;
-  const scroller = [...col.querySelectorAll('div')].filter(d => d.clientHeight > 80 && /auto|scroll/.test(getComputedStyle(d).overflowY))
-    .sort((a, b) => b.clientHeight - a.clientHeight)[0];
-  if (!scroller) return null;
-  if (scrollUp) { scroller.scrollTop = 0; return { scrolled: true }; }
-  const box = scroller.getBoundingClientRect(), mid = box.left + box.width / 2;
-  const items = [];
-  for (const el of scroller.querySelectorAll('[dir="auto"], img')) {
-    if (el.closest('[contenteditable="true"],[role="textbox"],[role="button"],button')) continue;
-    const r = el.getBoundingClientRect(); if (r.width < 2 || r.height < 2) continue;
-    const center = r.left + r.width / 2, mine = center > mid, centered = Math.abs(center - mid) < box.width * 0.08 && r.width < box.width * 0.6;
-    if (el.tagName === 'IMG') {
-      const src = el.currentSrc || el.src;
-      if (Math.max(r.width, r.height) >= 60 && /scontent|fbcdn\.net\/v\//.test(src)) items.push({ y: r.top, mine, pic: src });
-      continue;
+  const blocks = [...col.querySelectorAll('[data-message-id]')];
+  if (scrollUp) {
+    let box = blocks[0]?.parentElement;
+    while (box && box !== col && !(box.scrollHeight > box.clientHeight + 20)) box = box.parentElement;
+    if (box) box.scrollTop = 0;
+    return { scrolled: true };
+  }
+  const area = col.getBoundingClientRect(), mid = area.left + area.width / 2, items = [];
+  for (const el of blocks) {
+    const r = el.getBoundingClientRect(), mine = r.left + r.width / 2 > mid;
+    const text = [...el.querySelectorAll('[dir="auto"]')].filter(x => !x.parentElement.closest('[dir="auto"]')).map(x => (x.innerText || '').trim()).filter(Boolean).join('\n');
+    if (text) items.push({ y: r.top, mine, text });
+    for (const img of el.querySelectorAll('img')) {
+      const b = img.getBoundingClientRect(), src = img.currentSrc || img.src;
+      if (Math.max(b.width, b.height, img.naturalWidth || 0) >= 60 && /fbcdn\.net|scontent/.test(src)) items.push({ y: b.top + 0.1, mine, pic: src });
     }
-    if (el.querySelector('[dir="auto"]')) continue; // chỉ lấy lớp chữ trong cùng
-    const text = (el.innerText || '').trim(); if (!text) continue;
-    items.push(centered ? { y: r.top, sep: text } : { y: r.top, mine, text });
+  }
+  const SEP = /^\d{1,2}:\d{2}(\s+\d{1,2}\s+tháng\s+\d{1,2}(,\s*\d{4})?)?$|^(hôm nay|hôm qua|today|yesterday)\b/i;
+  const seen = new Set();
+  for (const el of col.querySelectorAll('div,span')) {
+    if (el.childElementCount || el.closest('[data-message-id],[data-surface$="detail_view_header"],[contenteditable="true"]')) continue;
+    const t = (el.innerText || '').trim(), y = el.getBoundingClientRect().top;
+    if (SEP.test(t) && !seen.has(t + y)) { seen.add(t + y); items.push({ y: y - 0.1, sep: t }); }
   }
   items.sort((a, b) => a.y - b.y);
-  return { messages: items.map(({ y, ...m }) => m), atTop: scroller.scrollTop === 0 };
+  return { messages: items.map(({ y, ...m }) => m), count: blocks.length };
 }
 
 // Chạy trong trang: tìm phần tử hiện trên màn hình theo selector / role / chữ / nhãn (aria-labelledby), cuộn vào giữa, trả toạ độ tâm.

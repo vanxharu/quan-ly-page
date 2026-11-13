@@ -196,7 +196,7 @@
     const d = new Date(now);
     if ((m = t.match(/^(\d{1,2}):(\d{2})$/))) { d.setHours(+m[1], +m[2], 0, 0); return d.getTime() > now ? d.getTime() - 864e5 : d.getTime(); }
     if ((m = t.match(/^(?:th\s?([2-7])|(cn))$/))) { const want = m[2] ? 0 : m[1] - 1; d.setHours(12, 0, 0, 0); d.setDate(d.getDate() - (((d.getDay() - want) + 7) % 7 || 7)); return d.getTime(); }
-    if ((m = t.match(/^(\d{1,2})(?:\s*thg\s*|\/)(\d{1,2})(?:\/(\d{2,4}))?$/))) {
+    if ((m = t.match(/^(\d{1,2})(?:\s*(?:thg|tháng)\s*|\/)(\d{1,2})(?:(?:\/|,\s*)(\d{2,4}))?$/))) {
       const y = m[3] ? (m[3].length === 2 ? 2000 + +m[3] : +m[3]) : d.getFullYear();
       let at = new Date(y, m[2] - 1, +m[1], 12).getTime();
       if (!m[3] && at > now) at = new Date(y - 1, m[2] - 1, +m[1], 12).getTime();
