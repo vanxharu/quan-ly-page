@@ -1,5 +1,5 @@
 (() => {
-  const $=id=>document.getElementById(id),panelId=crypto.randomUUID(),P=MetaAIProtocol,UI_VERSION='2.5.8';
+  const $=id=>document.getElementById(id),panelId=crypto.randomUUID(),P=MetaAIProtocol,UI_VERSION='2.5.9';
   $('appVersion').textContent='v'+UI_VERSION;
   $('postPrompt').textContent=P.POST_PROMPT;$('imagePrompt').textContent=P.IMAGE_PROMPT;
   let settingsKey='',updating=false,state={},catalogStamp=0,choices={},loadTimer,view='compose',transport='embedded',frameReady=false,frameLoaded=false,frameDelivered=false,pendingRun=null,frameTimer,runAckTimer,frameAck=false,frameClaimed=false,lastFrameInfo=null,versionMismatch=false,frameNavigationReady=false,bufferedReady=null,frameJobId='';
@@ -112,7 +112,7 @@
   $('generate').onclick=async()=>{try{
     const pages=selected(),n=count();if(!pages.length)throw Error('Chọn ít nhất một Page.');if(!Number.isSafeInteger(n)||!Number.isSafeInteger(pages.length*n))throw Error('Số bài phải là số nguyên dương hợp lệ.');
     const items=[];for(const page of pages)for(let i=0;i<n;i++)items.push({key:'post-'+crypto.randomUUID(),pageId:page.id,pageName:page.name});
-    if(versionMismatch)throw Error('Cần tải lại toàn bộ tiện ích để nạp bộ nền 2.5.8.');
+    if(versionMismatch)throw Error('Cần tải lại toàn bộ tiện ích để nạp bộ nền 2.5.9.');
     $('generate').disabled=true;const result=await call('PANEL_GENERATE',{payload:{items,images:$('images').checked},transport,panelId});notice('');if(transport==='embedded'){if(!result.runJob)throw Error('Bộ nền chưa trả lệnh cho khung nhúng. Cần tải lại tiện ích.');await mountFrame(result.runJob);}switchView('gpt');await load();
   }catch(e){notice(e.message,true);await load().catch(()=>{});}};
   $('cancel').onclick=async()=>{try{pendingRun=null;const id=state.panelJob?.id;await call('PANEL_CANCEL');if(frameReady&&id)$('gptFrame').contentWindow.postMessage({source:'META_STUDIO_PANEL',type:'FRAME_CANCEL',jobId:id},'https://chatgpt.com');await load();}catch(e){notice(e.message,true);}};

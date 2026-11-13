@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Meta Assistant · Kết nối ChatGPT",
-  "version": "2.5.8",
+  "version": "2.5.9",
   "description": "Studio AI: chọn Page có avatar, tạo bài và ảnh bằng GPT nhúng, lưu nháp và chuyển sang web khi bạn chọn.",
   "permissions": [
     "storage",
@@ -57,5 +57,15 @@
     "32": "icons/logo.png",
     "48": "icons/logo.png",
     "128": "icons/logo.png"
-  }
+  },
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "page-reader.js"
+      ],
+      "matches": [
+        "https://chatgpt.com/*"
+      ]
+    }
+  ]
 }
