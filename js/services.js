@@ -17,7 +17,9 @@
   // dichvu.baostar.net là hệ thống khác; key API thuộc smm.baostar.net → tự đổi cài đặt cũ.
   const settings = async () => { const s = { ...DEFAULTS, ...(await DB.get(SET, {})) };
     if (/^https?:\/\/dichvu\.baostar\.net/i.test(s.home)) { s.home = DEFAULTS.home; await DB.set(SET, s); }
+    platIcons = s.platformIcons || {};
     return s; };
+  let platIcons = {};
   const saveSettings = async change => DB.set(SET, { ...(await settings()), ...change });
   // Trạng thái của web dịch vụ → trạng thái đơn chung (Bán hàng chỉ tính tiền đơn done/returned).
   const FINAL = /^(completed|partial|canceled|cancelled|refunded)$/i;
@@ -188,6 +190,7 @@
     Google: ['GG', '#4285f4'], Telegram: ['TG', '#229ed9'], 'X-Twitter': ['X', '#000000'], Threads: ['TH', '#101010'], Lazada: ['LZ', '#0f146d'] };
   const LINK_PLAT = { facebook: 'Facebook', tiktok: 'TikTok', instagram: 'Instagram', youtube: 'Youtube', shopee: 'Shopee', telegram: 'Telegram' };
   const platBadge = (p, size = 26) => { const [ab, c] = PLAT[p] || [String(p || '?').slice(0, 2).toUpperCase(), '#64748b'];
+    if (platIcons[p]) return h('img', { className: 'plat-badge img', src: platIcons[p], alt: p, title: p, style: `width:${size}px;height:${size}px` });
     return h('span', { className: 'plat-badge', title: p || '', textContent: ab, style: `background:${c};width:${size}px;height:${size}px;font-size:${Math.round(size * 0.4)}px` }); };
   const TAGS = [[/\bvip\b/i, 'VIP', 'vip'], [/theo tháng|\d+\s*tháng/i, 'Theo tháng', 'month'], [/mua theo bài/i, 'Theo bài', 'month'], [/\b(việt|viet|vn)\b|việt nam/i, 'Việt', 'vn'],
     [/\b(tây|tay)\b/i, 'Tây', 'west'], [/không bảo hành|\bkbh\b/i, 'Không BH', 'nowarr'], [/bảo hành \d+|bảo hành 30|bh \d+/i, 'Bảo hành', 'warr'], [/cực nhanh|siêu tốc|siêu nhanh/i, 'Nhanh', 'fast']];
@@ -843,7 +846,21 @@
       for (const x of shown) if (x.unitCost > 0 && (!onlyEmpty || p[x.id] == null)) { p[x.id] = autoUnitPrice(x.unitCost, k); n++; }
       await saveSettings({ prices: p, markup: k }); toast(`Đã đặt giá cho ${n} dịch vụ (gốc + ${k}%).`); drawPrices();
     };
-    const pkgBox = h('div', { className: 'svc-pkgs' }), invBox = h('div', { className: 'svc-inv-set' });
+    const pkgBox = h('div', { className: 'svc-pkgs' }), invBox = h('div', { className: 'svc-inv-set' }), iconBox = h('div', { className: 'plat-icons' });
+    const toIcon = file => new Promise((ok, no) => { const r = new FileReader(); r.onerror = no; r.onload = () => { const im = new Image(); im.onerror = () => no(Error('Không đọc được ảnh.'));
+      im.onload = () => { const c = document.createElement('canvas'); c.width = c.height = 64; const x = c.getContext('2d'), k = Math.min(64 / im.width, 64 / im.height) || 1, w = im.width * k, hh = im.height * k;
+        x.drawImage(im, (64 - w) / 2, (64 - hh) / 2, w, hh); ok(c.toDataURL('image/png')); }; im.src = r.result; }; r.readAsDataURL(file); });
+    const drawIcons = async () => {
+      const cur = (await settings()).platformIcons || {};
+      let list = []; try { list = await services(); } catch {}
+      const plats = [...new Set([...Object.keys(PLAT), ...list.map(x => x.platform).filter(Boolean)])];
+      const saveIcon = async (p, v) => { const icons = { ...((await settings()).platformIcons || {}) }; if (v) icons[p] = v; else delete icons[p]; await saveSettings({ platformIcons: icons }); platIcons = icons; drawIcons(); drawPrices(); };
+      iconBox.replaceChildren(...plats.map(p => { const file = h('input', { type: 'file', accept: 'image/*', hidden: true, onchange: async e => { const f = e.target.files[0]; if (!f) return;
+          try { await saveIcon(p, await toIcon(f)); toast('Đã lưu huy hiệu ' + p + '.'); } catch (err) { toast(err.message, 5000); } } });
+        return h('div', { className: 'plat-icon-row' }, platBadge(p, 32), h('span', { className: 'grow', textContent: p }), file,
+          h('button', { type: 'button', className: 'btn btn-ghost btn-sm', textContent: cur[p] ? 'Đổi ảnh' : '⬆ Tải ảnh', onclick: () => file.click() }),
+          cur[p] ? h('button', { type: 'button', className: 'btn btn-ghost btn-sm', textContent: 'Xoá', onclick: () => saveIcon(p, '') }) : null); }));
+    };
     const savePkgs = async list => saveSettings({ packages: list });
     const drawPkgs = async () => {
       let list = []; try { list = await services(); } catch { list = []; }
@@ -934,10 +951,13 @@
       h('h4', { className: 'card-title', style: 'margin:22px 0 6px', textContent: 'Gói bán của tôi' }),
       h('p', { className: 'hint', textContent: 'Gói là tên + giá bạn bán cho khách, gắn với một máy chủ gốc. Đổi máy chủ gốc bất cứ lúc nào (vd máy chủ cũ bảo trì); khách chỉ thấy tên gói.' }),
       pkgBox,
+      h('h4', { className: 'card-title', style: 'margin:22px 0 6px', textContent: 'Huy hiệu nền tảng' }),
+      h('p', { className: 'hint', textContent: 'Tải ảnh riêng cho từng nền tảng (PNG/JPG/SVG). App thu nhỏ còn 64×64 và dùng ở mọi bộ chọn. Chưa tải thì dùng huy hiệu chữ.' }),
+      iconBox,
       h('h4', { className: 'card-title', style: 'margin:22px 0 6px', textContent: 'Hoá đơn gửi khách' }),
       invBox);
     if (s.apiKey) drawPrices(); else priceBox.replaceChildren(h('p', { className: 'hint', textContent: 'Nhập API key rồi Lưu để tải danh sách dịch vụ.' }));
-    drawPkgs(); drawInvoiceSettings(s);
+    drawPkgs(); drawInvoiceSettings(s); drawIcons();
   }
   App.services = { createDialog, inboxBox, refreshStatus, linksIn, call, openWeb, mapStatus, catalogProgress, noteLines, speedOf, invoiceDialog, invoiceText, paymentDialog, confirmCreate, quotes, renewQuote, vipTick, termOf };
 })();
