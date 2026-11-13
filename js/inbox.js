@@ -674,8 +674,10 @@
     const c = S.conv;
     if (!c || !key || c.key !== key || !S.draftReady || S.sending) return false;
     $('ibText').value = text; S.image = image; S.tpl = null; drawAttach(); await saveDraft(); updateSendState();
-    if (autoSend) await send();
-    return true;
+    if (!autoSend) return true;
+    await send();
+    // send() tự bắt lỗi và chỉ xoá ô nhập khi gửi thành công → còn chữ/ảnh nghĩa là chưa gửi được.
+    return S.conv === c && !$('ibText').value.trim() && !S.image;
   };
   App.inbox.openKey = () => S.conv?.key || '';
   async function send() {

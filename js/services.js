@@ -8,6 +8,7 @@
   // { id, payCode, at, expiresAt, state: 'quote' | 'paid' (đã thu, chưa tạo đơn), paidAmount, paidAt, payNote, lastError,
   //   link, qty, sell, cost, costManual, displayName, packageId, serviceId, serviceName, customerKey, pageKey, pageName, pageAvatar, customer, sentAt }
   const QUOTES = 'svcQuotesV1', QUOTE_TTL = 24 * 3600e3;
+  const creating = new Set(); // khoá trong bộ nhớ: mỗi báo giá chỉ một lượt tạo đơn tại một thời điểm
   const quotes = () => DB.get(QUOTES, []);
   const saveQuote = async q => { const all = await quotes(), i = all.findIndex(x => x.id === q.id); if (i < 0) all.push(q); else all[i] = q; await DB.set(QUOTES, all); return q; };
   const dropQuote = async id => DB.set(QUOTES, (await quotes()).filter(x => x.id !== id));
@@ -134,6 +135,7 @@
   }
   // Giá gốc ước tính = giá gốc 1 đơn vị × số lượng. Giá thật lấy theo "charge" khi web đã nhận đơn.
   const estCost = (svc, qty) => svc ? (svc.unitCost || 0) * qty : 0;
+  const num = v => Number(String(v ?? '').replace(/[^0-9.\-]/g, ''));
   const m2 = v => `${(Number(v) || 0).toLocaleString('vi-VN', { maximumFractionDigits: 2 })}đ`;
   const pct = (sell, cost) => cost > 0 ? ` (${Math.round((sell - cost) / cost * 100)}%)` : '';
   const orderOf = o => ({ sell: (o.items?.[0]?.price || 0) * (o.items?.[0]?.qty || 0), cost: (o.items?.[0]?.cost || 0) * (o.items?.[0]?.qty || 0) });
@@ -480,12 +482,17 @@
     document.body.append(dlg); dlg.showModal(); render();
   }
   // ── Đã nhận tiền → (lệch thì hỏi) → kiểm tra → bạn bấm tạo đơn Baostar ──
-  function paymentDialog(q) {
+  function paymentDialog(q0) {
+    let q = q0;
     const dlg = h('dialog', { className: 'svc-dialog', onclose: () => dlg.remove() });
     const amt = h('input', { type: 'number', min: 0, step: 'any', value: amountDue(q), required: true });
     const note = h('input', { type: 'text', placeholder: 'Ghi chú (vd: CK lúc 19:05, Vietcombank)' });
     const msg = h('div', { className: 'svc-sum' }), acts = h('div', { className: 'row', style: 'gap:8px;justify-content:flex-end;flex-wrap:wrap' });
     const record = async (state, extra = '') => {
+      const fresh = (await quotes()).find(x => x.id === q.id);
+      if (!fresh) { dlg.close(); return toast('Báo giá này đã được tạo đơn hoặc đã huỷ.', 5000); }
+      if (fresh.state === 'paid' && fresh.paidAmount !== q.paidAmount) { dlg.close(); return toast('Báo giá vừa được ghi nhận tiền ở nơi khác. Mở lại để xem số mới.', 6000); }
+      q = fresh;
       const add = Number(amt.value) || 0, total = (q.paidAmount || 0) + add;
       Object.assign(q, { paidAmount: total, paidAt: Date.now(), state, payNote: [q.payNote, note.value.trim(), extra].filter(Boolean).join(' · ') });
       await saveQuote(q); dlg.close(); App.tabs.services?.refresh?.();
@@ -509,7 +516,8 @@
       h('label', { className: 'field' }, 'Số tiền vừa nhận (đ)', amt), h('label', { className: 'field', style: 'margin-top:8px' }, 'Ghi chú', note), msg, acts);
     document.body.append(dlg); dlg.showModal(); draw(); amt.select();
   }
-  async function confirmCreate(q) {
+  async function confirmCreate(q0) {
+    let q = q0;
     const s = await settings();
     let list = []; try { list = await services(); } catch (e) { return toast(e.message, 7000); }
     const dlg = h('dialog', { className: 'svc-dialog', onclose: () => dlg.remove() });
@@ -518,25 +526,43 @@
     const ccPick = cardPicker({ items: sortWeb(opts).map(serverItem), value: String(q.serviceId), plat: list.find(x => x.id === String(q.serviceId))?.platform || '', height: 240, placeholder: 'Tìm máy chủ…', onPick: v => { pick.value = v; draw(); } });
     const checks = h('div', { className: 'svc-checks' }), err = h('div', { className: 'status err', hidden: true });
     const btn = h('button', { type: 'button', className: 'btn btn-primary', textContent: 'Tạo đơn Baostar' });
-    let balance = null; call('balance').then(b => { balance = Number(b.balance); draw(); }).catch(e => { balance = e.message; draw(); });
+    let balance = null;
     const svc = () => list.find(x => x.id === pick.value);
+    // Danh mục web cũ hơn 30 phút: đọc lại để biết máy chủ có vừa bảo trì không (app Windows).
+    let checking = false;
+    const cat = await DB.get(WEBCAT, null);
+    if (window.metaDesktop?.svcCatalog && (!cat?.at || Date.now() - cat.at > 30 * 60e3)) {
+      checking = true;
+      webCatalog(true).then(() => services()).then(l => { list = l; }).catch(() => {}).finally(() => { checking = false; draw(); });
+    }
     const draw = () => {
       const x = svc(), n = qtyOf(q), now = x ? estCost(x, n) : 0, quoted = q.cost || 0;
       const [st, cls] = x ? stateOf(x) : ['Không còn máy chủ này', 'err'];
       const rows = [
-        [cls === 'err' ? '✗' : '✓', `Máy chủ MC ${pick.value}: ${st}`, cls === 'err'],
+        [checking ? '…' : cls === 'err' ? '✗' : '✓', `Máy chủ MC ${pick.value}: ${checking ? 'đang kiểm tra trạng thái mới nhất trên web…' : st}`, !checking && cls === 'err'],
         [x && n >= x.min && n <= x.max ? '✓' : '✗', `Số lượng ${n.toLocaleString('vi-VN')} (cho phép ${x?.min ?? '?'}–${x?.max ?? '?'})`, !(x && n >= x.min && n <= x.max)],
         [now > quoted * 1.001 && !q.costManual ? '!' : '✓', `Giá gốc bây giờ ≈ ${money(now)} (lúc báo giá ${money(quoted)}) · lãi ≈ ${money(q.sell - now)}${pct(q.sell, now)}`, q.sell - now < 0],
         [typeof balance === 'number' ? (balance >= now ? '✓' : '✗') : '…', typeof balance === 'number' ? `Số dư Baostar ${money(balance)}` : balance ? 'Không đọc được số dư: ' + balance : 'Đang đọc số dư…', typeof balance === 'number' && balance < now],
         ['💰', `Đã thu ${money(q.paidAmount)} / ${money(q.sell)}${q.payNote ? ' · ' + q.payNote : ''}`, false]];
       checks.replaceChildren(...rows.map(([ic, t, bad]) => h('div', { className: bad ? 'neg' : '' }, h('strong', { textContent: ic + ' ' }), t)));
-      btn.disabled = cls === 'err' || !(x && n >= x.min && n <= x.max);
+      btn.disabled = checking || cls === 'err' || !(x && n >= x.min && n <= x.max);
     };
     pick.onchange = draw;
+    call('balance').then(b => { const v = num(b?.balance ?? b); balance = Number.isFinite(v) ? v : 'không rõ'; draw(); }).catch(e => { balance = e.message; draw(); });
     btn.onclick = async () => {
       const x = svc(), n = qtyOf(q); if (!x) return;
+      if (creating.has(q.id)) return toast('Báo giá này đang được tạo đơn ở cửa sổ khác. Đợi vài giây rồi xem lại danh sách.', 7000);
       if (!confirm(`Tạo đơn trên Baostar?\n\nMC ${x.id} · ${x.name}\nSố lượng: ${n.toLocaleString('vi-VN')}\nLink: ${q.link}\nBaostar sẽ trừ khoảng ${money(estCost(x, n))}.`)) return;
+      if (creating.has(q.id)) return toast('Báo giá này đang được tạo đơn ở cửa sổ khác.', 7000);
+      creating.add(q.id);
       btn.disabled = true; btn.textContent = 'Đang tạo đơn…'; err.hidden = true;
+      try {
+      // Chống tạo trùng: báo giá phải còn, chưa có đơn cùng mã thanh toán, không cửa sổ nào khác đang tạo.
+      const fresh = (await quotes()).find(y => y.id === q.id);
+      const dup = (await DB.get(ORDERS, [])).find(o => o.payCode === q.payCode);
+      if (!fresh || dup) { dlg.close(); App.tabs.services?.refresh?.(); creating.delete(q.id); return toast(dup ? `Báo giá ${q.payCode} đã có đơn #${dup.providerOrderId}. Không tạo thêm.` : 'Báo giá này đã được tạo đơn hoặc đã huỷ.', 7000); }
+      if (fresh.creatingAt && Date.now() - fresh.creatingAt < 180e3) { creating.delete(q.id); btn.disabled = false; btn.textContent = 'Tạo đơn Baostar'; return toast('Báo giá này đang được tạo đơn ở cửa sổ khác. Đợi vài giây rồi xem lại danh sách.', 7000); }
+      q = fresh; q.creatingAt = Date.now(); await saveQuote(q);
       try {
         const r = await call('add', { service: Number(x.id), link: q.link, quantity: n });
         if (r && !r.order) r.order = r.order_id ?? r.orderId ?? r.id;
@@ -557,9 +583,10 @@
         App.tabs.services?.refresh?.();
         invoiceDialog((await DB.get(ORDERS, [])).find(o => o.id === order.id) || order, 'paid');
       } catch (e2) {
-        q.lastError = e2.message; await saveQuote(q); App.tabs.services?.refresh?.();
-        err.textContent = 'Chưa tạo được đơn: ' + e2.message + ' · Báo giá vẫn ở trạng thái "Đã thu, chưa tạo đơn".'; err.hidden = false; btn.disabled = false; btn.textContent = 'Thử lại';
+        q.lastError = e2.message; q.creatingAt = 0; await saveQuote(q); App.tabs.services?.refresh?.();
+        err.textContent = 'Chưa tạo được đơn: ' + e2.message + ' · Báo giá vẫn ở trạng thái "Đã thu, chưa tạo đơn". Nếu lỗi do mạng, hãy xem Lịch sử đơn trên Baostar trước khi bấm Thử lại để tránh tạo trùng.'; err.hidden = false; btn.disabled = false; btn.textContent = 'Thử lại';
       }
+      } finally { creating.delete(q.id); }
     };
     dlg.append(h('div', { className: 'card-head' }, h('h3', { className: 'card-title', textContent: `Kiểm tra & tạo đơn · ${q.payCode}` }),
         h('button', { type: 'button', className: 'icon-btn', 'aria-label': 'Đóng', textContent: '×', onclick: () => dlg.close() })),
@@ -586,16 +613,27 @@
     let changed = 0;
     for (let i = 0; i < open.length; i += 100) {
       const ids = open.slice(i, i + 100).map(o => o.providerOrderId);
-      const r = ids.length === 1 ? { [ids[0]]: await call('status', { order: Number(ids[0]) }) } : await call('status', { orders: ids.join(',') });
+      let r = ids.length === 1 ? { [ids[0]]: await call('status', { order: Number(ids[0]) }) } : await call('status', { orders: ids.join(',') });
+      // Không đúng dạng chuẩn { "<mã đơn>": {...} }: thử dạng mảng, không được thì hỏi từng đơn.
+      if (Array.isArray(r)) r = Object.fromEntries(r.map(x => [String(x.order ?? x.id ?? x.order_id), x]));
+      if (ids.length > 1 && !ids.some(id => r?.[id])) { r = {}; for (const id of ids) { try { r[id] = await call('status', { order: Number(id) }); } catch {} } }
       const fresh = await DB.get(ORDERS, []);
       for (const o of fresh) {
         const st = o.source === 'service' && r[o.providerOrderId]; if (!st || st.error) continue;
-        const next = { ...o, svcStatus: st.status || o.svcStatus, startCount: st.start_count ?? o.startCount, remains: st.remains ?? o.remains, updatedAt: Date.now() };
-        const charge = Number(st.charge);
-        if (Number.isFinite(charge) && charge > 0 && o.items?.[0]?.qty) next.items = [{ ...o.items[0], cost: charge / o.items[0].qty }], next.charge = charge;
+        const next = { ...o, svcStatus: st.status || o.svcStatus, startCount: st.start_count ?? o.startCount, remains: st.remains ?? o.remains };
+        // Số tiền Baostar trừ thật: chỉ nhận khi hợp lý so với giá gốc ước tính (0,2×–5×), tránh lệch đơn vị (vd USD).
+        const charge = num(st.charge), qty = o.items?.[0]?.qty || 0, est = (o.items?.[0]?.cost || 0) * qty;
+        if (Number.isFinite(charge) && charge > 0 && qty) {
+          if (!(est > 0) || o.charge || (charge >= est * 0.2 && charge <= est * 5)) { next.items = [{ ...o.items[0], cost: charge / qty }]; next.charge = charge; delete next.chargeOdd; }
+          else next.chargeOdd = charge;
+        }
         next.status = mapStatus(next.svcStatus);
+        // Đơn đã thu tiền khách mà Baostar huỷ / hoàn tiền / chạy thiếu: báo ngay để hoàn tiền hoặc tạo lại.
+        const who = `${o.customer?.name || 'Khách'} · ${o.displayName || o.serviceName} · #${o.providerOrderId}`;
+        if (next.status === 'cancelled' && o.status !== 'cancelled' && !o.cancelAlertAt) { next.cancelAlertAt = Date.now(); App.notify?.('⚠ Baostar huỷ/hoàn tiền đơn: ' + who, `Khách đã trả ${money(o.paidAmount || orderSell(o))}. Tạo lại đơn hoặc hoàn tiền cho khách.`); }
+        if (/^partial$/i.test(next.svcStatus) && !o.partialAlertAt) { next.partialAlertAt = Date.now(); App.notify?.('⚠ Đơn chạy thiếu: ' + who, `Còn thiếu ${num(next.remains).toLocaleString('vi-VN')}. Baostar hoàn phần thiếu; cân nhắc bù hoặc hoàn tiền khách.`); }
         if (FINAL.test(next.svcStatus) && !o.completedAt && next.status === 'done') next.completedAt = Date.now();
-        if (JSON.stringify(next) !== JSON.stringify(o)) { Object.assign(o, next); changed++; }
+        if (JSON.stringify(next) !== JSON.stringify(o)) { next.updatedAt = Date.now(); Object.assign(o, next); changed++; }
       }
       await DB.set(ORDERS, fresh);
     }
@@ -727,7 +765,11 @@
       const all = (await DB.get(ORDERS, [])).filter(o => o.source === 'service' && o.at >= from);
       const list = all.filter(o => !q || norm([o.customer?.name, o.link, o.serviceName, o.providerOrderId, App.pageById(o.pageKey)?.name].join(' ')).includes(q)).sort((a, b) => b.at - a.at);
       const sum = Pure.summarize(all), running = all.filter(o => ['new', 'shipping'].includes(o.status)).length;
-      const qs = await quotes(), waiting = qs.filter(x => x.state === 'quote' && !expired(x));
+      // Dọn báo giá quá hạn hơn 7 ngày mà khách chưa trả đồng nào.
+      let qs = await quotes();
+      const stale = qs.filter(x => x.state === 'quote' && !x.paidAmount && Date.now() - (x.expiresAt || 0) > 7 * 864e5);
+      if (stale.length) { qs = qs.filter(x => !stale.includes(x)); await DB.set(QUOTES, qs); }
+      const waiting = qs.filter(x => x.state === 'quote' && !expired(x));
       drawQuotes(qs); drawVip(await DB.get(ORDERS, []), qs);
       $('svKpis').replaceChildren(...[['Chờ thanh toán', `${waiting.length} · ${money(waiting.reduce((t, x) => t + amountDue(x), 0))}`], ['Đã thu, chưa tạo đơn', qs.filter(x => x.state === 'paid').length], ['Đơn', all.length], ['Đang chạy', running], ['So với giá gói', (d => (d > 0 ? '+' : '') + money(d))(all.reduce((t, o) => t + (vsList(o) || 0), 0))], ['Doanh thu', money(sum.revenue)], ['Giá gốc', money(sum.cost)], ['Lời', money(sum.profit)]]
         .map(([l, v]) => h('div', { className: 'kpi' }, h('div', { className: 'label', textContent: l }), h('div', { className: 'value', textContent: v }))));
@@ -742,13 +784,16 @@
           h('td', { textContent: money(sell) }), vsCell(o), h('td', { textContent: money(cost) + (o.charge ? '' : ' ≈') }),
           h('td', { className: sell - cost < 0 ? 'neg' : '', textContent: money(sell - cost) }),
           h('td', {}, h('span', { className: 'status ' + (o.status === 'done' ? 'ok' : o.status === 'cancelled' ? 'err' : 'pending'), textContent: statusVi(o.svcStatus) }),
-            o.vipEnd ? h('div', { className: 'hint' + (!o.renewedBy && o.vipEnd - Date.now() < 864e5 ? ' neg' : ''), textContent: o.renewedBy ? '🔁 đã gia hạn' : '🔔 hạn ' + fmtTime(o.vipEnd) }) : null),
+            o.vipEnd ? h('div', { className: 'hint' + (!o.renewedBy && o.vipEnd - Date.now() < 864e5 ? ' neg' : ''), textContent: o.renewedBy ? '🔁 đã gia hạn' : '🔔 hạn ' + fmtTime(o.vipEnd) }) : null,
+            o.status === 'cancelled' && (o.paidAmount || o.payCode) ? h('div', { className: 'neg hint', textContent: `⚠ Đã thu ${money(o.paidAmount || orderSell(o))}: tạo lại hoặc hoàn tiền khách` }) : null,
+            /^partial$/i.test(o.svcStatus) ? h('div', { className: 'neg hint', textContent: `⚠ Chạy thiếu ${num(o.remains).toLocaleString('vi-VN')}` }) : null,
+            o.chargeOdd ? h('div', { className: 'neg hint', title: 'Số tiền Baostar trả về lệch quá nhiều so với giá gốc ước tính (có thể khác đơn vị tiền). App giữ giá gốc ước tính.', textContent: `⚠ Baostar báo trừ ${o.chargeOdd} (lệch đơn vị?)` }) : null),
           h('td', { textContent: o.completedAt ? fmtTime(o.completedAt) : '' }),
           h('td', {}, h('div', { className: 'row', style: 'gap:4px;flex-wrap:nowrap' },
             h('button', { type: 'button', className: 'btn btn-ghost btn-sm', title: o.invoiceSentAt ? 'Đã gửi đơn lúc ' + fmtTime(o.invoiceSentAt) : 'Xuất đơn gửi khách', textContent: o.invoiceSentAt ? '📤 ✓' : '📤 Đơn', onclick: () => invoiceDialog(o, o.payCode ? 'paid' : 'new') }),
             h('button', { type: 'button', className: 'btn btn-ghost btn-sm', title: o.progressSentAt ? 'Đã báo tiến độ lúc ' + fmtTime(o.progressSentAt) : 'Báo tiến độ cho khách', textContent: '📊', onclick: async () => { await refreshStatus([o]).catch(() => {}); const f = (await DB.get(ORDERS, [])).find(y => y.id === o.id) || o; invoiceDialog(f, 'progress'); } })))); }))) : h('div', { className: 'empty', textContent: 'Chưa có đơn dịch vụ trong khoảng này. Tạo đơn từ Hộp thư (nút "＋ Tạo đơn dịch vụ") hoặc nút ＋ Tạo đơn.' }));
       drawSettings(s, this);
-      if (s.apiKey) call('balance').then(b => { $('svBalance').textContent = `Số dư: ${Number(b.balance).toLocaleString('vi-VN')} ${b.currency || ''}`; }).catch(e => { $('svBalance').textContent = e.message; });
+      if (s.apiKey) call('balance').then(b => { $('svBalance').textContent = `Số dư: ${num(b?.balance ?? b).toLocaleString('vi-VN')} ${b?.currency || ''}`; }).catch(e => { $('svBalance').textContent = e.message; });
       else $('svBalance').textContent = 'Chưa nhập API key';
     }
   });
