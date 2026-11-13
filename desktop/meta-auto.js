@@ -276,7 +276,22 @@ function createMetaAuto({ worker, composer, metaView, showMeta = () => () => {},
     let id = await fileInput();
     tried.push(id ? 'ô file: có' : 'ô file: không thấy');
     if (id && await putImage(dbg, id, image, 'anh') && await waitPreview()) return true;
-    // 2) bấm nút đính kèm, bắt hộp chọn file
+    // 2) giả sự kiện dán / kéo-thả ảnh ngay trên ô nhập (khung soạn của Messenger nhận ảnh qua paste/drop, không cần ô file)
+    const edId = (await dbg.sendCommand('Runtime.evaluate', { expression: `(() => { const col = document.querySelector('${COL}') || document; return col.querySelector('[contenteditable="true"]'); })()` }).catch(() => null))?.result?.objectId || '';
+    const m = String(image).match(/^data:(image\/(\w+));base64,(.+)$/);
+    for (const kind of ['paste', 'drop']) {
+      if (!edId || !m) { tried.push(kind + ': không thấy ô nhập'); break; }
+      const r = await dbg.sendCommand('Runtime.callFunctionOn', { objectId: edId, returnByValue: true, arguments: [{ value: m[3] }, { value: m[1] }, { value: 'anh.' + (m[2] === 'jpeg' ? 'jpg' : m[2]) }, { value: kind }],
+        functionDeclaration: `function (b64, type, name, kind) {
+          const bin = atob(b64), bytes = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+          const dt = new DataTransfer(); dt.items.add(new File([bytes], name, { type })); this.focus();
+          if (kind === 'paste') { const ev = new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }); this.dispatchEvent(ev); return ev.defaultPrevented; }
+          let ok = false; for (const t of ['dragenter', 'dragover', 'drop']) { const ev = new DragEvent(t, { dataTransfer: dt, bubbles: true, cancelable: true }); this.dispatchEvent(ev); ok = ok || ev.defaultPrevented; }
+          return ok; }` }).catch(e => ({ error: e.message }));
+      if (await waitPreview()) return true;
+      tried.push(`${kind}: ${r?.error ? 'lỗi ' + r.error : r?.result?.value ? 'trang nhận nhưng chưa thấy ảnh' : 'trang không nhận'}`);
+    }
+    // 3) bấm nút đính kèm, bắt hộp chọn file
     try {
       await dbg.sendCommand('Page.enable');
       await dbg.sendCommand('Page.setInterceptFileChooserDialog', { enabled: true });
@@ -289,7 +304,7 @@ function createMetaAuto({ worker, composer, metaView, showMeta = () => () => {},
       tried.push(clicked ? (params ? 'nút đính kèm: mở hộp chọn' : 'nút đính kèm: bấm nhưng không mở hộp chọn') : 'nút đính kèm: không thấy');
       if (id && await putImage(dbg, id, image, 'anh') && await waitPreview()) return true;
     } catch (e) { tried.push('nút đính kèm lỗi: ' + e.message); } finally { await dbg.sendCommand('Page.setInterceptFileChooserDialog', { enabled: false }).catch(() => {}); }
-    // 3) dán ảnh vào ô nhập (giữ lại chữ trong clipboard của bạn)
+    // 4) dán ảnh thật từ clipboard vào ô nhập (giữ lại chữ trong clipboard của bạn)
     const img = nativeImage.createFromDataURL(image);
     let oldText = ''; try { oldText = String(clipboard.readText() || ''); } catch {}
     try {
