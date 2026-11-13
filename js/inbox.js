@@ -248,9 +248,14 @@
     } else S.conv = c;
     const r = await window.metaDesktop.readThread({ pageId: String(c.page.id), uid: c.uid, older }).catch(e => ({ error: e.message }));
     if (S.conv !== c) return;
+    if (r.error && silent && !older) return; // đọc ngầm lỗi: giữ nguyên khung chat
     if (r.error) return $('ibThread').replaceChildren(h('div', { className: 'status err' },
       r.error === 'login' ? 'Chưa đăng nhập Business Suite trong app (menu "Hộp thư Meta").' : `${r.error} Menu Xem › "Lưu chẩn đoán Business Suite" rồi gửi file "an" cho người hỗ trợ.`, ' ',
       h('button', { type: 'button', className: 'btn btn-ghost btn-sm', textContent: 'Mở trong cột Meta ↗', onclick: () => window.metaDesktop.openThread({ pageId: String(c.page.id), uid: c.uid }) })));
+    // Đọc lại ngầm mà không có gì mới: không vẽ lại (giữ chỗ cuộn, không nháy).
+    const sig = JSON.stringify(r.messages || []);
+    if (silent && !older && c.bsSig === sig) return;
+    if (!older) c.bsSig = sig;
     drawBs(c, r, { silent, older });
     S.messages = (r.messages || []).filter(m => !m.sep).map(m => ({ isCustomer: !m.mine, text: m.text || '' }));
     if (!older) await tagAndCrm(c, { render: !silent });
@@ -302,6 +307,8 @@
       bsCache.delete(c.page.id);
     } catch (e) {
       S.sendError = e.message;
+      // Có khi tin đã đi mà app chưa nhận ra: đọc lại hội thoại để bạn thấy ngay, rồi mới hiện lỗi.
+      if (S.conv === c) { c.bsSig = ''; await openBs(c, { silent: true }).catch(() => {}); }
       if (S.conv === c) $('ibThread').append(h('div', { className: 'status err' }, e.message));
       else toast(`${c.other.name}: ${e.message}`, 7000);
     } finally { S.sending = false; updateSendState(); }
@@ -785,6 +792,13 @@
     }, 800);
   };
   setInterval(() => { tick().catch(() => {}); }, 15e3);
+  // Hội thoại Business Suite đang mở: đọc lại 20 giây/lần để tin mới của khách tự hiện (khung ẩn của Meta cập nhật trực tiếp).
+  let bsLive = false;
+  setInterval(async () => {
+    const c = S.conv;
+    if (bsLive || !c?.bs || S.sending || document.hidden || App.current() !== 'inbox') return;
+    bsLive = true; try { await openBs(c, { silent: true }); } catch {} finally { bsLive = false; }
+  }, 20e3);
   document.addEventListener('visibilitychange', () => { if (!document.hidden) tick().catch(() => {}); });
   App.onLogin.push(async () => { lastPoll = Date.now(); await poll().catch(() => {}); });
 })();

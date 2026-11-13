@@ -103,7 +103,12 @@ function readMessages(scrollUp) {
     if (box) box.scrollTop = 0;
     return { scrolled: true };
   }
-  const area = col.getBoundingClientRect(), mid = area.left + area.width / 2, items = [];
+  // Khung detail_column gồm cả cột thông tin khách bên phải → lấy đúng vùng danh sách tin (hoặc hợp các khối tin) để chia trái/phải.
+  const list = col.querySelector('[aria-label^="Vùng chứa danh sách tin nhắn"], [aria-label^="Message list container"], [role="log"], [role="grid"]');
+  const lr = list?.getBoundingClientRect();
+  const br = blocks.map(b => b.getBoundingClientRect()).filter(b => b.width > 0);
+  const area = lr?.width > 100 ? lr : br.length ? { left: Math.min(...br.map(b => b.left)), right: Math.max(...br.map(b => b.right)), width: Math.max(...br.map(b => b.right)) - Math.min(...br.map(b => b.left)) } : col.getBoundingClientRect();
+  const mid = area.left + area.width / 2, items = [];
   for (const el of blocks) {
     // Khối [data-message-id] có khi rộng cả cột → xét chính nội dung (chữ/ảnh): sát lề phải = tin của Page, sát lề trái = tin khách.
     const r = el.getBoundingClientRect();
@@ -115,7 +120,7 @@ function readMessages(scrollUp) {
     if (text) items.push({ y: r.top, mine, text });
     for (const img of el.querySelectorAll('img')) {
       const b = img.getBoundingClientRect(), src = img.currentSrc || img.src;
-      if (Math.max(b.width, b.height, img.naturalWidth || 0) >= 60 && /fbcdn\.net|scontent/.test(src)) items.push({ y: b.top + 0.1, mine, pic: src });
+      if (Math.max(b.width, b.height, img.naturalWidth || 0) >= 60 && /fbcdn\.net|scontent|^blob:/.test(src)) items.push({ y: b.top + 0.1, mine, pic: src });
     }
   }
   const SEP = /^\d{1,2}:\d{2}(\s+\d{1,2}\s+tháng\s+\d{1,2}(,\s*\d{4})?)?$|^(hôm nay|hôm qua|today|yesterday)\b/i;
