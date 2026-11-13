@@ -36,17 +36,71 @@
   // Danh sách dịch vụ có thể là mảng, { data: [...] }, { services: [...] } hoặc object theo mã dịch vụ.
   const asList = v => Array.isArray(v) ? v : Array.isArray(v?.data) ? v.data : Array.isArray(v?.services) ? v.services
     : v && typeof v === 'object' ? Object.values(v).filter(x => x && typeof x === 'object') : [];
+  // ── Danh mục trên web (chỉ app Windows): ghi chú gốc, giá web đ/1 đơn vị, trạng thái (bảo trì), thời gian TB. ──
+  const WEBCAT = 'svcWebCatalogV1';
+  const webOrigin = s => { try { return new URL(s.apiUrl).origin; } catch { return ''; } };
+  let catalogMsg = '';
+  async function webCatalog(force = false) {
+    const s = await settings(), origin = webOrigin(s);
+    const c = await DB.get(WEBCAT, null);
+    if (!force && c?.origin === origin && c.list?.length && Date.now() - c.at < 864e5) return c;
+    if (!window.metaDesktop?.svcCatalog || !origin) return c?.origin === origin ? c : null;
+    const r = await window.metaDesktop.svcCatalog({ origin });
+    if (r?.error) throw Error(r.error);
+    const next = { at: Date.now(), origin, list: r.list || [] };
+    await DB.set(WEBCAT, next);
+    return next;
+  }
+  function catalogProgress(done, total) { catalogMsg = `Đang đọc web dịch vụ ${done}/${total} nhóm…`; const el = $('svCatMsg'); if (el) el.textContent = catalogMsg; }
+  // Ghi chú HTML của web → các dòng chữ (không chạy gì của trang web: DOMParser chỉ dựng cây, không chạy script/style).
+  function noteLines(html) {
+    if (!html) return [];
+    const d = new DOMParser().parseFromString(String(html), 'text/html');
+    d.querySelectorAll('style,script').forEach(x => x.remove());
+    d.querySelectorAll('div,li,p,br,h1,h2,h3,h4,h5,h6,tr').forEach(x => x.append('\n'));
+    return d.body.textContent.split('\n').map(l => l.replace(/\s+/g, ' ').trim()).filter(Boolean);
+  }
+  // Tốc độ: dòng "Tốc độ" trong ghi chú gốc, không có thì đoán theo tên dịch vụ.
+  function speedOf(svc) {
+    const lines = noteLines(svc.notes);
+    const SP = /^[^\p{L}]*tốc độ(?![\p{L}])\s*:?\s*/iu, i = lines.findIndex(l => SP.test(l));
+    let text = i < 0 ? '' : lines[i].replace(SP, '') || lines[i + 1] || '';
+    if (!text) text = (svc.name.match(/cực nhanh|siêu nhanh|nhanh|chậm|lên ngay|tức thì/i) || [''])[0];
+    const kind = /chậm|lâu|slow/i.test(text) ? 'slow' : /nhanh|ngay|tức thì|fast/i.test(text) ? 'fast' : '';
+    return { text, kind };
+  }
+  const STATE = { active: ['Đang chạy', 'ok'], maintenance: ['Bảo trì', 'err'] };
+  const stateOf = svc => !svc.web ? (svc.webChecked ? ['Không thấy trên web', 'pending'] : ['Chưa đọc web', 'pending'])
+    : STATE[String(svc.status).toLowerCase()] || (/active|on|1/i.test(svc.status) ? STATE.active : ['Bảo trì (' + (svc.status || '?') + ')', 'err']);
+
   async function services(force = false) {
     const c = await DB.get(CACHE, null);
-    if (!force && c?.list?.length && Date.now() - c.at < 864e5) return c.list;
-    const raw = asList(await call('services'));
-    if (!raw.length) throw Error('Web dịch vụ không trả về dịch vụ nào. Kiểm tra lại API key và URL API.');
-    const list = raw.map(x => ({ id: String(x.service ?? x.id ?? x.service_id), name: String(x.name || ''), category: String(x.category || ''), rate: Number(x.rate) || 0, min: Number(x.min) || 1, max: Number(x.max) || 1e9 }));
-    await DB.set(CACHE, { at: Date.now(), list });
-    return list;
+    let list = c?.list;
+    if (force || !list?.length || Date.now() - c.at > 864e5) {
+      const raw = asList(await call('services'));
+      if (!raw.length) throw Error('Web dịch vụ không trả về dịch vụ nào. Kiểm tra lại API key và URL API.');
+      list = raw.map(x => ({ id: String(x.service ?? x.id ?? x.service_id), name: String(x.name || ''), category: String(x.category || ''),
+        rate: Number(x.rate ?? x.price) || 0, min: Number(x.min) || 1, max: Number(x.max) || 1e9, refill: !!x.refill }));
+      await DB.set(CACHE, { at: Date.now(), list });
+    }
+    // Gộp thông tin web theo mã dịch vụ. Giá gốc = giá web (đ/1 đơn vị, đúng cấp tài khoản đang đăng nhập);
+    // không có web thì lấy giá API (giá cho 1000 đơn vị) chia 1000.
+    let cat = null; try { cat = await webCatalog(force); } catch (e) { catalogMsg = e.message; }
+    const byId = new Map((cat?.list || []).map(w => [w.id, w]));
+    const merged = list.map(x => { const w = byId.get(x.id);
+      return { ...x, web: !!w, webChecked: !!cat, name: w?.name || x.name, category: w?.group || x.category, platform: w?.platform || '',
+        notes: w?.notes || '', status: w?.status || '', avgTime: w?.avgTime || '', startTime: w?.startTime || '', refill: w ? w.refill : x.refill,
+        min: w?.min || x.min, max: w?.max || x.max, unitCost: w?.rate || (x.rate ? x.rate / 1000 : 0), costFromWeb: !!w?.rate }; });
+    // Dịch vụ chỉ có trên web (API chưa liệt kê) vẫn hiện để xem ghi chú, giá.
+    const ids = new Set(list.map(x => x.id));
+    for (const w of cat?.list || []) if (!ids.has(w.id)) merged.push({ id: w.id, name: w.name, category: w.group, platform: w.platform, web: true, webChecked: true, webOnly: true,
+      notes: w.notes, status: w.status, avgTime: w.avgTime, startTime: w.startTime, refill: w.refill, min: w.min || 1, max: w.max || 1e9, rate: 0, unitCost: w.rate, costFromWeb: true });
+    return merged;
   }
-  // Giá gốc ước tính: SMM tính rate cho 1000 đơn vị. Giá thật lấy theo "charge" khi web đã nhận đơn.
-  const estCost = (svc, qty) => svc ? svc.rate * qty / 1000 : 0;
+  // Giá gốc ước tính = giá gốc 1 đơn vị × số lượng. Giá thật lấy theo "charge" khi web đã nhận đơn.
+  const estCost = (svc, qty) => svc ? (svc.unitCost || 0) * qty : 0;
+  const m2 = v => `${(Number(v) || 0).toLocaleString('vi-VN', { maximumFractionDigits: 2 })}đ`;
+  const pct = (sell, cost) => cost > 0 ? ` (${Math.round((sell - cost) / cost * 100)}%)` : '';
   const orderOf = o => ({ sell: (o.items?.[0]?.price || 0) * (o.items?.[0]?.qty || 0), cost: (o.items?.[0]?.cost || 0) * (o.items?.[0]?.qty || 0) });
 
   // Link khách gửi trong hội thoại (Facebook, TikTok, Instagram, YouTube, Shopee… hoặc link bất kỳ).
@@ -69,13 +123,14 @@
     const qty = h('input', { type: 'number', min: 1, step: 1, value: 1000, required: true });
     const unit = h('input', { type: 'number', min: 0, step: 'any', placeholder: 'Giá bán / 1 đơn vị (đ)', required: true });
     const remember = h('input', { type: 'checkbox', checked: true });
-    const info = h('div', { className: 'svc-sum' }), err = h('div', { className: 'status err', hidden: true });
+    const noteBox = h('div', { className: 'svc-notes' }), info = h('div', { className: 'svc-sum' }), err = h('div', { className: 'status err', hidden: true });
     const chosen = () => list.find(x => x.id === pick.value);
     const draw = () => {
       const q = norm(search.value), plat = platformOf(linkIn.value);
       const rows = list.filter(x => !q || norm(x.name + ' ' + x.category + ' ' + x.id).includes(q)).sort((a, b) => (plat && norm(b.category + b.name).includes(plat)) - (plat && norm(a.category + a.name).includes(plat)));
       const keep = pick.value;
-      pick.replaceChildren(...rows.slice(0, 300).map(x => h('option', { value: x.id, textContent: `#${x.id} · ${x.name} · ${money(x.rate)}/1000 · ${x.min}–${x.max}`, selected: x.id === keep })));
+      pick.replaceChildren(...rows.slice(0, 300).map(x => { const [st] = stateOf(x);
+        return h('option', { value: x.id, textContent: `#${x.id} · ${x.name} · gốc ${m2(x.unitCost)}/đv · ${x.min}–${x.max}${x.web ? ' · ' + st : ''}`, selected: x.id === keep }); }));
       if (!chosen() && rows[0]) { pick.value = rows[0].id; unit.dataset.touched = ''; } // dịch vụ hợp link nhất được chọn sẵn
       recalc();
     };
@@ -83,6 +138,14 @@
       const svc = chosen(), n = Math.max(0, Number(qty.value) || 0);
       if (svc && !unit.dataset.touched) unit.value = s.prices[svc.id] ?? '';
       const sell = (Number(unit.value) || 0) * n, cost = estCost(svc, n);
+      if (svc) { const [st, cls] = stateOf(svc), sp = speedOf(svc);
+        noteBox.replaceChildren(
+          h('div', { className: 'row', style: 'gap:6px;flex-wrap:wrap' }, h('span', { className: 'status ' + cls + ' svc-pill', textContent: st }),
+            sp.text ? h('span', { className: 'svc-pill svc-speed ' + sp.kind, textContent: '⚡ ' + sp.text }) : null,
+            svc.avgTime ? h('span', { className: 'svc-pill', textContent: '⏱ TB ' + svc.avgTime }) : null,
+            h('span', { className: 'svc-pill', textContent: `Gốc ${m2(svc.unitCost)}/đv` })),
+          ...noteLines(svc.notes).map(l => h('div', { textContent: l }))); }
+      else noteBox.replaceChildren();
       info.replaceChildren(
         h('span', {}, 'Giá gốc ≈ ', h('strong', { textContent: money(cost) })), h('span', {}, 'Giá bán ', h('strong', { textContent: money(sell) })),
         h('span', {}, 'Lời ≈ ', h('strong', { className: sell - cost < 0 ? 'neg' : '', textContent: money(sell - cost) })),
@@ -95,6 +158,7 @@
       if (!svc) { err.textContent = 'Chọn dịch vụ.'; err.hidden = false; return; }
       if (!/^https?:\/\//i.test(linkIn.value.trim())) { err.textContent = 'Link phải bắt đầu bằng http(s)://'; err.hidden = false; return; }
       if (n < svc.min || n > svc.max) { err.textContent = `Số lượng phải từ ${svc.min} đến ${svc.max}.`; err.hidden = false; return; }
+      if (stateOf(svc)[1] === 'err' && !confirm(`Dịch vụ #${svc.id} đang ${stateOf(svc)[0].toLowerCase()} trên web. Vẫn tạo đơn?`)) return;
       if (!confirm(`Tạo đơn trên web dịch vụ?\n\n${svc.name}\nSố lượng: ${n.toLocaleString('vi-VN')}\nLink: ${linkIn.value.trim()}\n\nWeb sẽ trừ khoảng ${money(estCost(svc, n))} trong số dư.`)) return;
       const btn = form.querySelector('button[type=submit]'); btn.disabled = true; btn.textContent = 'Đang tạo đơn…';
       try {
@@ -116,7 +180,7 @@
       h('div', { className: 'card-head' }, h('h3', { className: 'card-title', textContent: 'Tạo đơn dịch vụ' + (ctx.name ? ' · ' + ctx.name : '') }),
         h('button', { type: 'button', className: 'icon-btn', 'aria-label': 'Đóng', textContent: '×', onclick: () => dlg.close() })),
       h('label', { className: 'field' }, 'Link cần làm', linkIn),
-      h('label', { className: 'field' }, 'Dịch vụ', search, pick),
+      h('label', { className: 'field' }, 'Dịch vụ', search, pick), noteBox,
       h('div', { className: 'row', style: 'gap:10px;flex-wrap:wrap' }, h('label', { className: 'field', style: 'flex:1' }, 'Số lượng', qty), h('label', { className: 'field', style: 'flex:1' }, 'Giá bán / 1 đơn vị', unit)),
       h('label', { className: 'row', style: 'gap:6px' }, remember, 'Lưu giá bán này vào bảng giá của dịch vụ'),
       info, err,
@@ -239,14 +303,59 @@
     const box = $('svSettings'); if (box.contains(document.activeElement)) return; // đang gõ thì không vẽ lại
     const home = h('input', { type: 'text', inputMode: 'url', value: s.home }), api = h('input', { type: 'text', inputMode: 'url', value: s.apiUrl });
     const key = h('input', { type: 'password', value: s.apiKey, placeholder: 'Dán API key (web dịch vụ › Tạo web con và API › Tích hợp API)', autocomplete: 'off' });
-    const priceBox = h('div', { className: 'svc-prices' });
-    const drawPrices = async filter => {
+    const priceBox = h('div', { className: 'svc-prices scroll' });
+    const filt = { q: '', plat: '', state: '', limit: 100 };
+    const platSel = h('select', { style: 'width:auto', onchange: e => { filt.plat = e.target.value; filt.limit = 100; drawPrices(); } });
+    const stateSel = h('select', { style: 'width:auto', onchange: e => { filt.state = e.target.value; filt.limit = 100; drawPrices(); } },
+      ...[['', 'Mọi trạng thái'], ['ok', 'Đang chạy'], ['err', 'Bảo trì'], ['nofill', 'Chưa có giá của tôi'], ['fast', 'Nhanh'], ['slow', 'Chậm']].map(([v, t]) => h('option', { value: v, textContent: t })));
+    const markup = h('input', { type: 'number', min: 0, step: 'any', value: s.markup ?? 50, style: 'width:80px', title: '% lãi trên giá gốc' });
+    const catMsg = h('span', { className: 'hint', id: 'svCatMsg', textContent: catalogMsg });
+    let shown = [];
+    const savePrice = async (id, v) => { const p = { ...(await settings()).prices }; if (v === '' || v == null) delete p[id]; else p[id] = Number(v); await saveSettings({ prices: p }); };
+    const rowOf = (x, prices) => {
+      const [st, cls] = stateOf(x), sp = speedOf(x), mine = prices[x.id];
+      const profit = h('td', { className: 'num' }), notes = noteLines(x.notes);
+      const drawProfit = v => { const sell = Number(v); profit.className = 'num' + (v !== '' && v != null && sell < x.unitCost ? ' neg' : '');
+        profit.textContent = v === '' || v == null ? '—' : m2(sell - x.unitCost) + pct(sell, x.unitCost); };
+      const input = h('input', { type: 'number', min: 0, step: 'any', placeholder: 'đ / đv', value: mine ?? '', style: 'width:96px',
+        oninput: e => drawProfit(e.target.value), onchange: e => savePrice(x.id, e.target.value) });
+      drawProfit(mine ?? '');
+      const noteRow = h('tr', { className: 'svc-note-row', hidden: true }, h('td', { colSpan: 7 }, h('div', { className: 'svc-notes' },
+        ...(notes.length ? notes.map(l => h('div', { textContent: l })) : [h('div', { className: 'hint', textContent: x.web ? 'Web không có ghi chú cho dịch vụ này.' : 'Chưa có ghi chú: bấm "Đọc lại web dịch vụ" (cần app Windows).' })]),
+        h('div', { className: 'hint', textContent: [`Mã API ${x.id}`, `Min ${x.min} – Max ${x.max}`, x.refill ? 'Có bảo hành (refill)' : '', x.startTime ? 'Bắt đầu ' + x.startTime : '', x.webOnly ? 'Chỉ thấy trên web, API chưa liệt kê' : ''].filter(Boolean).join(' · ') }))));
+      const main = h('tr', { className: 'svc-row' + (cls === 'err' ? ' off' : '') },
+        h('td', { className: 'hint', textContent: '#' + x.id }),
+        h('td', { className: 'svc-name', title: 'Bấm để xem ghi chú gốc', onclick: () => { noteRow.hidden = !noteRow.hidden; } },
+          h('div', { textContent: (notes.length ? '▸ ' : '') + x.name }), h('div', { className: 'hint', textContent: [x.platform && x.platform[0].toUpperCase() + x.platform.slice(1), x.category].filter(Boolean).join(' · ') })),
+        h('td', { className: 'num', textContent: m2(x.unitCost) + (x.costFromWeb || !x.unitCost ? '' : ' ≈'), title: x.costFromWeb ? 'Giá trên web (đ / 1 đơn vị)' : 'Giá API ÷ 1000' }),
+        h('td', {}, input), profit,
+        h('td', {}, h('span', { className: 'status svc-pill ' + cls, textContent: st })),
+        h('td', {}, sp.text ? h('span', { className: 'svc-pill svc-speed ' + sp.kind, title: sp.text, textContent: sp.text.length > 40 ? sp.text.slice(0, 38) + '…' : sp.text }) : null,
+          x.avgTime ? h('div', { className: 'hint', textContent: '⏱ TB ' + x.avgTime }) : null));
+      return [main, noteRow];
+    };
+    const drawPrices = async () => {
       let list = []; try { list = await services(); } catch (e) { return priceBox.replaceChildren(h('p', { className: 'hint', textContent: e.message })); }
-      const f = norm(filter || '');
-      priceBox.replaceChildren(...list.filter(x => !f || norm(x.name + ' ' + x.category + ' ' + x.id).includes(f)).slice(0, 80).map(x => h('label', { className: 'row', style: 'gap:8px' },
-        h('span', { className: 'grow', textContent: `#${x.id} · ${x.name}`, title: x.category }), h('span', { className: 'hint', textContent: `gốc ${money(x.rate)}/1000` }),
-        h('input', { type: 'number', min: 0, step: 'any', style: 'width:120px', placeholder: 'đ / đơn vị', value: s.prices[x.id] ?? '',
-          onchange: async e => { const p = { ...(await settings()).prices }; if (e.target.value === '') delete p[x.id]; else p[x.id] = Number(e.target.value); await saveSettings({ prices: p }); } }))));
+      const prices = (await settings()).prices, f = norm(filt.q);
+      const plats = [...new Set(list.map(x => x.platform).filter(Boolean))].sort();
+      if (platSel.options.length !== plats.length + 1) platSel.replaceChildren(h('option', { value: '', textContent: 'Mọi nền tảng' }), ...plats.map(p => h('option', { value: p, textContent: p[0].toUpperCase() + p.slice(1), selected: p === filt.plat })));
+      shown = list.filter(x => (!f || norm(x.name + ' ' + x.category + ' ' + x.id + ' ' + noteLines(x.notes).join(' ')).includes(f)) && (!filt.plat || x.platform === filt.plat)
+        && (!filt.state || (filt.state === 'nofill' ? prices[x.id] == null : filt.state === 'fast' || filt.state === 'slow' ? speedOf(x).kind === filt.state : stateOf(x)[1] === filt.state)));
+      const head = h('thead', {}, h('tr', {}, ...['Mã', 'Dịch vụ (bấm xem ghi chú gốc)', 'Giá gốc / đv', 'Giá của tôi / đv', 'Lãi / đv', 'Trạng thái', 'Tốc độ'].map(t => h('th', { textContent: t }))));
+      priceBox.replaceChildren(shown.length ? h('table', { className: 'svc-table' }, head, h('tbody', {}, ...shown.slice(0, filt.limit).flatMap(x => rowOf(x, prices)))) : h('p', { className: 'hint', textContent: 'Không có dịch vụ nào khớp bộ lọc.' }),
+        shown.length > filt.limit ? h('button', { type: 'button', className: 'btn btn-ghost btn-sm', style: 'margin:8px', textContent: `Xem thêm (${shown.length - filt.limit} dịch vụ)`, onclick: () => { filt.limit += 200; drawPrices(); } }) : null);
+    };
+    const applyMarkup = async onlyEmpty => {
+      const k = Number(markup.value); if (!(k >= 0)) return toast('Nhập % lãi hợp lệ.', 4000);
+      const p = { ...(await settings()).prices }; let n = 0;
+      for (const x of shown) if (x.unitCost > 0 && (!onlyEmpty || p[x.id] == null)) { p[x.id] = Math.round(x.unitCost * (1 + k / 100) * 100) / 100; n++; }
+      await saveSettings({ prices: p, markup: k }); toast(`Đã đặt giá cho ${n} dịch vụ (gốc + ${k}%).`); drawPrices();
+    };
+    const reloadWeb = async () => {
+      if (!window.metaDesktop?.svcCatalog) return toast('Đọc web dịch vụ chỉ có trong app Windows.', 5000);
+      catalogMsg = 'Đang đọc web dịch vụ…'; catMsg.textContent = catalogMsg;
+      try { const c = await webCatalog(true); catalogMsg = `Đã đọc ${c.list.length} dịch vụ từ web lúc ${fmtTime(c.at)}.`; } catch (e) { catalogMsg = e.message; }
+      catMsg.textContent = catalogMsg; drawPrices();
     };
     box.replaceChildren(
       h('div', { className: 'card-head' }, h('h3', { className: 'card-title', textContent: 'Cài đặt dịch vụ' })),
@@ -259,10 +368,19 @@
           for (const [el, label] of [[home, 'Trang chủ'], [api, 'URL API']]) if (!/^https:\/\//i.test(el.value.trim())) return toast(label + ' phải bắt đầu bằng https://', 5000);
           await saveSettings({ home: home.value.trim(), apiUrl: api.value.trim(), apiKey: key.value.trim() }); await DB.set(CACHE, null); toast('Đã lưu cài đặt dịch vụ.'); tab.refresh();
         } }),
-        h('button', { className: 'btn btn-ghost btn-sm', textContent: 'Tải lại danh sách dịch vụ', onclick: async () => { try { await services(true); drawPrices(); toast('Đã tải danh sách dịch vụ.'); } catch (e) { toast(e.message, 6000); } } })),
+        h('button', { className: 'btn btn-ghost btn-sm', textContent: 'Tải lại danh sách dịch vụ', onclick: async () => { try { await services(true); catMsg.textContent = catalogMsg; drawPrices(); toast('Đã tải danh sách dịch vụ.'); } catch (e) { toast(e.message, 6000); } } }),
+        h('button', { className: 'btn btn-ghost btn-sm', textContent: '↻ Đọc lại web dịch vụ (ghi chú, bảo trì, giá)', title: 'Đọc trang web của URL API bằng phiên đăng nhập ở cột Dịch vụ', onclick: reloadWeb }), catMsg),
       h('h4', { className: 'card-title', style: 'margin:16px 0 6px', textContent: 'Bảng giá bán (đ / 1 đơn vị: 1 like, 1 follow…)' }),
-      h('input', { type: 'search', placeholder: 'Tìm dịch vụ…', oninput: e => drawPrices(e.target.value) }), priceBox);
+      h('p', { className: 'hint', textContent: `Giá gốc lấy từ web ${webOrigin(s) || 'dịch vụ'} theo tài khoản đang đăng nhập ở cột Dịch vụ (Mở web dịch vụ ↗). Chưa đăng nhập thì là giá cấp Khách hàng. Bấm tên dịch vụ để xem ghi chú gốc.` }),
+      h('div', { className: 'row', style: 'gap:8px;flex-wrap:wrap;margin-bottom:8px' },
+        h('input', { type: 'search', placeholder: 'Tìm tên, mã, ghi chú…', style: 'flex:1;min-width:200px', oninput: e => { filt.q = e.target.value; filt.limit = 100; drawPrices(); } }),
+        platSel, stateSel),
+      h('div', { className: 'row', style: 'gap:8px;flex-wrap:wrap;margin-bottom:8px;align-items:center' },
+        h('span', { className: 'hint', textContent: 'Giá của tôi = gốc +' }), markup, h('span', { className: 'hint', textContent: '%' }),
+        h('button', { type: 'button', className: 'btn btn-soft btn-sm', textContent: 'Điền cho dịch vụ chưa có giá', onclick: () => applyMarkup(true) }),
+        h('button', { type: 'button', className: 'btn btn-ghost btn-sm', textContent: 'Đặt lại tất cả đang lọc', onclick: () => { if (confirm(`Đặt lại giá của tôi cho ${shown.length} dịch vụ đang lọc = giá gốc + ${markup.value}%?`)) applyMarkup(false); } })),
+      priceBox);
     if (s.apiKey) drawPrices(); else priceBox.replaceChildren(h('p', { className: 'hint', textContent: 'Nhập API key rồi Lưu để tải danh sách dịch vụ.' }));
   }
-  App.services = { createDialog, inboxBox, refreshStatus, linksIn, call, openWeb, mapStatus };
+  App.services = { createDialog, inboxBox, refreshStatus, linksIn, call, openWeb, mapStatus, catalogProgress, noteLines, speedOf };
 })();

@@ -117,3 +117,16 @@ body:has([data-panel=inbox]:not([hidden])) main{padding-top:12px;padding-bottom:
 .svc-links a{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:260px}
 .svc-prices{display:grid;gap:4px;max-height:360px;overflow:auto;margin-top:8px}
 .neg{color:var(--err-text)}
+.svc-prices{max-height:560px}
+.svc-table td,.svc-table th{vertical-align:top;padding:9px 10px;text-align:left}
+.svc-table .num{white-space:nowrap;text-align:right}
+.svc-table .svc-name{cursor:pointer;min-width:240px}
+.svc-table .svc-name:hover>div:first-child{color:var(--primary)}
+.svc-row.off td{opacity:.6}
+.svc-note-row td{background:var(--bg-input)}
+.svc-notes{display:grid;gap:3px;font-size:12px;line-height:1.55;white-space:normal;max-height:260px;overflow:auto}
+.svc-dialog .svc-notes{padding:10px;border:1px solid var(--border);border-radius:9px;background:var(--bg-input)}
+.svc-dialog .svc-notes:empty{display:none}
+.svc-pill{display:inline-block;padding:2px 8px;border-radius:999px;font-size:10.5px;line-height:1.6;background:var(--bg-hover);color:var(--text-secondary);white-space:nowrap}
+.svc-speed.fast{background:var(--ok-bg);color:var(--ok-text)}
+.svc-speed.slow{background:var(--pending-bg);color:var(--pending-text)}

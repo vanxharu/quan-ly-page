@@ -5,6 +5,7 @@ const path = require('path'), crypto = require('crypto');
 const { ElectronChromeExtensions } = require('electron-chrome-extensions');
 const { createMetaAuto } = require('./meta-auto');
 const { setupLock } = require('./app-lock');
+const { readCatalog } = require('./svc-catalog');
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 const WEB = process.env.META_ASSISTANT_URL || 'https://vanxharu.github.io/quan-ly-page/';
@@ -271,6 +272,20 @@ app.whenReady().then(async () => {
       const text = await r.text();
       try { return { status: r.status, json: JSON.parse(text) }; } catch { return { status: r.status, error: `API trả về không phải JSON (HTTP ${r.status}): ${text.slice(0, 160)}` }; }
     } catch (err) { return { error: 'Không gọi được API dịch vụ: ' + err.message }; }
+  });
+  // Danh mục dịch vụ từ trang web (ghi chú gốc, giá web, bảo trì, thời gian TB): đọc bằng phiên cột Dịch vụ, chỉ đọc.
+  let svcCatalogRun = null;
+  ipcMain.handle('svc-catalog', async (e, { origin } = {}) => {
+    if (!fromPage(e)) return { error: 'denied' };
+    let o; try { o = new URL(origin); } catch { return { error: 'Địa chỉ web dịch vụ không hợp lệ.' }; }
+    if (o.protocol !== 'https:') return { error: 'Web dịch vụ phải là https.' };
+    if (svcCatalogRun) return svcCatalogRun;
+    const fetchText = async url => { const r = await svcSes.fetch(url, { headers: { accept: 'text/html' } }); if (!r.ok) throw Error('HTTP ' + r.status); return r.text(); };
+    const progress = (done, total) => pageView.webContents.executeJavaScript(`window.App?.services?.catalogProgress?.(${done},${total})`).catch(() => {});
+    svcCatalogRun = readCatalog(o.origin, fetchText, { onProgress: progress })
+      .then(list => ({ list }), err => ({ error: 'Không đọc được web dịch vụ: ' + err.message }))
+      .finally(() => { svcCatalogRun = null; });
+    return svcCatalogRun;
   });
   const openMetaInbox = url => {
     if (!/^https:\/\/business\.facebook\.com\/latest\/inbox/.test(url)) return;
