@@ -176,3 +176,5 @@ body:has([data-panel=inbox]:not([hidden])) main{padding-top:12px;padding-bottom:
 .svc-checks{display:grid;gap:6px;margin:10px 0;padding:10px 12px;border:1px solid var(--border);border-radius:10px;background:var(--bg-input);font-size:12.5px}
 .svc-inbox-quotes{display:grid;gap:6px}
 .svc-inbox-quotes:empty{display:none}
+.svc-table .num.pos,#svOrders td.pos,#svQuotes td.pos{color:var(--ok-text);font-weight:700}
+td.num.neg{font-weight:700}
