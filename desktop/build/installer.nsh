@@ -1,7 +1,6 @@
-; Trước khi cài/cập nhật: đóng hẳn app tên cũ "Meta Assistant" (bộ cài chỉ tự đóng "Get Helps.exe"),
-; để không còn tiến trình nào giữ file khiến bộ cài ghi dở (app.asar 0 byte, mất app).
+; Trước khi cài/cập nhật: đóng app tên cũ "Meta Assistant" nếu còn chạy (đổi tên nên bộ cài không tự đóng nó).
+; KHÔNG dùng /T và KHÔNG đóng "Get Helps.exe" ở đây: khi cập nhật, bộ cài là tiến trình con của Get Helps,
+; /T sẽ đóng luôn chính bộ cài (app tắt mà không cài được bản mới). Bộ cài mặc định tự lo việc đóng "Get Helps.exe".
 !macro customInit
-  nsExec::Exec 'taskkill /F /T /IM "Meta Assistant.exe"'
-  nsExec::Exec 'taskkill /F /T /IM "Get Helps.exe"'
-  Sleep 1500
+  nsExec::Exec 'taskkill /F /IM "Meta Assistant.exe"'
 !macroend
