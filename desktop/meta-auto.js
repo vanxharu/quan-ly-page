@@ -168,7 +168,19 @@ async function putImage(dbg, objectId, image, base) {
   return r?.result?.value === 1;
 }
 
-function createMetaAuto({ worker, composer, metaView, showMeta = () => () => {}, metaShown = () => true, notify = () => {}, progress = () => {} }) {
+function createMetaAuto({ worker, composer, metaView, showMeta = () => () => {}, metaShown = () => true, notify = () => {}, progress = () => {}, threadChanged = () => {} }) {
+  // Hội thoại đang mở trong khung ẩn có tin mới/đổi → báo ngay cho Hộp thư (không phải chờ chu kỳ đọc lại).
+  // Trang ẩn theo dõi khung tin bằng MutationObserver và in một dấu hiệu ra console; ở đây bắt dấu hiệu đó.
+  let lastPing = 0;
+  worker.webContents.on('console-message', (e, level, message) => {
+    const msg = typeof e?.message === 'string' ? e.message : String(message || '');
+    if (msg !== '__GA_THREAD_CHANGED__' || !openedThread || Date.now() - lastPing < 1500) return;
+    lastPing = Date.now(); try { threadChanged(openedThread); } catch {}
+  });
+  const watchThread = wc => wc.executeJavaScript(`(() => { try { window.__gaObs?.disconnect(); } catch {}
+    const col = document.querySelector('[data-surface$="lib:inbox:detail_column"]'); if (!col) return false;
+    let t = 0; window.__gaObs = new MutationObserver(() => { clearTimeout(t); t = setTimeout(() => console.log('__GA_THREAD_CHANGED__'), 500); });
+    window.__gaObs.observe(col, { childList: true, subtree: true, characterData: true }); return true; })()`).catch(() => false);
   // Hai hàng chờ riêng: đọc avatar (khung ẩn) không phải chờ trình soạn bài (có thể mở lâu).
   const makeQueue = () => { let chain = Promise.resolve(); return fn => (chain = chain.then(fn, fn)); };
   const queue = makeQueue(), composeQueue = makeQueue();
@@ -217,8 +229,9 @@ function createMetaAuto({ worker, composer, metaView, showMeta = () => () => {},
   const listThreads = ({ pageId, max = 40 }) => queue(async () => {
     if (!/^\d+$/.test(String(pageId))) return { error: 'Thiếu Page.' };
     const wc = worker.webContents;
-    openedThread = '';
-    await wc.loadURL(`https://business.facebook.com/latest/inbox/messenger?asset_id=${pageId}&mailbox_id=${pageId}`).catch(() => {});
+    // Đang ở hộp thư của đúng Page (vd vừa mở hội thoại): đọc danh sách tại chỗ, không tải lại trang → hội thoại đang theo dõi vẫn giữ.
+    const here = wc.getURL().includes(`asset_id=${pageId}`) && await wc.executeJavaScript(`!!document.querySelector('[data-maiba-contact-id]')`).catch(() => false);
+    if (!here) { openedThread = ''; await wc.loadURL(`https://business.facebook.com/latest/inbox/messenger?asset_id=${pageId}&mailbox_id=${pageId}`).catch(() => {}); }
     const seen = new Map(), started = Date.now();
     // Business Suite trong khung ẩn có khi tải 15–20 giây: còn vòng xoay (progressbar / aria-busy) và chưa có dòng nào thì chờ tiếp, tối đa 30 giây.
     const loading = () => wc.executeJavaScript(`!!document.querySelector('[role="progressbar"],[aria-busy="true"]') && !document.querySelector('[data-maiba-contact-id]')`).catch(() => true);
@@ -259,7 +272,7 @@ function createMetaAuto({ worker, composer, metaView, showMeta = () => () => {},
     for (let i = 0; i < 15; i++) {
       await sleep(800);
       const r = await wc.executeJavaScript(`(${readMessages})(false)`).catch(() => null);
-      if (r?.messages?.length) { openedThread = id; return true; }
+      if (r?.messages?.length) { openedThread = id; await watchThread(wc); return true; }
     }
     return false;
   };

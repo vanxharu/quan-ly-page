@@ -314,7 +314,8 @@ app.whenReady().then(async () => {
     wc.on('console-message', (e) => { const lvl = e.level ?? ''; if (!['error', 'warning', 2, 3].includes(lvl)) return; consoleLog.push(`[${new Date().toISOString()}] ${name} ${lvl}: ${String(e.message).slice(0, 500)} (${e.sourceId || ''}:${e.lineNumber || ''})`); if (consoleLog.length > 300) consoleLog.shift(); });
   const auto = createMetaAuto({ worker, composer, metaView, showMeta: showMetaTemp, metaShown: () => side === 'meta',
     progress: data => pageView.webContents.executeJavaScript(`window.App?.composeProgress?.(${JSON.stringify(data)})`).catch(() => {}),
-    notify: msg => pageView.webContents.executeJavaScript(`typeof toast === 'function' && toast(${JSON.stringify(msg)}, 30000)`).catch(() => {}) });
+    notify: msg => pageView.webContents.executeJavaScript(`typeof toast === 'function' && toast(${JSON.stringify(msg)}, 30000)`).catch(() => {}),
+    threadChanged: id => pageView.webContents.executeJavaScript(`window.App?.inbox?.bsChanged?.(${JSON.stringify(String(id))})`).catch(() => {}) });
   worker.webContents.setAudioMuted(true);
   worker.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   ipcMain.handle('meta-lookup', (e, args) => fromPage(e) ? auto.lookupProfile(args || {}) : { error: 'denied' });

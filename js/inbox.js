@@ -792,8 +792,15 @@
     }, 800);
   };
   setInterval(() => { tick().catch(() => {}); }, 15e3);
+  let bsLive = false, bsAgain = false;
+  // App Windows báo hội thoại đang mở trong khung ẩn vừa đổi (tin mới, đã gửi…) → đọc lại ngay.
+  App.inbox.bsChanged = id => {
+    const c = S.conv;
+    if (!c?.bs || `${c.page.id}:${c.uid}` !== id || S.sending || document.hidden) return;
+    if (bsLive) { bsAgain = true; return; }
+    bsLive = true; openBs(c, { silent: true }).catch(() => {}).finally(() => { bsLive = false; if (bsAgain) { bsAgain = false; App.inbox.bsChanged(id); } });
+  };
   // Hội thoại Business Suite đang mở: đọc lại 20 giây/lần để tin mới của khách tự hiện (khung ẩn của Meta cập nhật trực tiếp).
-  let bsLive = false;
   setInterval(async () => {
     const c = S.conv;
     if (bsLive || !c?.bs || S.sending || document.hidden || App.current() !== 'inbox') return;
