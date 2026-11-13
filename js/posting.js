@@ -107,7 +107,14 @@
   // ── Đã hẹn trên FB: giao diện kiểu "Bài viết đã lên lịch" của Meta Business Suite ──
   // Bảng theo ngày, lọc Page / tìm nội dung, chọn nhiều để huỷ, đổi giờ, đăng ngay, mở trên Meta. Bài quá giờ mà Facebook
   // chưa đăng được tách riêng để dọn.
-  const SC = { posts: [], errors: [], selected: new Set(), q: '', page: '', open: new Set(), editing: '', view: ['week', 'month'].includes(local.get('scView')) ? local.get('scView') : 'list', week: 0 };
+  // Trạng thái theo màu: quá giờ (đỏ) · sắp đăng trong 2 giờ (cam) · đã hẹn (xanh); nguồn: hẹn từ app (tím) hay ngoài app (xám).
+  const scState = ms => { const m = (ms - Date.now()) / 60e3; return m < 0 ? ['late', 'Quá giờ'] : m <= 120 ? ['soon', 'Sắp đăng'] : ['ok', 'Đã hẹn']; };
+  const scBadges = p => { const [cls, text] = scState(p.scheduled_publish_time * 1000), app = SC.fromApp.has(String(p.id));
+    return h('span', { className: 'sc-badges' }, h('span', { className: 'sc-badge sc-b-' + cls, textContent: text }),
+      h('span', { className: 'sc-badge ' + (app ? 'sc-b-app' : 'sc-b-ext'), title: app ? 'Hẹn từ app (Lịch đăng)' : 'Hẹn trong Business Suite / hẹn tay trên Facebook', textContent: app ? 'Từ app' : 'Ngoài app' })); };
+  const scLegend = () => h('div', { className: 'sc-legend' }, ...[['ok', 'Đã hẹn'], ['soon', 'Sắp đăng (≤ 2 giờ)'], ['late', 'Quá giờ, FB chưa đăng'], ['app', 'Hẹn từ app'], ['ext', 'Hẹn ngoài app']]
+    .map(([c, t]) => h('span', { className: 'sc-badge sc-b-' + c, textContent: t })));
+  const SC = { fromApp: new Set(), posts: [], errors: [], selected: new Set(), q: '', page: '', open: new Set(), editing: '', view: ['week', 'month'].includes(local.get('scView')) ? local.get('scView') : 'list', week: 0 };
   const WD = ['Chủ Nhật', 'Thứ Hai', 'Thứ Ba', 'Thứ Tư', 'Thứ Năm', 'Thứ Sáu', 'Thứ Bảy'];
   const dayLabel = ms => { const d = new Date(ms), t = new Date(); t.setHours(0, 0, 0, 0); const diff = Math.round((new Date(d).setHours(0, 0, 0, 0) - t) / 864e5);
     return (diff === 0 ? 'Hôm nay · ' : diff === 1 ? 'Ngày mai · ' : '') + `${WD[d.getDay()]}, ${d.getDate()} tháng ${d.getMonth() + 1}${d.getFullYear() !== t.getFullYear() ? ', ' + d.getFullYear() : ''}`; };
@@ -161,7 +168,7 @@
     row(p) {
       const ms = p.scheduled_publish_time * 1000, img = App.scheduledPostImage(p), late = ms < Date.now(), opened = SC.open.has(p.id), editing = SC.editing === p.id;
       const check = h('input', { type: 'checkbox', checked: SC.selected.has(p.id), 'aria-label': 'Chọn bài', onchange: e => { e.target.checked ? SC.selected.add(p.id) : SC.selected.delete(p.id); this.syncSelection(); } });
-      return h('div', { className: 'sc-row' + (SC.selected.has(p.id) ? ' is-selected' : '') + (late ? ' is-late' : ''), role: 'row', dataset: { post: p.id } },
+      return h('div', { className: 'sc-row sc-s-' + scState(ms)[0] + (SC.selected.has(p.id) ? ' is-selected' : '') + (late ? ' is-late' : ''), role: 'row', dataset: { post: p.id } },
         h('div', { className: 'sc-cell sc-check' }, check),
         h('div', { className: 'sc-cell sc-post' },
           img ? h('img', { className: 'sc-thumb', src: img, alt: '', loading: 'lazy' }) : h('div', { className: 'sc-thumb sc-thumb-empty', textContent: 'Aa' }),
@@ -173,7 +180,7 @@
           editing ? h('form', { className: 'sc-resched', onsubmit: e => { e.preventDefault(); this.reschedule(p, e.target.elements.at.value); } },
               h('input', { type: 'datetime-local', name: 'at', value: toInput(Math.max(ms, Date.now() + 15 * 60e3)), required: true }),
               h('button', { className: 'btn btn-primary btn-sm', textContent: 'Lưu' }), h('button', { type: 'button', className: 'btn btn-ghost btn-sm', textContent: 'Huỷ', onclick: () => { SC.editing = ''; this.draw(); } }))
-            : [h('strong', { textContent: hhmm(ms) }), h('span', { className: 'sc-sub' + (late ? ' sc-late' : ''), textContent: late ? 'Quá giờ · Facebook chưa đăng' : until(ms) })]),
+            : [h('strong', { textContent: hhmm(ms) }), h('span', { className: 'sc-sub' + (late ? ' sc-late' : ''), textContent: late ? 'Quá giờ · Facebook chưa đăng' : until(ms) }), scBadges(p)]),
         h('div', { className: 'sc-cell sc-actions' },
           App.metaLink(App.metaScheduledUrl(p.page.id), 'Xem ↗'),
           editing ? null : h('button', { className: 'btn btn-ghost btn-sm', textContent: 'Đổi giờ', onclick: () => { SC.editing = p.id; this.draw(); } }),
@@ -197,12 +204,12 @@
       const end = days[6].getTime() + 864e5;
       const inWeek = list.filter(p => p.scheduled_publish_time * 1000 >= start.getTime() && p.scheduled_publish_time * 1000 < end);
       const card = p => { const ms = p.scheduled_publish_time * 1000, img = App.scheduledPostImage(p);
-        return h('button', { type: 'button', className: 'sc-wcard', title: `${p.page.name}\n${hhmm(ms)} · ${p.message || ''}`.slice(0, 300), onclick: () => { SC.view = 'list'; local.set('scView', 'list'); SC.open.add(p.id); this.draw(); $('scList').querySelector(`[data-post="${p.id}"]`)?.scrollIntoView({ block: 'center' }); } },
+        return h('button', { type: 'button', className: 'sc-wcard sc-s-' + scState(ms)[0] + (SC.fromApp.has(String(p.id)) ? ' sc-from-app' : ''), title: `${p.page.name}\n${hhmm(ms)} · ${p.message || ''}`.slice(0, 300), onclick: () => { SC.view = 'list'; local.set('scView', 'list'); SC.open.add(p.id); this.draw(); $('scList').querySelector(`[data-post="${p.id}"]`)?.scrollIntoView({ block: 'center' }); } },
           h('div', { className: 'sc-wmedia' }, img ? h('img', { src: img, alt: '', loading: 'lazy' }) : h('div', { className: 'sc-thumb-empty', textContent: 'Aa' }),
             h('span', { className: 'sc-wavatar' }, App.avatar(p.page.name, App.pageAvatarUrl(p.page), 22))),
           h('div', { className: 'sc-wbody' }, h('strong', { textContent: hhmm(ms) }), h('span', { className: 'sc-wpage', textContent: p.page.name }), h('span', { className: 'sc-wtext', textContent: p.message || '(Bài chỉ có ảnh)' }))); };
       const label = d => `${d.getDate()}/${d.getMonth() + 1}`;
-      return [h('div', { className: 'sc-weeknav' },
+      return [scLegend(), h('div', { className: 'sc-weeknav' },
           h('button', { className: 'btn btn-ghost btn-sm', textContent: '‹ Tuần trước', disabled: SC.week <= 0, onclick: () => { SC.week--; this.draw(); } }),
           h('strong', { textContent: `${label(days[0])} – ${label(days[6])} · ${inWeek.length} bài` }),
           h('button', { className: 'btn btn-ghost btn-sm', textContent: 'Tuần sau ›', onclick: () => { SC.week++; this.draw(); } })),
@@ -234,7 +241,7 @@
       if (SC.view === 'week') { $('scList').replaceChildren(...SC.errors.map(e => h('div', { className: 'status err', textContent: e })), ...this.drawWeek(upcoming)); return this.syncSelection(); }
       $('scList').replaceChildren(
         ...SC.errors.map(e => h('div', { className: 'status err', textContent: e })),
-        ...(list.length ? [head, ...[...groups].flatMap(([k, items]) => section(k, items)),
+        ...(list.length ? [scLegend(), head, ...[...groups].flatMap(([k, items]) => section(k, items)),
           ...(late.length ? section('Quá giờ nhưng Facebook chưa đăng · nên Huỷ hoặc Đổi giờ', late, 'sc-day-late') : [])]
           : [h('div', { className: 'sc-empty' }, h('div', { className: 'sc-empty-icon', textContent: '🗓' }), h('strong', { textContent: SC.posts.length ? 'Không có bài khớp bộ lọc' : 'Chưa có bài nào được lên lịch' }),
               h('span', { className: 'hint', textContent: SC.posts.length ? 'Đổi Page hoặc xoá từ khoá tìm kiếm.' : 'Soạn bài hoặc dùng Lịch đăng để hẹn giờ; bài sẽ hiện ở đây.' }))]));
@@ -247,6 +254,7 @@
           .catch(()=>api(`/${page.id}/scheduled_posts`,{fields:'id,message,scheduled_publish_time,full_picture',limit:100},'GET',page.access_token))
           .then(r => r.data.map(x => ({ ...x, page }))).catch(e => [{ error: `${page.name}: ${e.message}` }]));
         const all = lists.flat();
+        SC.fromApp = new Set((await DB.get(QUEUE, [])).map(i => String(i.fbPostId || '')).filter(Boolean));
         SC.errors = all.filter(x => x.error).map(x => x.error); SC.posts = all.filter(x => !x.error);
         if (SC.page && !SC.posts.some(p => p.page.id === SC.page)) SC.page = '';
         this.posts = SC.posts; if (SC.view === 'month') App.monthCalendar?.reload(); this.draw();
