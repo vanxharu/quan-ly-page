@@ -272,8 +272,20 @@
   }
   async function scheduleAll() {
     $('plLog').replaceChildren();
-    const list = (await DB.get(QUEUE, [])).filter(i => i.status === 'approved' && inSel(i));
+    let list = (await DB.get(QUEUE, [])).filter(i => i.status === 'approved' && inSel(i));
     if (!list.length) return log('err', 'Không có bài đã duyệt.');
+    // Bài chưa có giờ hoặc giờ đã qua / sắp tới dưới 10 phút: tự xếp sang giờ trống tiếp theo thay vì báo lỗi.
+    const stale = new Set(list.filter(i => pageOf(i) && (!i.at || i.at < Date.now() + 11 * 60e3)).map(i => i.id));
+    if (stale.size) {
+      const queue = await DB.get(QUEUE, []), items = queue.filter(i => stale.has(i.id));
+      for (const i of items) i.at = 0;
+      const { n } = await assignTimes(await getSettings(), queue, items);
+      for (const i of items) if (!i.at) Object.assign(i, { status: 'error', error: 'Giờ đăng đã qua và không còn giờ trống trong các ngày đăng đã chọn. Chọn thêm ngày đăng hoặc tăng số bài/ngày.' });
+      await DB.set(QUEUE, queue);
+      log('pending', `${n} bài đã qua giờ đăng được xếp sang giờ trống tiếp theo${n < items.length ? `, ${items.length - n} bài không còn chỗ` : ''}.`);
+      list = queue.filter(i => i.status === 'approved' && inSel(i));
+      if (!list.length) return refresh();
+    }
     $('plGo').disabled = true;
     let ok = 0, dup = 0;
     App.batchProgress?.start(list.map(i => ({ id: i.id, label: `${(pageOf(i)?.name || i.pageName || 'Page').slice(0, 40)} · ${i.at ? fmtTime(i.at) : 'chưa có giờ'}` })));
@@ -297,12 +309,8 @@
     $('plLog').replaceChildren(); log(n ? 'ok' : 'err', n ? `Đã duyệt ${n} bài (nháp và bài lỗi). Bấm "Lên lịch tất cả bài đã duyệt" để hẹn.` : 'Không có bài nháp hay bài lỗi nào để duyệt.');
     refresh();
   }
-  async function autoTime() {
-    $('plLog').replaceChildren();
-    const s = await getSettings();
-    const queue = await DB.get(QUEUE, []);
-    const waiting = queue.filter(i => ['draft', 'approved'].includes(i.status) && !i.at && pageOf(i) && App.isSelected(pageOf(i).id));
-    if (!waiting.length) return log('err', 'Không có bài nháp nào chưa xếp giờ.');
+  // Xếp giờ trống (theo khung giờ, số bài/ngày, ngày đăng) cho các bài chưa có giờ trong queue; sửa thẳng item.at.
+  async function assignTimes(s, queue, waiting) {
     const byKey = new Map();
     for (const i of waiting) { const k = pageOf(i).id; (byKey.get(k) || byKey.set(k, []).get(k)).push(i); }
     // Bỏ ngày đăng đã qua (không còn hiện trên lịch chọn) để không xếp 0 bài mà không rõ lý do.
@@ -312,6 +320,17 @@
     const plan = Pure.planTimes([...byKey.keys()].map(key => ({ key, cfg: cfgFor(s, key) })), days, live).filter(p => p.at).sort((a, b) => a.at - b.at);
     let n = 0;
     for (const slot of plan) { const item = byKey.get(slot.key)?.shift(); if (item) { item.at = slot.at; n++; } }
+    return { n, byKey, days };
+  }
+  App.planner.assignTimes = assignTimes;
+
+  async function autoTime() {
+    $('plLog').replaceChildren();
+    const s = await getSettings();
+    const queue = await DB.get(QUEUE, []);
+    const waiting = queue.filter(i => ['draft', 'approved'].includes(i.status) && !i.at && pageOf(i) && App.isSelected(pageOf(i).id));
+    if (!waiting.length) return log('err', 'Không có bài nháp nào chưa xếp giờ.');
+    const { n, byKey, days } = await assignTimes(s, queue, waiting);
     await DB.set(QUEUE, queue);
     const left = [...byKey.values()].reduce((a, l) => a + l.length, 0);
     // Nói rõ lý do cho từng Page chưa xếp được (thiếu ngày trong tuần, khung giờ trống…), không chỉ báo chung chung.
