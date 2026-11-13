@@ -236,42 +236,62 @@
   const TAGS = [[/\bvip\b/i, 'VIP', 'vip'], [/theo tháng|\d+\s*tháng/i, 'Theo tháng', 'month'], [/mua theo bài/i, 'Theo bài', 'month'], [/\b(việt|viet|vn)\b|việt nam/i, 'Việt', 'vn'],
     [/\b(tây|tay)\b/i, 'Tây', 'west'], [/không bảo hành|\bkbh\b/i, 'Không BH', 'nowarr'], [/bảo hành \d+|bảo hành 30|bh \d+/i, 'Bảo hành', 'warr'], [/cực nhanh|siêu tốc|siêu nhanh/i, 'Nhanh', 'fast']];
   const tagsOf = text => { const out = [], seen = new Set(); for (const [re, label, cls] of TAGS) if (re.test(text) && !seen.has(label)) { seen.add(label); out.push([label, cls]); } return out; };
-  // items: [{ value, label, sub, platform, group, tags: [[label, cls]], price, warn, always }]
-  function cardPicker({ items, value = '', onPick, plat = '', height = 320, placeholder = 'Tìm…' }) {
-    let cur = value, pf = items.some(i => i.platform === plat) ? plat : '', q = '';
+  // items: [{ value, label, sub, platform, group, tags: [[label, cls]], price, warn, always, kids: [{ value, label, price }] }]
+  // collapsible: đã chọn thì thu thành 1 dòng (bấm "Đổi" để mở danh sách), chọn xong tự thu lại.
+  function cardPicker({ items, value = '', onPick, plat = '', height = 320, placeholder = 'Tìm…', collapsible = false }) {
+    let cur = value, pf = items.some(i => i.platform === plat) ? plat : '', q = '', open = !collapsible;
+    const find = v => { for (const i of items) { if (i.value === v) return [i, null]; const k = i.kids?.find(k => k.value === v); if (k) return [i, k]; } return [null, null]; };
     const chips = h('div', { className: 'cp-chips' }), list = h('div', { className: 'cp-list', style: `max-height:${height}px` });
     const searchIn = h('input', { type: 'search', placeholder, oninput: e => { q = e.target.value; draw(); } });
+    const panel = h('div', { className: 'cp-panel' }, searchIn, chips, list), summary = h('div', { className: 'cp-sum-wrap' });
     const plats = [...new Set(items.map(i => i.platform).filter(Boolean))];
     const chip = (p, label, n) => h('button', { type: 'button', className: 'cp-chip' + (pf === p ? ' on' : ''), onclick: () => { pf = p; draw(); } },
-      p ? platBadge(p, 18) : null, h('span', { textContent: label }), h('small', { textContent: n }));
+      p ? platBadge(p, 16) : null, h('span', { textContent: label }), h('small', { textContent: n }));
+    const choose = v => { cur = v; if (collapsible) open = false; draw(); onPick(v); };
+    const tagEls = i => [...(i.tags || []).map(([t, c]) => h('span', { className: 'cp-tag ' + c, textContent: t })), i.warn ? h('span', { className: 'cp-tag off', textContent: i.warn }) : null];
     const draw = () => {
+      const [ci, ck] = find(cur);
+      summary.replaceChildren(collapsible && ci ? h('button', { type: 'button', className: 'cp-current cp-sum', title: open ? 'Thu gọn' : 'Bấm để đổi', onclick: () => { open = !open; draw(); if (open) searchIn.focus(); } },
+        ci.always ? h('span', { className: 'plat-badge any', textContent: '⚙' }) : platBadge(ci.platform, 22),
+        h('span', { className: 'cp-main' }, h('span', { className: 'cp-title', textContent: ci.label + (ck ? ` · ${ck.label}` : '') }), ci.sub ? h('span', { className: 'cp-sub', textContent: ci.sub }) : null),
+        (ck?.price || ci.price) ? h('span', { className: 'cp-price', textContent: ck?.price || ci.price }) : null,
+        h('span', { className: 'cp-caret', textContent: open ? '▴ Thu gọn' : '▾ Đổi' })) : '');
+      panel.hidden = collapsible && !open && !!ci;
+      if (panel.hidden) return;
       chips.replaceChildren(chip('', 'Tất cả', items.filter(i => !i.always).length), ...plats.map(p => chip(p, p, items.filter(i => i.platform === p).length)));
-      const f = norm(q), shown = items.filter(i => i.always || ((!pf || i.platform === pf) && (!f || norm(`${i.label} ${i.sub || ''} ${i.group || ''}`).includes(f))));
+      const f = norm(q), shown = items.filter(i => i.always || ((!pf || i.platform === pf) && (!f || norm(`${i.label} ${i.sub || ''} ${i.group || ''} ${(i.kids || []).map(k => k.label + ' ' + k.value).join(' ')}`).includes(f))));
       let last = null; const out = [];
       for (const i of shown) {
-        if (!i.always && i.group && i.group !== last) { out.push(h('div', { className: 'cp-group' }, platBadge(i.platform, 16), h('span', { textContent: i.group }))); last = i.group; }
-        out.push(h('button', { type: 'button', className: 'cp-card' + (i.value === cur ? ' on' : '') + (i.warn ? ' warn' : '') + (i.always ? ' always' : ''),
-          onclick: () => { cur = i.value; draw(); onPick(i.value); } },
-          i.always ? h('span', { className: 'plat-badge any', textContent: '⚙' }) : platBadge(i.platform),
-          h('span', { className: 'cp-main' }, h('span', { className: 'cp-title', textContent: i.label }), i.sub ? h('span', { className: 'cp-sub', textContent: i.sub }) : null,
-            (i.tags?.length || i.warn) ? h('span', { className: 'cp-tags' }, ...(i.tags || []).map(([t, c]) => h('span', { className: 'cp-tag ' + c, textContent: t })), i.warn ? h('span', { className: 'cp-tag off', textContent: i.warn }) : null) : null),
-          i.price ? h('span', { className: 'cp-price', textContent: i.price }) : null,
-          i.value === cur ? h('span', { className: 'cp-check', textContent: '✓' }) : null));
+        if (!i.always && i.group && i.group !== last) { out.push(h('div', { className: 'cp-group' }, platBadge(i.platform, 14), h('span', { textContent: i.group }))); last = i.group; }
+        const on = i.value === cur || i.kids?.some(k => k.value === cur);
+        out.push(h('div', { className: 'cp-card' + (on ? ' on' : '') + (i.warn ? ' warn' : '') + (i.always ? ' always' : ''), role: 'button', tabIndex: 0,
+          onclick: () => choose(i.value), onkeydown: e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); choose(i.value); } } },
+          i.always ? h('span', { className: 'plat-badge any', textContent: '⚙' }) : platBadge(i.platform, 22),
+          h('span', { className: 'cp-main' },
+            h('span', { className: 'cp-line' }, h('span', { className: 'cp-title', textContent: i.label }), ...tagEls(i)),
+            i.sub ? h('span', { className: 'cp-sub', textContent: i.sub }) : null,
+            i.kids?.length ? h('span', { className: 'cp-kids' }, ...[{ value: i.value, label: i.kidLabel || 'mặc định', price: i.price }, ...i.kids].map(k =>
+              h('button', { type: 'button', className: 'cp-kid' + (k.value === cur ? ' on' : ''), title: k.price || '', textContent: k.label, onclick: e => { e.stopPropagation(); choose(k.value); } }))) : null),
+          i.price ? h('span', { className: 'cp-price', textContent: (on && find(cur)[1]?.price) || i.price }) : null));
       }
-      list.replaceChildren(...(out.length ? out : [h('div', { className: 'hint', style: 'padding:14px', textContent: 'Không có mục nào khớp.' })]));
+      list.replaceChildren(...(out.length ? out : [h('div', { className: 'hint', style: 'padding:12px', textContent: 'Không có mục nào khớp.' })]));
       list.querySelector('.cp-card.on')?.scrollIntoView?.({ block: 'nearest' });
     };
     draw();
-    return { el: h('div', { className: 'cp' }, searchIn, chips, list), set: v => { cur = v; draw(); }, setPlat: p => { if (items.some(i => i.platform === p)) { pf = p; draw(); } } };
+    return { el: h('div', { className: 'cp' }, summary, panel), set: v => { cur = v; draw(); }, setPlat: p => { if (items.some(i => i.platform === p)) { pf = p; draw(); } } };
   }
   const serverItem = x => { const [st, cls] = stateOf(x);
     return { value: x.id, label: x.name, sub: `MC ${x.id} · ${Number(x.min).toLocaleString('vi-VN')}–${Number(x.max).toLocaleString('vi-VN')}`, platform: x.platform || '', group: [x.platform, x.category].filter(Boolean).join(' › '),
       tags: tagsOf(x.name), price: `${m2(x.unitCost)}/đv`, warn: cls === 'err' ? st : '' }; };
+  // Máy chủ cha + cảm xúc / số tháng gộp 1 thẻ (chọn bằng nút nhỏ trong thẻ).
+  const serverItems = arr => { const sorted = sortWeb(arr), ids = new Set(sorted.map(x => x.id));
+    return sorted.filter(x => !x.parent || !ids.has(x.parent)).map(x => ({ ...serverItem(x), kidLabel: x.child || '',
+      kids: sorted.filter(k => k.parent === x.id).map(k => ({ value: k.id, label: k.child || ('MC ' + k.id), price: `${m2(k.unitCost)}/đv` })) })); };
   const sortWeb = arr => [...arr].sort((a, b) => a.groupIndex - b.groupIndex || a.pos - b.pos || (a.parent ? 1 : 0) - (b.parent ? 1 : 0) || Number(a.id) - Number(b.id));
   function pickServerDialog(list, current) {
     return new Promise(done => {
       const dlg = h('dialog', { className: 'svc-dialog', onclose: () => { dlg.remove(); done(null); } });
-      const p = cardPicker({ items: sortWeb(list).map(serverItem), value: String(current || ''), height: 460, placeholder: 'Tìm máy chủ (tên, mã MC)…',
+      const p = cardPicker({ items: serverItems(list), value: String(current || ''), height: 460, placeholder: 'Tìm máy chủ (tên, mã MC)…',
         plat: list.find(x => x.id === String(current))?.platform || '', onPick: v => { done(v); dlg.onclose = () => dlg.remove(); dlg.close(); } });
       dlg.append(h('div', { className: 'card-head' }, h('h3', { className: 'card-title', textContent: 'Chọn máy chủ gốc' }),
         h('button', { type: 'button', className: 'icon-btn', 'aria-label': 'Đóng', textContent: '×', onclick: () => dlg.close() })), p.el);
@@ -308,8 +328,8 @@
       ...pkgs.map(pk => { const svc = list.find(x => x.id === String(pk.serviceId)), plat = svc?.platform || (PLAT[pk.name.split(' · ')[0]] ? pk.name.split(' · ')[0] : '');
         return { value: pk.id, label: plat ? pk.name.replace(plat + ' · ', '') : pk.name, sub: svc ? `Gốc: MC ${svc.id} · ${m2(svc.unitCost)}/đv` : 'Chưa gắn máy chủ gốc', platform: plat, group: plat,
           tags: tagsOf(pk.name), price: pk.kind === 'fixed' ? `${Number(pk.qty).toLocaleString('vi-VN')} = ${money(pk.price)}` : `${m2(pk.unitPrice)}/đv`, warn: svc && stateOf(svc)[1] === 'err' ? 'Gốc bảo trì' : !svc ? 'Thiếu máy chủ' : '' }; })];
-    const pkgPick = cardPicker({ items: pkgItems, value: '', plat: linkPlat(), height: 260, placeholder: 'Tìm gói…', onPick: v => { pkgSel.value = v; pkgSel.onchange(); } });
-    const svcPick = cardPicker({ items: sortWeb(list.filter(x => stateOf(x)[1] !== 'err')).map(serverItem), value: '', plat: linkPlat(), height: 300, placeholder: 'Tìm máy chủ (vd: follow, like page, view tiktok, MC 6560)…',
+    const pkgPick = cardPicker({ items: pkgItems, value: '', plat: linkPlat(), height: 240, collapsible: true, placeholder: 'Tìm gói…', onPick: v => { pkgSel.value = v; pkgSel.onchange(); } });
+    const svcPick = cardPicker({ items: serverItems(list.filter(x => stateOf(x)[1] !== 'err')), value: '', plat: linkPlat(), height: 260, collapsible: true, placeholder: 'Tìm máy chủ (vd: follow, like page, view tiktok, MC 6560)…',
       onPick: v => { pick.value = v; pick.onchange(); } });
     const svcBox = h('div', { className: 'field' }, 'Máy chủ', search, pick, svcPick.el);
     const unitBox = h('label', { className: 'field', style: 'flex:1' }, 'Giá bán / 1 đơn vị', unit);
@@ -350,7 +370,7 @@
             sp.text ? h('span', { className: 'svc-pill svc-speed ' + sp.kind, textContent: '⚡ ' + sp.text }) : null,
             svc.avgTime ? h('span', { className: 'svc-pill', textContent: '⏱ TB ' + svc.avgTime }) : null,
             h('span', { className: 'svc-pill', textContent: `Gốc ${m2(svc.unitCost)}/đv` })),
-          svc.notes ? safeNotes(svc.notes) : null); }
+          svc.notes ? h('details', { className: 'svc-note-fold' }, h('summary', { textContent: 'Ghi chú gốc của máy chủ' }), safeNotes(svc.notes)) : null); }
       else noteBox.replaceChildren(p ? h('div', { className: 'neg', textContent: 'Máy chủ gốc của gói không còn trong danh sách. Đổi máy chủ gốc ở Cài đặt dịch vụ › Gói bán của tôi.' }) : '');
       info.replaceChildren(
         h('span', {}, 'Giá gốc ', h('strong', { textContent: money(cost) + (touched(costIn) ? '' : ' ≈') })), h('span', {}, 'Khách trả ', h('strong', { textContent: money(sell) })),
@@ -389,7 +409,7 @@
       h('div', { className: 'card-head' }, h('h3', { className: 'card-title', textContent: 'Báo giá dịch vụ' + (ctx.name ? ' · ' + ctx.name : '') }),
         h('button', { type: 'button', className: 'icon-btn', 'aria-label': 'Đóng', textContent: '×', onclick: () => dlg.close() })),
       h('label', { className: 'field' }, 'Link cần làm', linkIn),
-      h('div', { className: 'field' }, 'Gói của tôi', pkgSel, pkgPick.el),
+      pkgs.length ? h('div', { className: 'field' }, 'Gói của tôi', pkgSel, pkgPick.el) : h('p', { className: 'hint', style: 'margin:0' }, pkgSel, 'Chưa có gói bán: chọn máy chủ trực tiếp bên dưới (tạo gói ở tab Dịch vụ › Gói bán của tôi).'),
       svcBox, noteBox,
       commentsBox,
       h('div', { className: 'row', style: 'gap:10px;flex-wrap:wrap' }, h('label', { className: 'field', style: 'flex:1' }, 'Số lượng', qty), unitBox),
@@ -397,8 +417,8 @@
         h('label', { className: 'field', style: 'flex:1' }, 'Thành tiền khách trả (sửa được)', total),
         h('label', { className: 'field', style: 'flex:1' }, 'Giá gốc cả đơn (sửa được)', costIn)),
       h('div', { className: 'row', style: 'gap:10px;flex-wrap:wrap' },
-        h('label', { className: 'field', style: 'flex:3' }, 'Tên dịch vụ trên đơn gửi khách (khách không thấy tên máy chủ gốc)', shown),
-        h('label', { className: 'field', style: 'flex:1' }, 'Thời hạn (tháng) để nhắc gia hạn', termIn)),
+        h('label', { className: 'field', style: 'flex:3' }, 'Tên dịch vụ khách thấy trên đơn', shown),
+        h('label', { className: 'field', style: 'flex:1' }, 'Nhắc gia hạn (tháng)', termIn)),
       rememberBox, info, err,
       h('div', { className: 'row', style: 'gap:8px;justify-content:flex-end' },
         h('button', { type: 'button', className: 'btn btn-ghost', textContent: 'Mở web dịch vụ ↗', onclick: () => { if (linkIn.value) navigator.clipboard?.writeText(linkIn.value).catch(() => {}); openWeb(); } }),
@@ -570,7 +590,7 @@
     const dlg = h('dialog', { className: 'svc-dialog', onclose: () => dlg.remove() });
     const opts = list.filter(x => stateOf(x)[1] !== 'err' || x.id === String(q.serviceId)).sort((a, b) => a.groupIndex - b.groupIndex || a.pos - b.pos || Number(a.id) - Number(b.id));
     const pick = h('select', { hidden: true }, ...opts.map(x => h('option', { value: x.id, selected: x.id === String(q.serviceId), textContent: `MC ${x.id} · ${x.name}` })));
-    const ccPick = cardPicker({ items: sortWeb(opts).map(serverItem), value: String(q.serviceId), plat: list.find(x => x.id === String(q.serviceId))?.platform || '', height: 240, placeholder: 'Tìm máy chủ…', onPick: v => { pick.value = v; draw(); } });
+    const ccPick = cardPicker({ items: serverItems(opts), value: String(q.serviceId), collapsible: true, plat: list.find(x => x.id === String(q.serviceId))?.platform || '', height: 240, placeholder: 'Tìm máy chủ…', onPick: v => { pick.value = v; draw(); } });
     const checks = h('div', { className: 'svc-checks' }), err = h('div', { className: 'status err', hidden: true });
     const btn = h('button', { type: 'button', className: 'btn btn-primary', textContent: 'Tạo đơn Baostar' });
     let balance = null;
