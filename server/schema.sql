@@ -155,3 +155,13 @@ select cron.schedule('publish-due-posts', '* * * * *', $$
     headers := jsonb_build_object('Content-Type', 'application/json', 'x-cron-key', (select value from app_config where key = 'cron_key')),
     body := '{"action":"publish_due"}'::jsonb)
 $$);
+
+-- Mẫu tin lưu theo tài khoản: mỗi tài khoản một dòng (templates, categories, tags), chỉ chủ dòng đọc/ghi.
+create table if not exists user_templates (
+  user_id uuid primary key default auth.uid() references auth.users on delete cascade,
+  data jsonb not null default '{}'::jsonb,
+  updated_at timestamptz not null default now()
+);
+alter table user_templates enable row level security;
+drop policy if exists "own templates" on user_templates;
+create policy "own templates" on user_templates for all to authenticated using (user_id = auth.uid()) with check (user_id = auth.uid());

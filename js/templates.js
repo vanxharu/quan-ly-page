@@ -43,6 +43,47 @@
     }
   };
 
+  // ── Đồng bộ theo tài khoản máy chủ bot (Supabase, bảng user_templates: mỗi tài khoản một dòng, chỉ chủ dòng đọc/ghi) ──
+  // Đăng nhập máy chủ ở máy nào cũng có cùng bộ mẫu. Sửa trên máy này → đẩy lên sau 2 giây; mở app / mở tab / mỗi 5 phút → kéo về.
+  // Hai máy cùng sửa khi mất mạng: lần lưu lên máy chủ sau cùng thắng.
+  const SYNC_KEYS = ['templates', 'categories', 'tags'], META = 'templatesSyncV1'; // { user, at: updated_at đã đồng bộ, dirty }
+  const sync = T.sync = { state: '', error: '' };
+  let pushTimer = 0, applying = false;
+  const sb = () => App.server?.sb, user = () => App.server?.user;
+  const missingTable = e => /user_templates|schema cache|does not exist|PGRST205|42P01/i.test(String(e?.message || e));
+  const setState = (state, error = '') => { Object.assign(sync, { state, error }); if (App.current?.() === 'templates') App.tabs.templates.refresh(); };
+  async function push() {
+    const u = user(); if (!u || !sb()) return;
+    const data = Object.fromEntries(await Promise.all(SYNC_KEYS.map(async k => [k, await DB.get(k, [])])));
+    const at = new Date().toISOString();
+    const { error } = await sb().from('user_templates').upsert({ user_id: u.id, data, updated_at: at }, { onConflict: 'user_id' });
+    if (error) { await DB.set(META, { ...(await DB.get(META, {})), user: u.id, dirty: true }); return setState('err', error.message); }
+    await DB.set(META, { user: u.id, at, dirty: false }); setState('ok');
+  }
+  async function pull() {
+    const u = user(); if (!u || !sb()) return setState('');
+    await ensure();
+    const meta = await DB.get(META, {});
+    const { data: row, error } = await sb().from('user_templates').select('data,updated_at').eq('user_id', u.id).maybeSingle();
+    if (error) return setState('err', error.message);
+    const sameUser = meta.user === u.id;
+    // Máy chủ chưa có, hoặc máy này có sửa chưa đẩy lên → đẩy bộ ở máy lên.
+    if (!row || (sameUser && meta.dirty)) return push();
+    if (sameUser && meta.at === row.updated_at) return setState('ok');
+    applying = true; // bộ trên máy chủ mới hơn (hoặc đổi tài khoản) → thay bộ trên máy
+    try { for (const k of SYNC_KEYS) if (Array.isArray(row.data?.[k])) await DB.set(k, row.data[k]); } finally { applying = false; }
+    await DB.set(META, { user: u.id, at: row.updated_at, dirty: false }); setState('ok');
+  }
+  for (const k of SYNC_KEYS) App.on(k, () => {
+    if (applying || !user()) return;
+    clearTimeout(pushTimer);
+    DB.get(META, {}).then(m => DB.set(META, { ...m, user: user().id, dirty: true }));
+    pushTimer = setTimeout(() => push().catch(e => setState('err', e.message)), 2000);
+  });
+  T.pull = () => pull().catch(e => setState('err', e.message));
+  addEventListener('load', () => sb()?.auth.onAuthStateChange((_e, session) => { if (session?.user) setTimeout(T.pull, 0); else setState(''); }));
+  setInterval(() => user() && T.pull(), 5 * 60e3);
+
   let cat = '', editing = null;
   App.tab('templates', {
     mount(el) {
@@ -57,6 +98,11 @@
         h('details', { className: 'card', id: 'tplStats' }, h('summary', { className: 'card-title', textContent: '📊 Thống kê mẫu tin' })));
     },
     async refresh() {
+      if (!$('tplSync')) $('tplCats').before(h('div', { id: 'tplSync', className: 'hint', style: 'margin-bottom:8px' }));
+      $('tplSync').replaceChildren(...(!user() ? ['Mẫu tin đang chỉ lưu trên máy này. ', h('a', { href: '#', textContent: 'Đăng nhập máy chủ bot', onclick: e => { e.preventDefault(); App.show('settings'); } }), ' để lưu theo tài khoản và dùng trên máy khác.']
+        : sync.state === 'err' ? [h('span', { className: 'status err', textContent: missingTable(sync.error) ? 'Máy chủ chưa có bảng mẫu tin — chạy đoạn SQL "user_templates" trong server/schema.sql ở Supabase › SQL Editor.' : 'Chưa đồng bộ được: ' + sync.error })]
+        : [`☁ Lưu theo tài khoản ${user().email || ''}${sync.state === 'ok' ? ' · đã đồng bộ' : ' · đang đồng bộ…'}`]));
+      if (user() && !sync.state && !this.pulling) { this.pulling = true; T.pull().finally(() => { this.pulling = false; }); }
       const [tpls, cats] = [await T.list(), await T.categories()];
       if (cat && !cats.some(c => c.id === cat)) cat = ''; // nhóm vừa bị xoá
       const q = norm($('tplSearch').value);
