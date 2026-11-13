@@ -1,6 +1,6 @@
 // Meta Assistant cho Windows: mở trang web (luôn là bản mới nhất trên GitHub Pages) trong cửa sổ riêng
 // và chạy sẵn tiện ích Studio AI (ChatGPT) bên trong, không cần Chrome.
-const { app, BaseWindow, BrowserWindow, Menu, WebContentsView, ipcMain, session, shell } = require('electron');
+const { app, BaseWindow, BrowserWindow, Menu, WebContentsView, clipboard, ipcMain, session, shell } = require('electron');
 const path = require('path'), crypto = require('crypto');
 const { ElectronChromeExtensions } = require('electron-chrome-extensions');
 const { createMetaAuto } = require('./meta-auto');
@@ -90,7 +90,26 @@ function wire(wc, win, asTab = true) {
 
 if (!app.requestSingleInstanceLock()) app.quit();
 // Trang có "bạn có muốn rời trang?" (Business Suite đang soạn bài…) không được chặn app thoát: chặn thì bộ cập nhật không ghi đè được file.
-app.on('web-contents-created', (_e, wc) => wc.on('will-prevent-unload', ev => ev.preventDefault()));
+app.on('web-contents-created', (_e, wc) => {
+  wc.on('will-prevent-unload', ev => ev.preventDefault());
+  // Chuột phải ở mọi cửa sổ/khung (cửa sổ bật ra, cột Meta, Zalo, Studio…): sao chép link trang / link đang trỏ, mở trong trình duyệt.
+  wc.on('context-menu', (_ev, p) => {
+    const page = cleanUrl(wc.getURL()), link = cleanUrl(p.linkURL), items = [];
+    if (link) items.push({ label: 'Sao chép link', click: () => clipboard.writeText(link) }, { label: 'Mở link trong trình duyệt', click: () => shell.openExternal(link) }, { type: 'separator' });
+    if (p.isEditable) items.push({ label: 'Cắt', role: 'cut', enabled: p.editFlags.canCut }, { label: 'Sao chép', role: 'copy', enabled: p.editFlags.canCopy }, { label: 'Dán', role: 'paste', enabled: p.editFlags.canPaste }, { type: 'separator' });
+    else if (p.selectionText) items.push({ label: 'Sao chép', role: 'copy' }, { type: 'separator' });
+    if (p.mediaType === 'image' && /^https?:/.test(p.srcURL)) items.push({ label: 'Sao chép link ảnh', click: () => clipboard.writeText(cleanUrl(p.srcURL)) }, { type: 'separator' });
+    if (page) items.push({ label: 'Sao chép link trang này', accelerator: 'Ctrl+Shift+C', click: () => clipboard.writeText(page) }, { label: 'Mở trang này trong trình duyệt', click: () => shell.openExternal(page) });
+    items.push({ label: 'Quay lại', enabled: wc.navigationHistory?.canGoBack?.() ?? wc.canGoBack(), click: () => wc.navigationHistory?.goBack ? wc.navigationHistory.goBack() : wc.goBack() }, { label: 'Tải lại', click: () => wc.reload() });
+    Menu.buildFromTemplate(items).popup();
+  });
+  // Ctrl+Shift+C: sao chép link trang đang mở (cửa sổ bật ra không có thanh địa chỉ).
+  wc.on('before-input-event', (ev, i) => { if (i.type === 'keyDown' && i.control && i.shift && !i.alt && i.key.toLowerCase() === 'c' && cleanUrl(wc.getURL())) { ev.preventDefault(); clipboard.writeText(cleanUrl(wc.getURL())); } });
+});
+// Link để sao chép: chỉ http(s), bỏ token đăng nhập nếu có trong link.
+function cleanUrl(u) {
+  try { const url = new URL(u); if (!/^https?:$/.test(url.protocol)) return ''; for (const k of ['access_token', 'token']) url.searchParams.delete(k); url.hash = /access_token/.test(url.hash) ? '' : url.hash; return url.href; } catch { return ''; }
+}
 app.on('second-instance', () => {
   if (mainWindow) { if (mainWindow.isMinimized()) mainWindow.restore(); mainWindow.focus(); }
 });
