@@ -347,7 +347,10 @@ function createMetaAuto({ worker, composer, metaView, showMeta = () => () => {},
           let ok = false; for (const t of ['dragenter', 'dragover', 'drop']) { const ev = new DragEvent(t, { dataTransfer: dt, bubbles: true, cancelable: true }); this.dispatchEvent(ev); ok = ok || ev.defaultPrevented; }
           return ok; }` }).catch(e => ({ error: e.message }));
       if (await waitPreview()) return true;
-      tried.push(`${kind}: ${r?.error ? 'lỗi ' + r.error : r?.result?.value ? 'nhận nhưng chưa thấy ảnh' : 'không nhận'}`);
+      // Trang đã nhận (chặn xử lý mặc định) = Messenger đã lấy ảnh, chỉ là app chưa nhận ra khung xem trước.
+      // Coi như xong (sau khi gửi, app vẫn kiểm tra ảnh có trong hội thoại); lưu ảnh chụp để chỉnh cách nhận diện.
+      if (r?.result?.value) { await dumpPage(wc, 'sau-' + kind); return true; }
+      tried.push(`${kind}: ${r?.error ? 'lỗi ' + r.error : 'không nhận'}`);
     }
     // 4) bấm nút đính kèm, bắt hộp chọn file
     try {
@@ -419,12 +422,15 @@ function createMetaAuto({ worker, composer, metaView, showMeta = () => () => {},
     // So khớp bỏ khoảng trắng: Business Suite gộp/bỏ dấu cách đầu dòng (vd dòng thụt lề "   Nội dung CK") nên so nguyên văn sẽ trượt.
     const norm = t => String(t || '').replace(/\s+/g, '').toLowerCase();
     const tail = norm(lines.filter(l => l.trim()).pop()).slice(-40);
+    let textOk = !tail, picOk = !image;
     for (let i = 0; i < (image ? 40 : 20); i++) { // ảnh tải lên lâu hơn chữ
       await sleep(800);
       const r = await read();
       const mine = (r?.messages || []).filter(m => m.mine && m.text).slice(-3);
-      if ((!tail || mine.some(m => norm(m.text).includes(tail))) && (!image || myPics(r) > picsBefore)) return { done: true, ...r };
+      textOk ||= mine.some(m => norm(m.text).includes(tail)); picOk ||= myPics(r) > picsBefore;
+      if (textOk && picOk) return { done: true, ...r };
     }
+    if (textOk && !picOk) { await dumpPage(wc, 'gui-thieu-anh'); return { error: 'Chữ đã gửi, nhưng chưa thấy ảnh trong hội thoại. Kiểm tra cột Meta; nếu thiếu ảnh thì Copy ảnh và dán vào đó (đừng gửi lại cả tin để tránh lặp).' }; }
     return { error: 'Đã bấm gửi nhưng chưa thấy tin trong Business Suite — kiểm tra lại trong cột Meta trước khi gửi lại.' };
   });
 

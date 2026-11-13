@@ -293,6 +293,8 @@
     try {
       const data = image ? await asDataUrl(image).catch(() => { throw new Error('Không đọc được ảnh đính kèm.'); }) : '';
       const r = await window.metaDesktop.sendThread({ pageId: String(c.page.id), uid: c.uid, text, image: data });
+      // Chữ đã đi, chỉ thiếu ảnh: xoá chữ khỏi ô nhập (giữ ảnh) để bấm gửi lại không lặp tin.
+      if (r.error && /^Chữ đã gửi/.test(r.error) && S.conv === c && $('ibText').value.trim() === text) { $('ibText').value = ''; await saveDraft(); updateSendState(); }
       if (r.error) throw new Error(r.error === 'login' ? 'Chưa đăng nhập Business Suite trong app.' : r.error);
       if (tpl) await App.recordTemplateUse(tpl, c.key);
       c.fromCustomer = false;
