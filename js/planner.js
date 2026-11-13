@@ -36,7 +36,7 @@
             h('span', { className: 'grow' }),
             h('button', { className: 'btn btn-ghost', title: 'So danh sách với các bài đã hẹn thật trên Meta (kể cả hẹn trong Business Suite) để tránh đăng trùng', onclick: () => { $('plLog').replaceChildren(); reconcile(); } }, 'Đối chiếu với Meta'),
             h('button', { className: 'btn btn-soft', onclick: () => autoTime() }, icon('i-cal'), 'Xếp giờ tự động'),
-            h('button', { className: 'btn btn-ghost', onclick: () => approveAll() }, '✓ Duyệt tất cả nháp'),
+            h('button', { className: 'btn btn-ghost', onclick: () => approveAll() }, '✓ Duyệt tất cả (nháp + lỗi)'),
             h('button', { className: 'btn btn-danger', id: 'plDeleteAll', onclick: () => deleteAll() }, 'Xoá tất cả bài'),
             h('button', { className: 'btn btn-primary', id: 'plGo', onclick: () => scheduleAll() }, icon('i-send'), 'Lên lịch tất cả bài đã duyệt')),
           h('div', { className: 'log', id: 'plLog' }),
@@ -291,7 +291,10 @@
   }
   async function approveAll() {
     const queue = await DB.get(QUEUE, []);
-    await DB.set(QUEUE, queue.map(i => i.status === 'draft' && !i.aiGenerating && (!i.imageRequired||!!i.imageData) && inSel(i) ? { ...i, status: 'approved' } : i));
+    // Giống nút "✓ Duyệt" của từng bài: cả bài nháp, bài lỗi, bài lỡ giờ (duyệt lại sau khi sửa lỗi).
+    let n = 0;
+    await DB.set(QUEUE, queue.map(i => ['draft', 'error', 'missed'].includes(i.status) && !i.aiGenerating && (!i.imageRequired||!!i.imageData) && inSel(i) ? (n++, { ...i, status: 'approved', error: '' }) : i));
+    $('plLog').replaceChildren(); log(n ? 'ok' : 'err', n ? `Đã duyệt ${n} bài (nháp và bài lỗi). Bấm "Lên lịch tất cả bài đã duyệt" để hẹn.` : 'Không có bài nháp hay bài lỗi nào để duyệt.');
     refresh();
   }
   async function autoTime() {
