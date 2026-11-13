@@ -259,12 +259,18 @@ function createMetaAuto({ worker, composer, metaView, showMeta = () => () => {},
     const fileInput = async () => (await dbg.sendCommand('Runtime.evaluate', { expression: `(() => { const col = document.querySelector('${COL}');
       const all = [...(col ? col.querySelectorAll('input[type="file"]') : []), ...document.querySelectorAll('input[type="file"]')];
       return all.find(i => /image|\\*/.test(i.accept || '*')) || null; })()` }).catch(() => null))?.result?.objectId || '';
-    const shownPreview = () => wc.executeJavaScript(`(() => { const col = document.querySelector('${COL}') || document; const ed = col.querySelector('[contenteditable="true"]');
-      let box = ed; for (let i = 0; i < 6 && box; i++) box = box.parentElement; return !!(box && [...box.querySelectorAll('img')].some(im => /^blob:|^data:/.test(im.src))); })()`).catch(() => false);
-    const waitPreview = async () => { for (let i = 0; i < 8; i++) { await sleep(500); if (await shownPreview()) return true; } return false; };
+    // Đếm ảnh/khung xem trước trong cột hội thoại: tăng lên sau khi đưa ảnh = Business Suite đã nhận ảnh.
+    // Chỉ đếm trong vùng soạn tin (quanh ô nhập, cao < 360px) để ảnh trong tin cũ tải chậm không làm tưởng nhầm.
+    const pics = () => wc.executeJavaScript(`(() => { const col = document.querySelector('${COL}') || document, ed = col.querySelector('[contenteditable="true"]');
+      if (!ed) return 0; let box = ed; while (box.parentElement && box.parentElement !== col && box.parentElement.getBoundingClientRect().height < 360) box = box.parentElement;
+      return box.querySelectorAll('img, video, [style*="background-image"]').length; })()`).catch(() => 0);
+    const before = await pics();
+    const waitPreview = async () => { for (let i = 0; i < 10; i++) { await sleep(500); if (await pics() > before) return true; } return false; };
+    const tried = [];
     // 1) ô chọn file có sẵn
     let id = await fileInput();
-    if (id && await putImage(dbg, id, image, 'anh')) { await sleep(1500); return true; }
+    tried.push(id ? 'ô file: có' : 'ô file: không thấy');
+    if (id && await putImage(dbg, id, image, 'anh') && await waitPreview()) return true;
     // 2) bấm nút đính kèm, bắt hộp chọn file
     try {
       await dbg.sendCommand('Page.enable');
@@ -275,16 +281,28 @@ function createMetaAuto({ worker, composer, metaView, showMeta = () => () => {},
       const params = clicked ? await chooser : null;
       id = params?.backendNodeId ? (await dbg.sendCommand('DOM.resolveNode', { backendNodeId: params.backendNodeId }).catch(() => null))?.object?.objectId : '';
       if (!id && clicked) id = await fileInput();
-      if (id && await putImage(dbg, id, image, 'anh')) { await sleep(1500); return true; }
-    } catch {} finally { await dbg.sendCommand('Page.setInterceptFileChooserDialog', { enabled: false }).catch(() => {}); }
+      tried.push(clicked ? (params ? 'nút đính kèm: mở hộp chọn' : 'nút đính kèm: bấm nhưng không mở hộp chọn') : 'nút đính kèm: không thấy');
+      if (id && await putImage(dbg, id, image, 'anh') && await waitPreview()) return true;
+    } catch (e) { tried.push('nút đính kèm lỗi: ' + e.message); } finally { await dbg.sendCommand('Page.setInterceptFileChooserDialog', { enabled: false }).catch(() => {}); }
     // 3) dán ảnh vào ô nhập (giữ lại chữ trong clipboard của bạn)
-    const img = nativeImage.createFromDataURL(image); if (img.isEmpty()) return false;
-    const oldText = clipboard.readText();
+    const img = nativeImage.createFromDataURL(image);
+    let oldText = ''; try { oldText = String(clipboard.readText() || ''); } catch {}
     try {
-      if (!await mouse(wc, { selector: `${COL} [contenteditable="true"]` })) return false;
+      if (img.isEmpty()) { tried.push('ảnh hỏng'); return false; }
+      if (!await mouse(wc, { selector: `${COL} [contenteditable="true"]` })) { tried.push('dán: không thấy ô nhập'); return false; }
       await sleep(200); clipboard.writeImage(img); wc.paste();
-      return await waitPreview();
-    } finally { setTimeout(() => { if (oldText) clipboard.writeText(oldText); }, 1500); }
+      if (await waitPreview()) return true;
+      tried.push('dán: không thấy ảnh hiện lên');
+      return false;
+    } catch (e) { tried.push('dán lỗi: ' + e.message); return false; }
+    finally {
+      setTimeout(() => { try { if (oldText) clipboard.writeText(oldText); } catch {} }, 1500);
+      // Ghi lại để biết giao diện Meta đang thế nào (gửi cho người hỗ trợ khi cần).
+      if (tried.length) attachImage.last = { at: Date.now(), tried, dom: await wc.executeJavaScript(`(() => { const col = document.querySelector('${COL}');
+        return { col: !!col, files: document.querySelectorAll('input[type="file"]').length, accepts: [...document.querySelectorAll('input[type="file"]')].map(i => i.accept).slice(0, 5),
+          editors: (col || document).querySelectorAll('[contenteditable="true"]').length,
+          buttons: [...(col || document).querySelectorAll('[role="button"],button')].map(b => b.getAttribute('aria-label') || '').filter(Boolean).slice(-25) }; })()`).catch(() => null) };
+    }
   };
   const threadArgs = ({ pageId, uid }) => /^\d+$/.test(String(pageId)) && /^\d+$/.test(String(uid));
   const readThread = args => queue(async () => {
@@ -306,7 +324,10 @@ function createMetaAuto({ worker, composer, metaView, showMeta = () => () => {},
     const read = () => wc.executeJavaScript(`(${readMessages})(false)`).catch(() => null);
     const myPics = r => (r?.messages || []).filter(m => m.mine && m.pic).length;
     const picsBefore = myPics(await read());
-    if (image && !await attachImage(wc, image)) return { error: 'Không đưa được ảnh vào Business Suite. Bỏ tick "Gửi kèm ảnh" để gửi chữ trước, rồi gửi ảnh bằng Copy ảnh / dán trong cột Meta.' };
+    if (image && !await attachImage(wc, image)) {
+      const d = attachImage.last;
+      return { error: 'Không đưa được ảnh vào Business Suite.' + (d ? ` [${d.tried.join(' · ')}${d.dom ? ` · khung:${d.dom.col ? 'có' : 'không'} · ô file:${d.dom.files} · ô nhập:${d.dom.editors} · nút: ${d.dom.buttons.join(' | ')}` : ''}]` : '') };
+    }
     if (!await mouse(wc, { selector: '[data-surface$="lib:inbox:detail_column"] [contenteditable="true"]' })) return { error: 'Không thấy ô nhập tin của Business Suite.' };
     await sleep(300);
     const lines = text ? text.split('\n') : [];
