@@ -7,7 +7,7 @@
   async function loadPrompts(){
     const f=$('tpPrompts');if(!f)return;
     try{const r=await App.ai.getSettings();f.postPrompt.value=r.settings.postPrompt;f.imagePrompt.value=r.settings.imagePrompt;$('tpStatus').textContent='Lệnh đang dùng trong tiện ích.';}
-    catch{$('tpStatus').textContent='Chưa kết nối tiện ích Studio AI 2.6.0: đang hiện lệnh mặc định. Cập nhật tiện ích rồi tải lại trang để sửa.';}
+    catch{$('tpStatus').textContent='Chưa kết nối tiện ích Studio AI 2.6.1: đang hiện lệnh mặc định. Cập nhật tiện ích rồi tải lại trang để sửa.';}
   }
   async function savePrompts(e){
     e.preventDefault();const f=e.target;
