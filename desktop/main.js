@@ -135,10 +135,11 @@ app.whenReady().then(async () => {
   const composer = new BrowserWindow({ show: false, width: 1280, height: 900, webPreferences: { partition: META, offscreen: true, sandbox: true, contextIsolation: true, backgroundThrottling: false } });
   composer.webContents.setFrameRate(10);
   composer.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
-  pageView = new WebContentsView({ webPreferences: { sandbox: true, contextIsolation: true, preload: path.join(__dirname, 'preload.js') } });
-  panelView = new WebContentsView({ webPreferences: { sandbox: true, contextIsolation: true } });
+  // backgroundThrottling: false — thu nhỏ / khoá app vẫn chạy ngầm đúng nhịp (tải tin, báo tin, lên lịch, Studio AI tạo ảnh).
+  pageView = new WebContentsView({ webPreferences: { sandbox: true, contextIsolation: true, backgroundThrottling: false, preload: path.join(__dirname, 'preload.js') } });
+  panelView = new WebContentsView({ webPreferences: { sandbox: true, contextIsolation: true, backgroundThrottling: false } });
   mainWindow.contentView.addChildView(pageView);
-  metaView = new WebContentsView({ webPreferences: { partition: META, sandbox: true, contextIsolation: true } });
+  metaView = new WebContentsView({ webPreferences: { partition: META, sandbox: true, contextIsolation: true, backgroundThrottling: false } });
   // Business Suite trong Electron báo lỗi (invariant #23746) và không dựng ô viết bài. UA đã bỏ chữ Electron nhưng
   // "client hints" (navigator.userAgentData, sec-ch-ua) vẫn thiếu thương hiệu Google Chrome → Facebook nhận là trình duyệt lạ.
   // Dùng DevTools Protocol giả đầy đủ Chrome cho cột Meta + 2 cửa sổ ngầm (áp dụng cho mọi lần tải trang sau đó).
