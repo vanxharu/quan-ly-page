@@ -320,7 +320,10 @@ function createMetaAuto({ worker, composer, metaView, showMeta = () => () => {},
     const fileInput = async () => (await dbg.sendCommand('Runtime.evaluate', { expression: `(() => { const box = document.querySelector('[data-ga-composer]');
       const all = [...(box ? box.querySelectorAll('input[type="file"]') : []), ...document.querySelectorAll('input[type="file"]')];
       return all.find(i => /image|\\*/.test(i.accept || '*')) || null; })()` }).catch(() => null))?.result?.objectId || '';
-    const pics = () => wc.executeJavaScript(`(() => { const box = document.querySelector('[data-ga-composer]'); return box ? box.querySelectorAll('img, video, [style*="background-image"]').length : 0; })()`).catch(() => 0);
+    // Ảnh xem trước của tệp đính kèm là blob:/data: (ảnh trong tin cũ là https fbcdn) → đếm trên toàn trang, cộng nút gỡ tệp đính kèm.
+    const pics = () => wc.executeJavaScript(`(() => [...document.querySelectorAll('img, video, source')].filter(e => /^(blob|data):/.test(e.currentSrc || e.src || '')).length
+      + [...document.querySelectorAll('[style*="background-image"]')].filter(e => /url\\(["']?(blob|data):/.test(e.style.backgroundImage)).length
+      + document.querySelectorAll('[data-surface*="attachment-preview-button-close"], [aria-label*="Gỡ tệp" i], [aria-label*="Xóa tệp" i], [aria-label*="Xoá tệp" i], [aria-label*="Remove attachment" i]').length)()`).catch(() => 0);
     const comp = await findComposer(wc);
     attachImage.last = { tried, comp };
     if (!comp) { const why = await whyNoComposer(wc), dir = await dumpPage(wc, 'khong-o-nhap'); tried.push(why ? 'Meta báo: ' + why : 'trang không có ô trả lời'); if (dir) tried.push('đã lưu ảnh chụp vào ' + dir); attachImage.locked = true; return false; }
@@ -364,6 +367,7 @@ function createMetaAuto({ worker, composer, metaView, showMeta = () => () => {},
     try {
       const img = nativeImage.createFromDataURL(image); if (img.isEmpty()) { tried.push('ảnh hỏng'); return false; }
       if (!await mouse(wc, { selector: '[data-ga-editor]' })) { tried.push('dán: không bấm được ô nhập'); return false; }
+      if (typeof clipboard.writeImage !== 'function') { tried.push('dán: không dùng được clipboard'); return false; }
       await sleep(200); clipboard.writeImage(img); wc.paste();
       if (await waitPreview()) return true;
       tried.push('dán: không thấy ảnh');
@@ -385,6 +389,7 @@ function createMetaAuto({ worker, composer, metaView, showMeta = () => () => {},
   const sendThread = args => queue(async () => {
     const text = String(args.text || '').trim(), image = args.image || '';
     if (!threadArgs(args) || (!text && !image)) return { error: 'Thiếu nội dung.' };
+    if (image) openedThread = ''; // tải lại hội thoại: bỏ ảnh đính kèm còn sót từ lần thử trước
     const ok = await openThreadHidden(String(args.pageId), String(args.uid));
     if (ok !== true) return { error: ok === 'login' ? 'login' : 'Không mở được hội thoại trong Business Suite.' };
     const wc = worker.webContents, dbg = wc.debugger;
