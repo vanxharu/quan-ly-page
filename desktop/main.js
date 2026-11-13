@@ -444,7 +444,10 @@ app.whenReady().then(async () => {
   ]));
   app.appLock = appLock;
   app.toggleStudio = toggleStudio; app.views = { page: pageView, panel: panelView, meta: metaView, zalo: zaloView, svc: svcView, worker, bar };
-  mainWindow.on('closed', () => { mainWindow = null; for (const w of [worker, composer]) if (!w.isDestroyed()) w.destroy(); app.quit(); });
+  // Tắt cửa sổ chính = thoát hẳn: đóng mọi cửa sổ ẩn (Business Suite ngầm, ChatGPT của Studio AI…) và ép thoát sau 2 giây
+  // nếu còn gì giữ app sống, để không còn "Get Helps.exe" chạy ngầm làm bộ cài báo "không thể đóng".
+  mainWindow.on('closed', () => { mainWindow = null; for (const w of BrowserWindow.getAllWindows()) if (!w.isDestroyed()) w.destroy(); app.quit(); setTimeout(() => app.exit(0), 2000).unref?.(); });
   if (app.isPackaged) { checkUpdate().catch(() => {}); setInterval(() => checkUpdate().catch(() => {}), 2 * 3600e3); }
 });
 app.on('window-all-closed', () => app.quit());
+app.on('before-quit', () => { setTimeout(() => app.exit(0), 4000).unref?.(); });
