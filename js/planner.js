@@ -64,6 +64,7 @@
             h('select', { id: 'plStatus', style: 'width:auto', onchange: e => { filterStatus = e.target.value; this.refresh(); } },
               h('option', { value: '', textContent: 'Mọi trạng thái' }), ...Object.entries(STATUS).map(([k, [t]]) => h('option', { value: k, textContent: t }))),
             h('span', { className: 'grow' }),
+            h('button', { className: 'btn btn-ghost', title: 'Lịch hẹn thật trên Meta của mọi Page đang chọn, gộp theo ngày', onclick: () => App.show('scheduled') }, '📅 Lịch hẹn tất cả Page'),
             h('button', { className: 'btn btn-ghost', title: 'So danh sách với các bài đã hẹn thật trên Meta (kể cả hẹn trong Business Suite) để tránh đăng trùng', onclick: () => { $('plLog').replaceChildren(); reconcile(); } }, 'Đối chiếu với Meta'),
             h('button', { className: 'btn btn-soft', onclick: () => autoTime() }, icon('i-cal'), 'Xếp giờ tự động'),
             h('button', { className: 'btn btn-ghost', onclick: () => approveAll() }, '✓ Duyệt tất cả (nháp + lỗi)'),
@@ -166,7 +167,9 @@
   // Sau khi hẹn: link mở lịch hẹn của từng Page trên Meta Business Suite để kiểm tra trực tiếp.
   function logLinks(pages) {
     const unique = [...new Map(pages.map(p => [p.id, p])).values()];
-    if (unique.length) $('plLog').append(h('div', { className: 'row planner-meta-links' }, h('span', { className: 'hint', textContent: 'Xem lịch hẹn trên Meta:' }),
+    if (unique.length) $('plLog').append(h('div', { className: 'row planner-meta-links' },
+      h('button', { className: 'btn btn-soft btn-sm', textContent: '📅 Lịch hẹn của tất cả Page', onclick: () => App.show('scheduled') }),
+      h('span', { className: 'hint', textContent: 'hoặc từng Page trên Meta:' }),
       ...unique.map(p => App.metaLink(App.metaScheduledUrl(p.id), p.name + ' ↗'))));
   }
   // ── Xoá bài ───────────────────────────────────────────────
