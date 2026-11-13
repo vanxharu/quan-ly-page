@@ -613,7 +613,12 @@
     const sendBtn = h('button', { type: 'button', className: 'btn btn-primary', textContent: '📨 Gửi vào hội thoại', disabled: !canSend,
       title: canSend ? 'Gửi chữ + ảnh vào hội thoại đang mở' : 'Mở hội thoại của khách này trong Hộp thư để gửi thẳng; hoặc Copy / Tải ảnh',
       onclick: async () => { sendBtn.disabled = true; sendBtn.textContent = 'Đang gửi…';
-        const ok = await App.inbox.compose({ key: o.customerKey, text: text.value.trim(), image: withImg.checked ? image : '' });
+        let ok = await App.inbox.compose({ key: o.customerKey, text: text.value.trim(), image: withImg.checked ? image : '' });
+        // Ảnh không vào được Business Suite (chưa gửi gì): hỏi gửi chữ trước, ảnh gửi tay bằng Copy ảnh.
+        if (ok !== true && withImg.checked && /ảnh/i.test(String(ok)) && !/Chữ đã gửi/.test(String(ok)) && confirm(`${ok}\n\nGửi riêng phần chữ (không kèm ảnh) ngay bây giờ?`)) {
+          withImg.checked = false; ok = await App.inbox.compose({ key: o.customerKey, text: text.value.trim(), image: '' });
+          if (ok === true) toast('Đã gửi chữ. Ảnh: bấm Copy ảnh rồi dán vào hội thoại trong cột Meta.', 8000);
+        }
         if (ok === true) { toast('Đã gửi đơn vào hội thoại.'); await markSent(o, kind); dlg.close(); }
         else { sendBtn.disabled = false; sendBtn.textContent = '📨 Gửi vào hội thoại'; toast(`Chưa gửi được: ${typeof ok === 'string' ? ok : 'hội thoại của khách không còn mở trong Hộp thư.'}`, 8000); } } });
     dlg.append(h('div', { className: 'card-head' }, h('h3', { className: 'card-title', textContent: ({ quote: 'Gửi báo giá', paid: 'Báo khách đã nhận tiền', progress: 'Báo tiến độ' }[kind] || 'Gửi đơn cho khách') + ` · #${payCode(o)}` }),

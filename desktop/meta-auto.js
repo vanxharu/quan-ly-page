@@ -2,7 +2,7 @@
 //  - lookupProfile: mở hội thoại của khách trong một khung ẩn, đọc ảnh đại diện + UID (link trang cá nhân);
 //  - composePost: mở trình soạn bài, điền sẵn nội dung + ảnh (qua debugger), người dùng bật nút Gửi tin nhắn / hẹn giờ rồi bấm Đăng.
 // Mỗi lần chỉ làm một việc, có nghỉ giữa các lượt, để giống thao tác người thật.
-const { clipboard } = require('electron');
+const { clipboard, nativeImage } = require('electron');
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const isLogin = url => /\/(login|checkpoint)|loginpage|two_step_verification/i.test(url);
 
@@ -252,6 +252,40 @@ function createMetaAuto({ worker, composer, metaView, showMeta = () => () => {},
     }
     return false;
   };
+  // Đưa ảnh vào khung trả lời của Business Suite, thử lần lượt 3 cách (giao diện Meta hay đổi):
+  //  1) ô chọn file có sẵn trong trang; 2) bấm nút đính kèm ảnh và bắt hộp chọn file; 3) dán ảnh từ clipboard vào ô nhập.
+  const attachImage = async (wc, image) => {
+    const dbg = wc.debugger, COL = '[data-surface$="lib:inbox:detail_column"]';
+    const fileInput = async () => (await dbg.sendCommand('Runtime.evaluate', { expression: `(() => { const col = document.querySelector('${COL}');
+      const all = [...(col ? col.querySelectorAll('input[type="file"]') : []), ...document.querySelectorAll('input[type="file"]')];
+      return all.find(i => /image|\\*/.test(i.accept || '*')) || null; })()` }).catch(() => null))?.result?.objectId || '';
+    const shownPreview = () => wc.executeJavaScript(`(() => { const col = document.querySelector('${COL}') || document; const ed = col.querySelector('[contenteditable="true"]');
+      let box = ed; for (let i = 0; i < 6 && box; i++) box = box.parentElement; return !!(box && [...box.querySelectorAll('img')].some(im => /^blob:|^data:/.test(im.src))); })()`).catch(() => false);
+    const waitPreview = async () => { for (let i = 0; i < 8; i++) { await sleep(500); if (await shownPreview()) return true; } return false; };
+    // 1) ô chọn file có sẵn
+    let id = await fileInput();
+    if (id && await putImage(dbg, id, image, 'anh')) { await sleep(1500); return true; }
+    // 2) bấm nút đính kèm, bắt hộp chọn file
+    try {
+      await dbg.sendCommand('Page.enable');
+      await dbg.sendCommand('Page.setInterceptFileChooserDialog', { enabled: true });
+      const chooser = new Promise(resolve => { const on = (_e, method, params) => { if (method === 'Page.fileChooserOpened') { dbg.removeListener('message', on); resolve(params); } };
+        dbg.on('message', on); setTimeout(() => { dbg.removeListener('message', on); resolve(null); }, 5000); });
+      const clicked = await mouse(wc, { selector: `${COL} [role="button"], ${COL} button`, text: /đính kèm|ảnh|photo|image|attach|tệp|file/i.source });
+      const params = clicked ? await chooser : null;
+      id = params?.backendNodeId ? (await dbg.sendCommand('DOM.resolveNode', { backendNodeId: params.backendNodeId }).catch(() => null))?.object?.objectId : '';
+      if (!id && clicked) id = await fileInput();
+      if (id && await putImage(dbg, id, image, 'anh')) { await sleep(1500); return true; }
+    } catch {} finally { await dbg.sendCommand('Page.setInterceptFileChooserDialog', { enabled: false }).catch(() => {}); }
+    // 3) dán ảnh vào ô nhập (giữ lại chữ trong clipboard của bạn)
+    const img = nativeImage.createFromDataURL(image); if (img.isEmpty()) return false;
+    const oldText = clipboard.readText();
+    try {
+      if (!await mouse(wc, { selector: `${COL} [contenteditable="true"]` })) return false;
+      await sleep(200); clipboard.writeImage(img); wc.paste();
+      return await waitPreview();
+    } finally { setTimeout(() => { if (oldText) clipboard.writeText(oldText); }, 1500); }
+  };
   const threadArgs = ({ pageId, uid }) => /^\d+$/.test(String(pageId)) && /^\d+$/.test(String(uid));
   const readThread = args => queue(async () => {
     if (!threadArgs(args)) return { error: 'Thiếu Page hoặc khách.' };
@@ -272,12 +306,7 @@ function createMetaAuto({ worker, composer, metaView, showMeta = () => () => {},
     const read = () => wc.executeJavaScript(`(${readMessages})(false)`).catch(() => null);
     const myPics = r => (r?.messages || []).filter(m => m.mine && m.pic).length;
     const picsBefore = myPics(await read());
-    if (image) { // ô chọn ảnh của khung trả lời (Messenger luôn để sẵn một ô ẩn)
-      const objectId = (await dbg.sendCommand('Runtime.evaluate', { expression: `(() => { const col = document.querySelector('[data-surface$="lib:inbox:detail_column"]');
-        return [...(col || document).querySelectorAll('input[type="file"]')].find(i => /image|\\*/.test(i.accept || '*')) || null; })()` }).catch(() => null))?.result?.objectId;
-      if (!await putImage(dbg, objectId, image, 'anh')) return { error: 'Không đưa được ảnh vào Business Suite.' };
-      await sleep(1500);
-    }
+    if (image && !await attachImage(wc, image)) return { error: 'Không đưa được ảnh vào Business Suite. Bỏ tick "Gửi kèm ảnh" để gửi chữ trước, rồi gửi ảnh bằng Copy ảnh / dán trong cột Meta.' };
     if (!await mouse(wc, { selector: '[data-surface$="lib:inbox:detail_column"] [contenteditable="true"]' })) return { error: 'Không thấy ô nhập tin của Business Suite.' };
     await sleep(300);
     const lines = text ? text.split('\n') : [];
