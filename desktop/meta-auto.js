@@ -267,19 +267,37 @@ function createMetaAuto({ worker, composer, metaView, showMeta = () => () => {},
   const openThreadHidden = async (pageId, uid) => {
     const wc = worker.webContents, id = `${pageId}:${uid}`;
     if (openedThread === id && wc.getURL().includes(`asset_id=${pageId}`)) return true;
+    // Khung chi tiết đã đúng khách này (data-surface "<uid>:<tên>") và có tin → xong.
+    const ready = async () => !!(await wc.executeJavaScript(`(() => { const col = document.querySelector('[data-surface$="lib:inbox:detail_column"]');
+      return !!(col && col.querySelector('[data-surface^="${uid}:"]') && col.querySelector('[data-message-id]')); })()`).catch(() => false));
+    // Nhanh: đang ở hộp thư của đúng Page → bấm thẳng vào dòng của khách (cuộn danh sách về đầu nếu cần), không tải lại trang (tiết kiệm 10–30 giây).
+    if (wc.getURL().includes(`asset_id=${pageId}`)) {
+      for (let i = 0; i < 2; i++) {
+        if (await mouse(wc, { selector: `[data-maiba-contact-id="${uid}"]` })) {
+          for (let k = 0; k < 20; k++) { await sleep(300); if (await ready()) { openedThread = id; await watchThread(wc); return true; } }
+          break;
+        }
+        await wc.executeJavaScript(`(() => { let box = document.querySelector('[data-maiba-contact-id]');
+          while (box && !(box.scrollHeight > box.clientHeight + 5 && /auto|scroll/.test(getComputedStyle(box).overflowY))) box = box.parentElement;
+          if (box) box.scrollTop = 0; })()`).catch(() => {});
+        await sleep(800);
+      }
+    }
     openedThread = '';
     await wc.loadURL(`https://business.facebook.com/latest/inbox/messenger?asset_id=${pageId}&mailbox_id=${pageId}`).catch(() => {});
-    for (let i = 0; i < 35; i++) { // Business Suite ẩn có khi tải chậm: chờ tối đa ~35 giây cho dòng của khách hiện ra
-      await sleep(1000);
+    for (let i = 0; i < 70; i++) { // Business Suite ẩn có khi tải chậm: chờ tối đa ~35 giây cho dòng của khách hiện ra
+      await sleep(500);
       if (isLogin(wc.getURL())) return 'login';
       if (await mouse(wc, { selector: `[data-maiba-contact-id="${uid}"]` })) break;
-      if (i === 34) return false;
+      if (i === 69) return false;
     }
-    for (let i = 0; i < 15; i++) {
-      await sleep(800);
-      const r = await wc.executeJavaScript(`(${readMessages})(false)`).catch(() => null);
-      if (r?.messages?.length) { openedThread = id; await watchThread(wc); return true; }
+    for (let i = 0; i < 30; i++) {
+      await sleep(400);
+      if (await ready()) { openedThread = id; await watchThread(wc); return true; }
     }
+    // Không nhận ra được khách trong khung chi tiết (Meta đổi giao diện): vẫn nhận nếu đã có tin.
+    const r = await wc.executeJavaScript(`(${readMessages})(false)`).catch(() => null);
+    if (r?.messages?.length) { openedThread = id; await watchThread(wc); return true; }
     return false;
   };
   // Đưa ảnh vào khung trả lời của Business Suite, thử lần lượt 3 cách (giao diện Meta hay đổi):

@@ -236,11 +236,16 @@
   }
   // Hội thoại từ Business Suite: app đọc tin trong khung ẩn và hiện ngay trong khung chat; gửi tin cũng qua khung ẩn
   // (giống bạn gõ trong Business Suite), nên không vướng giới hạn của API.
+  const bsMsgCache = new Map();
   async function openBs(c, { silent = false, older = false } = {}) {
     if (!silent) {
       saveDraft(); S.conv = c; resetThread(); drawHead(c);
       $('ibReload').hidden = false;
-      $('ibThread').replaceChildren(empty('Đang đọc tin từ Business Suite…'));
+      // Hiện ngay bản đọc lần trước (nếu có) trong lúc khung ẩn mở hội thoại, rồi thay bằng bản mới.
+      const cached = bsMsgCache.get(c.id) || await DB.get('bsMsg:' + c.id, null).catch(() => null);
+      if (S.conv !== c) return;
+      if (cached?.messages?.length) { drawBs(c, cached); $('ibThread').append(h('div', { className: 'hint', style: 'text-align:center;margin:6px 0', id: 'ibBsUpd', textContent: 'Đang cập nhật tin mới…' })); }
+      else $('ibThread').replaceChildren(empty('Đang đọc tin từ Business Suite…'));
       c.unread_count = 0; drawList();
       const draft = await DB.get(draftKey(c), {}).catch(() => ({}));
       if (S.conv !== c) return;
@@ -255,7 +260,7 @@
     // Đọc lại ngầm mà không có gì mới: không vẽ lại (giữ chỗ cuộn, không nháy).
     const sig = JSON.stringify(r.messages || []);
     if (silent && !older && c.bsSig === sig) return;
-    if (!older) c.bsSig = sig;
+    if (!older) { c.bsSig = sig; const keep = { messages: (r.messages || []).filter(m => !/^blob:/.test(m.pic || '')).slice(-60) }; bsMsgCache.set(c.id, keep); DB.set('bsMsg:' + c.id, keep).catch(() => {}); }
     drawBs(c, r, { silent, older });
     S.messages = (r.messages || []).filter(m => !m.sep).map(m => ({ isCustomer: !m.mine, text: m.text || '' }));
     clearIfSent(c, r.messages || []);
