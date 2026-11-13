@@ -203,7 +203,10 @@ function createMetaAuto({ worker, composer, metaView, showMeta = () => () => {},
     const wc = worker.webContents;
     openedThread = '';
     await wc.loadURL(`https://business.facebook.com/latest/inbox/messenger?asset_id=${pageId}&mailbox_id=${pageId}`).catch(() => {});
-    const seen = new Map();
+    const seen = new Map(), started = Date.now();
+    // Business Suite trong khung ẩn có khi tải 15–20 giây: còn vòng xoay (progressbar / aria-busy) và chưa có dòng nào thì chờ tiếp, tối đa 30 giây.
+    const loading = () => wc.executeJavaScript(`!!document.querySelector('[role="progressbar"],[aria-busy="true"]') && !document.querySelector('[data-maiba-contact-id]')`).catch(() => true);
+    while (!seen.size && Date.now() - started < 30000 && await loading()) { await sleep(1000); if (isLogin(wc.getURL())) return { error: 'login' }; }
     for (let i = 0, got = 0; i < 12; i++) {
       await sleep(i ? 700 : 1500);
       if (isLogin(wc.getURL())) return { error: 'login' };
@@ -231,11 +234,11 @@ function createMetaAuto({ worker, composer, metaView, showMeta = () => () => {},
     if (openedThread === id && wc.getURL().includes(`asset_id=${pageId}`)) return true;
     openedThread = '';
     await wc.loadURL(`https://business.facebook.com/latest/inbox/messenger?asset_id=${pageId}&mailbox_id=${pageId}`).catch(() => {});
-    for (let i = 0; i < 20; i++) {
+    for (let i = 0; i < 35; i++) { // Business Suite ẩn có khi tải chậm: chờ tối đa ~35 giây cho dòng của khách hiện ra
       await sleep(1000);
       if (isLogin(wc.getURL())) return 'login';
       if (await mouse(wc, { selector: `[data-maiba-contact-id="${uid}"]` })) break;
-      if (i === 19) return false;
+      if (i === 34) return false;
     }
     for (let i = 0; i < 15; i++) {
       await sleep(800);

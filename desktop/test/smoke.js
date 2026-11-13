@@ -1,6 +1,7 @@
 // Chạy: xvfb-run npx electron test/smoke.js — giả GitHub Pages bằng file trong repo, kiểm tra web + Studio AI trong app.
 const { app, session, BrowserWindow } = require('electron'), fs = require('fs'), path = require('path');
 const ROOT = path.join(__dirname, '../..'), PREFIX = 'https://vanxharu.github.io/quan-ly-page/';
+fs.rmSync(path.join(app.getPath('appData'), 'Meta Assistant', 'layout.json'), { force: true }); // độ rộng cột lưu từ lần chạy trước làm sai bài thử
 const type = f => f.endsWith('.js') ? 'text/javascript' : f.endsWith('.css') ? 'text/css' : f.endsWith('.json') ? 'application/json' : f.endsWith('.png') ? 'image/png' : 'text/html';
 const fake = req => {
   if (req.url.startsWith(PREFIX)) { let f = path.join(ROOT, decodeURIComponent(new URL(req.url).pathname.replace('/quan-ly-page/', ''))); if (f.endsWith(path.sep) || f === ROOT) f = path.join(f, 'index.html');
