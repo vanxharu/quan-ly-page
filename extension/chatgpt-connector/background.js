@@ -1,5 +1,5 @@
 importScripts('protocol.js','embed-rules.js','studio-storage.js');
-const P=MetaAIProtocol,WORKER_VERSION='2.6.1';
+const P=MetaAIProtocol,WORKER_VERSION='2.6.2';
 let updatingExtension=false;
 
 // Sau khi nạp lại tiện ích, content script ở tab web cũ đã bị Chrome vô hiệu hoá.
@@ -104,7 +104,7 @@ chrome.action?.onClicked.addListener(tab=>{openStudio(tab).catch(()=>{});});
 const panelSender=sender=>!!sender.id&&sender.id===chrome.runtime.id&&String(sender.url).split(/[?#]/)[0]===chrome.runtime.getURL('sidepanel.html'); // app Windows mở sidepanel.html?desktop=1
 function safeAvatar(value){try{const url=new URL(String(value||''));if(url.protocol!=='https:'||url.username||url.password)return '';for(const key of ['access_token','token','authorization','auth'])url.searchParams.delete(key);return url.href.slice(0,4000);}catch{return '';}}
 function cleanCatalog(payload){
-  return {updatedAt:Date.now(),theme:payload?.theme==='dark'?'dark':'light',pages:(Array.isArray(payload?.pages)?payload.pages:[]).slice(0,250).filter(p=>p?.id&&p?.name).map(p=>({id:String(p.id).slice(0,40),name:String(p.name).slice(0,300),avatar:safeAvatar(p.avatar),selected:p.selected===true,recentPosts:P.recentPosts(p.recentPosts)}))};
+  return {updatedAt:Date.now(),theme:payload?.theme==='dark'?'dark':'light',pages:(Array.isArray(payload?.pages)?payload.pages:[]).slice(0,250).filter(p=>p?.id&&p?.name).map(p=>({id:String(p.id).slice(0,40),name:String(p.name).slice(0,300),avatar:safeAvatar(p.avatar),selected:p.selected===true,gaps:Math.max(0,Math.min(31,Math.trunc(Number(p.gaps))||0)),recentPosts:P.recentPosts(p.recentPosts)}))};
 }
 async function startPanel(input,transport='tab',panelId=''){
   if(updatingExtension)throw Error('Tiện ích đang cập nhật. Hãy chờ nạp lại xong.');
@@ -204,7 +204,7 @@ async function handle(m,sender) {
     if(job.frameClaimed&&!job.frameDocumentId&&sender.documentId){job.frameDocumentId=sender.documentId;job.frameBindingInfo={...job.frameBindingInfo,documentIdAvailableLater:true};await save(job);}
     if(!job.frameClaimed){if(!['START','FRAME_CLAIM'].includes(m.type))return {ok:true,job:null,cancelled:true};job.frameClaimed=true;job.frameDocumentId=sender.documentId||null;job.frameBindingInfo={hasDocumentId:!!sender.documentId,hasTab:!!sender.tab,frameId:Number.isInteger(sender.frameId)?sender.frameId:null};await save(job);}
   }else if(job.gptTab!==sender.tab?.id)return {ok:true,job:null,cancelled:true};
-  if(m.type==='CLAIM'&&m.agentVersion!=='2.6.1'){await finish(job,'Tab ChatGPT đang dùng tiện ích cũ. Cập nhật tiện ích và tải lại cả trang Meta Assistant lẫn tab ChatGPT.');return {ok:false,error:'Phiên bản tiện ích trong tab ChatGPT chưa đồng bộ.'};}
+  if(m.type==='CLAIM'&&m.agentVersion!=='2.6.2'){await finish(job,'Tab ChatGPT đang dùng tiện ích cũ. Cập nhật tiện ích và tải lại cả trang Meta Assistant lẫn tab ChatGPT.');return {ok:false,error:'Phiên bản tiện ích trong tab ChatGPT chưa đồng bộ.'};}
   if(m.type==='CLAIM')return {ok:true,job:{id:job.id,nonce:job.nonce,input:inputFor(job),index:job.currentIndex||0,total:job.input.items.length,status:job.status}};
   if(m.nonce!==job.nonce||m.id!==job.id)throw Error('Lượt tạo không hợp lệ.');
   if(m.type==='FRAME_CLAIM')return {ok:true};

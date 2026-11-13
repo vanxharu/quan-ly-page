@@ -24,7 +24,7 @@
   async function syncCatalog(){
     if(!App.pages?.length)return;
     const queue=await DB.get('fbScheduleQueueV1',[]);
-    const pages=App.pages.map(page=>({id:page.id,name:page.name,avatar:studioAvatar(page),selected:App.selected().some(p=>p.id===page.id),recentPosts:P.recentPosts(queue.filter(post=>String(post.pageKey)===String(page.id)).map(post=>({key:post.aiSourceId||post.id,topicTitle:post.topicTitle,text:post.text,createdAt:post.createdAt||post.at||0})))}));
+    const pages=App.pages.map(page=>({id:page.id,name:page.name,avatar:studioAvatar(page),selected:App.selected().some(p=>p.id===page.id),gaps:queue.filter(x=>x.slot&&x.status==='draft'&&!String(x.text||'').trim()&&String(x.pageKey)===String(page.id)).length,recentPosts:P.recentPosts(queue.filter(post=>String(post.pageKey)===String(page.id)).map(post=>({key:post.aiSourceId||post.id,topicTitle:post.topicTitle,text:post.text,createdAt:post.createdAt||post.at||0})))}));
     await send('CATALOG_SYNC',{pages,theme:document.body.classList.contains('dark-mode')?'dark':'light'});
   }
   function queueCatalog(){clearTimeout(catalogTimer);catalogTimer=setTimeout(()=>syncCatalog().catch(()=>{}),250);}
@@ -39,6 +39,9 @@
         const queue=await DB.get('fbScheduleQueueV1',[]);
         for(const post of snapshot){const sourceId=transfer.sourceJobId+'|'+post.key;const existing=queue.find(x=>x.aiSourceId===sourceId);
           if(existing){if(['draft','error'].includes(existing.status)){const repairMissingImage=existing.imageRequired&&!existing.imageData&&!!post.imageData;if(existing.aiOriginalText!==undefined&&existing.text===existing.aiOriginalText)existing.text=post.text;if(repairMissingImage||existing.aiOriginalImage!==undefined&&existing.imageData===existing.aiOriginalImage)existing.imageData=post.imageData;if(repairMissingImage){existing.status='draft';existing.error='';}existing.aiOriginalText=post.text;existing.aiOriginalImage=post.imageData;existing.imageRequired=post.imageRequired;existing.imageError=post.imageError;existing.sources=post.sources;}continue;}
+          // Ô trống từ "Dò bài thiếu" của cùng Page (sớm nhất trước): điền bài vào đúng ô, giữ ngày/giờ đã chọn.
+          const slot=queue.filter(x=>x.slot&&x.status==='draft'&&!String(x.text||'').trim()&&String(x.pageKey)===String(post.pageId)).sort((x,y)=>(x.at||0)-(y.at||0))[0];
+          if(slot){Object.assign(slot,{text:post.text,imageData:post.imageData,imageRequired:post.imageRequired,imageError:post.imageError,source:'chatgpt-extension',sources:post.sources,topicTitle:post.topicTitle||'',aiSourceId:sourceId,aiOriginalText:post.text,aiOriginalImage:post.imageData,aiGenerating:false,slot:false,slotFilled:true});continue;}
           queue.push({id:uid('fs'),pageKey:post.pageId,pageName:App.pageById(post.pageId).name,text:post.text,imageData:post.imageData,imageRequired:post.imageRequired,imageError:post.imageError,at:0,status:'draft',createdAt:Date.now(),source:'chatgpt-extension',sources:post.sources,topicTitle:post.topicTitle||'',aiSourceId:sourceId,aiOriginalText:post.text,aiOriginalImage:post.imageData,aiGenerating:false});
         }
         await DB.set('fbScheduleQueueV1',queue);
@@ -50,7 +53,7 @@
   async function openStudio(){
     syncCatalog().catch(()=>{});
     try{const state=await send('STATUS');if(studioVersionOK(state.version)){toast('Studio AI mở ở bên cạnh. Bạn cũng có thể bấm biểu tượng tiện ích để mở lại.',5000);return;}}catch{}
-    const help=h('dialog',{className:'ai-dialog'});help.append(h('h2',{textContent:'Mở Studio AI bên cạnh'}),h('p',{textContent:'Cập nhật tiện ích lên 2.6.1, bấm Tải lại tại chrome://extensions rồi tải lại trang này. Sau đó bấm biểu tượng tiện ích Meta Assistant để mở bảng tạo bài.'}),h('a',{className:'btn btn-primary',href:'chatgpt-connector.zip?v=2.6.1',download:'meta-assistant-chatgpt-connector.zip',textContent:'Tải tiện ích Studio AI 2.6.1'}),h('button',{className:'btn btn-ghost',textContent:'Đóng',onclick:()=>help.close()}));document.body.append(help);help.addEventListener('close',()=>help.remove());help.showModal();
+    const help=h('dialog',{className:'ai-dialog'});help.append(h('h2',{textContent:'Mở Studio AI bên cạnh'}),h('p',{textContent:'Cập nhật tiện ích lên 2.6.2, bấm Tải lại tại chrome://extensions rồi tải lại trang này. Sau đó bấm biểu tượng tiện ích Meta Assistant để mở bảng tạo bài.'}),h('a',{className:'btn btn-primary',href:'chatgpt-connector.zip?v=2.6.2',download:'meta-assistant-chatgpt-connector.zip',textContent:'Tải tiện ích Studio AI 2.6.2'}),h('button',{className:'btn btn-ghost',textContent:'Đóng',onclick:()=>help.close()}));document.body.append(help);help.addEventListener('close',()=>help.remove());help.showModal();
   }
   window.addEventListener('meta-theme-changed',()=>send('THEME_SYNC',{theme:document.body.classList.contains('dark-mode')?'dark':'light'}).catch(()=>{}));
   App.onLogin.push(()=>{queueCatalog();importPanel().catch(()=>{});});App.onPageChange.push(queueCatalog);

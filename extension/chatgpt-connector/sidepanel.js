@@ -1,5 +1,5 @@
 (() => {
-  const $=id=>document.getElementById(id),panelId=crypto.randomUUID(),P=MetaAIProtocol,UI_VERSION='2.6.1';
+  const $=id=>document.getElementById(id),panelId=crypto.randomUUID(),P=MetaAIProtocol,UI_VERSION='2.6.2';
   $('appVersion').textContent='v'+UI_VERSION;
   $('postPrompt').textContent=P.POST_PROMPT;$('imagePrompt').textContent=P.IMAGE_PROMPT;
   let settingsKey='',updating=false,state={},catalogStamp=0,choices={},loadTimer,view='compose',transport='embedded',frameReady=false,frameLoaded=false,frameDelivered=false,pendingRun=null,frameTimer,runAckTimer,frameAck=false,frameClaimed=false,lastFrameInfo=null,versionMismatch=false,frameNavigationReady=false,bufferedReady=null,frameJobId='';
@@ -14,7 +14,7 @@
   function notice(text,error=false){$('notice').hidden=!text;$('notice').textContent=text||'';$('notice').className=error?'error':'';}
   function avatar(page,small=false){const el=node('span',{className:'avatar'+(small?' small':''),textContent:(page.name||'Page').split(/\s+/).filter(Boolean).slice(0,2).map(w=>w[0]).join('').toUpperCase()});if(page.avatar){const img=node('img',{src:page.avatar,alt:'',loading:'lazy',referrerPolicy:'no-referrer',onerror:()=>img.remove()});el.append(img);}return el;}
   function applyTheme(){const theme=state.studioTheme||state.pageCatalog?.theme||'light';document.documentElement.dataset.theme=theme;if(frameReady&&frameLoaded)$('gptFrame').contentWindow.postMessage({source:'META_STUDIO_PANEL',type:'FRAME_THEME',theme},'https://chatgpt.com');$('themeToggle').textContent=theme==='dark'?'☼':'☾';$('themeToggle').title=theme==='dark'?'Chuyển sang sáng, đồng bộ với web':'Chuyển sang tối, đồng bộ với web';}
-  function footer(){$('updateExtension').disabled=!!busy();$('updateExtension').textContent=updating?'Đang cập nhật…':'Cập nhật';const n=ready().length,active=busy();$('generate').hidden=view!=='compose'||!!n;$('generate').disabled=!!active||!!n||versionMismatch;$('generate').textContent=updating?'Đang cập nhật…':active?'Đang tạo…':`✦ Tạo${selected().length?' '+selected().length*count():''} ${$('images').checked?'bài & ảnh':'bài viết'}`;$('transfer').hidden=view==='compose'&&!n;$('transfer').disabled=updating||!n||!!state.pendingTransfer;$('transfer').textContent=state.pendingTransfer?'Đang chờ web xác nhận…':n?`Đưa ${n} bản nháp sang web ↗`:'Chưa có bài sẵn sàng';$('cancel').hidden=!generating();$('transferHint').textContent=n?'Giữ đúng Page · Chuyển vào danh sách chờ duyệt':active?((state.panelJob?.transport||transport)==='embedded'?'Giữ bảng mở khi GPT đang tạo · Nháp tự lưu':'Đang xử lý · Không giới hạn thời gian chờ'):'Tạo từng bài + ảnh · Lưu trước khi tạo tiếp';}
+  function footer(){try{drawGaps();}catch{}$('updateExtension').disabled=!!busy();$('updateExtension').textContent=updating?'Đang cập nhật…':'Cập nhật';const n=ready().length,active=busy();$('generate').hidden=view!=='compose'||!!n;$('generate').disabled=!!active||!!n||versionMismatch;$('generate').textContent=updating?'Đang cập nhật…':active?'Đang tạo…':`✦ Tạo${selected().length?' '+selected().length*count():''} ${$('images').checked?'bài & ảnh':'bài viết'}`;$('transfer').hidden=view==='compose'&&!n;$('transfer').disabled=updating||!n||!!state.pendingTransfer;$('transfer').textContent=state.pendingTransfer?'Đang chờ web xác nhận…':n?`Đưa ${n} bản nháp sang web ↗`:'Chưa có bài sẵn sàng';$('cancel').hidden=!generating();$('transferHint').textContent=n?'Giữ đúng Page · Chuyển vào danh sách chờ duyệt':active?((state.panelJob?.transport||transport)==='embedded'?'Giữ bảng mở khi GPT đang tạo · Nháp tự lưu':'Đang xử lý · Không giới hạn thời gian chờ'):'Tạo từng bài + ảnh · Lưu trước khi tạo tiếp';}
   function scope(){$('historyHint').textContent='Ghi nhớ tối đa 8 bài gần đây mỗi Page · Từng bài và ảnh được lưu trước khi tạo tiếp.';$('selectedCount').textContent=`${selected().length} Page đã chọn`;$('scope').textContent=`${selected().length} Page × ${count()} bài = ${selected().length*count()} bài riêng. Tạo lần lượt từng bài và ảnh; tự lưu sau mỗi bài.`;footer();}
   // Page đang chọn trên app/website → tự tick đúng các Page đó ở Studio mỗi khi lựa chọn trên app đổi (không đổi giữa lúc đang tạo bài).
   let appSelection='';
@@ -109,12 +109,19 @@
     }catch(error){notice(error.message,true);}
   }
   $('saveSettings').onclick=()=>saveSettings();$('resetSettings').onclick=()=>saveSettings(true);
-  $('generate').onclick=async()=>{try{
-    const pages=selected(),n=count();if(!pages.length)throw Error('Chọn ít nhất một Page.');if(!Number.isSafeInteger(n)||!Number.isSafeInteger(pages.length*n))throw Error('Số bài phải là số nguyên dương hợp lệ.');
-    const items=[];for(const page of pages)for(let i=0;i<n;i++)items.push({key:'post-'+crypto.randomUUID(),pageId:page.id,pageName:page.name});
-    if(versionMismatch)throw Error('Cần tải lại toàn bộ tiện ích để nạp bộ nền 2.6.1.');
+  // plan: [[page, số bài]] — nút Tạo bài (Page đã chọn × Bài/Page) hoặc nút Tạo đủ bài cho ô trống (số ô trống của từng Page).
+  const run=async plan=>{try{
+    if(!plan.length)throw Error('Chọn ít nhất một Page.');
+    const items=[];for(const [page,n] of plan)for(let i=0;i<n;i++)items.push({key:'post-'+crypto.randomUUID(),pageId:page.id,pageName:page.name});
+    if(!items.length||items.length>500)throw Error('Số bài phải là số nguyên dương hợp lệ.');
+    if(versionMismatch)throw Error('Cần tải lại toàn bộ tiện ích để nạp bộ nền 2.6.2.');
     $('generate').disabled=true;const result=await call('PANEL_GENERATE',{payload:{items,images:$('images').checked},transport,panelId});notice('');if(transport==='embedded'){if(!result.runJob)throw Error('Bộ nền chưa trả lệnh cho khung nhúng. Cần tải lại tiện ích.');await mountFrame(result.runJob);}switchView('gpt');await load();
   }catch(e){notice(e.message,true);await load().catch(()=>{});}};
+  $('generate').onclick=()=>{const pages=selected(),n=count();if(!Number.isSafeInteger(n)||!Number.isSafeInteger(pages.length*n))return notice('Số bài phải là số nguyên dương hợp lệ.',true);return run(pages.map(page=>[page,n]));};
+  // Lịch đăng có ô trống (Dò bài thiếu): tạo đúng số bài còn thiếu cho từng Page; khi đưa sang web bài tự điền vào các ô đó.
+  const gapPlan=()=>(state.pageCatalog?.pages||[]).filter(p=>p.gaps>0).map(p=>[p,p.gaps]);
+  function drawGaps(){const plan=gapPlan(),total=plan.reduce((a,[,n])=>a+n,0),b=$('fillGaps');b.hidden=view!=='compose'||!total||!!busy()||!!ready().length;b.textContent=`📅 Tạo đủ bài cho ${total} ô trống`;b.title=plan.map(([p,n])=>`${p.name}: ${n}`).join('\n');}
+  $('fillGaps').onclick=()=>run(gapPlan());
   $('cancel').onclick=async()=>{try{pendingRun=null;const id=state.panelJob?.id;await call('PANEL_CANCEL');if(frameReady&&id)$('gptFrame').contentWindow.postMessage({source:'META_STUDIO_PANEL',type:'FRAME_CANCEL',jobId:id},'https://chatgpt.com');await load();}catch(e){notice(e.message,true);}};
   $('transfer').onclick=()=>transfer(ready().map(p=>p.key));$('count').oninput=scope;$('images').onchange=footer;$('refresh').onclick=()=>load().catch(e=>notice(e.message,true));$('pageSearch').oninput=drawPages;
   $('selectAll').onclick=()=>{for(const p of state.pageCatalog?.pages||[])choices[p.id]={...(choices[p.id]||{index:0}),checked:true};drawPages();remember().catch(()=>{});};$('clearSelection').onclick=()=>{for(const choice of Object.values(choices))choice.checked=false;drawPages();remember().catch(()=>{});};

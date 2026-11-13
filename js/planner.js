@@ -59,6 +59,7 @@
         h('div', { className: 'grid2' },
           h('div', { className: 'card', id: 'plCfg' }),
           h('div', { className: 'card', id: 'plDays' })),
+        gapCard(),
         h('div', { className: 'card' },
           h('div', { className: 'toolbar' },
             h('select', { id: 'plStatus', style: 'width:auto', onchange: e => { filterStatus = e.target.value; this.refresh(); } },
@@ -152,11 +153,12 @@
           h('label', { className: 'row planner-msg-btn', style: 'gap:6px', title: i.imageData ? 'Bài có ảnh: tạo qua tài khoản quảng cáo (không tốn tiền) để giữ ảnh + nút; máy chủ bot đăng đúng giờ.' : 'Gắn nút Gửi tin nhắn (Messenger) dưới bài.' },
             h('input', { type: 'checkbox', checked: i.messageButton ?? !!App.planner?.messageButtonDefault, disabled: locked, onchange: e => patch(i.id, { messageButton: e.target.checked }) }), 'Nút Gửi tin nhắn'),
           i.error ? h('span', { className: 'hint', textContent: i.error }) : null),
+        i.slot&&!String(i.text||'').trim()?h('p',{className:'status pending',textContent:'Ô trống (dò bài thiếu) · chờ Studio AI viết bài, hoặc tự gõ nội dung vào đây.'}):null,
         i.topicTitle?h('p',{className:'hint',textContent:'Chủ đề: '+i.topicTitle}):null,
         ...MetaAIProtocol.sources(i.sources).map(ref=>h('a',{className:'hint',href:ref.url,target:'_blank',rel:'noopener noreferrer',textContent:'Nguồn Reddit · '+(ref.title||'Xem bài gốc')})),
         h('textarea', { value: i.text || '', disabled: locked, onchange: e => patch(i.id, { text: e.target.value }) })),
       h('div', { className: 'acts' },
-        !i.aiGenerating&&(!i.imageRequired||!!i.imageData)&&['draft', 'error', 'missed'].includes(i.status) ? h('button', { className: 'btn btn-soft btn-sm', textContent: '✓ Duyệt', onclick: () => patch(i.id, { status: 'approved', error: '' }).then(refresh) }) : null,
+        !i.aiGenerating&&!(i.slot&&!String(i.text||'').trim())&&(!i.imageRequired||!!i.imageData)&&['draft', 'error', 'missed'].includes(i.status) ? h('button', { className: 'btn btn-soft btn-sm', textContent: '✓ Duyệt', onclick: () => patch(i.id, { status: 'approved', error: '' }).then(refresh) }) : null,
         i.status === 'approved' ? h('button', { className: 'btn btn-ghost btn-sm', textContent: 'Bỏ duyệt', onclick: () => patch(i.id, { status: 'draft' }).then(refresh) }) : null,
         i.status === 'approved' ? h('button', { className: 'btn btn-primary btn-sm', textContent: 'Lên lịch', onclick: () => scheduleOne(i).then(refresh) }) : null,
         i.status === 'scheduled' && page ? App.metaLink(App.metaScheduledUrl(page.id)) : null,
@@ -256,6 +258,57 @@
       .map(p => ({ id: 'meta:' + p.id, pageKey: page.id, at: p.at, status: 'scheduled', onMeta: true }));
   }
 
+  // ── Dò bài thiếu ── Mỗi Page phải có đủ "Bài/ngày" mỗi ngày trong khoảng bạn chọn (đếm bài hẹn trên Meta, bài đã đăng hôm nay
+  // và bài đã có giờ trong danh sách). Ngày thiếu → ô trống đúng Page/ngày/giờ (giờ vàng nếu bật); Studio AI viết bài điền vào các ô đó.
+  async function gapScan(from, to) {
+    const s = await getSettings(), queue = await DB.get(QUEUE, []), today = Pure.dayKeyOf(Date.now()), days = [];
+    for (const t = new Date(from + 'T00:00'); Pure.dayKeyOf(t.getTime()) <= to && days.length < 62; t.setDate(t.getDate() + 1)) { const k = Pure.dayKeyOf(t.getTime()); if (k >= today) days.push(k); }
+    const pages = App.selected();
+    if (!days.length || !pages.length) return { days, plan: [] };
+    await ensureGolden(s, pages.map(p => p.id));
+    const busy = (await Promise.all(pages.map(p => metaBusy(p, queue)))).flat();
+    const live = [...queue.filter(i => i.at && !['error', 'missed'].includes(i.status)).map(i => ({ ...i, pageKey: pageOf(i)?.id || i.pageKey })), ...busy];
+    return { days, plan: Pure.planTimes(pages.map(p => ({ key: p.id, cfg: { ...cfgFor(s, p.id), days } })), days, live) };
+  }
+  App.planner.gapScan = gapScan;
+  function gapCard() {
+    const day = d => Pure.dayKeyOf(Date.now() + d * 864e5);
+    const from = h('input', { type: 'date', value: day(1), min: day(0) }), to = h('input', { type: 'date', value: day(7), min: day(0) });
+    const out = h('div', { className: 'section-gap' });
+    const scan = async () => {
+      if (to.value < from.value) return out.replaceChildren(h('div', { className: 'status err', textContent: 'Ngày kết thúc phải sau ngày bắt đầu.' }));
+      out.replaceChildren(h('p', { className: 'hint', textContent: 'Đang dò lịch trên Meta và trong danh sách…' }));
+      const { days, plan } = await gapScan(from.value, to.value);
+      if (!days.length) return out.replaceChildren(h('p', { className: 'hint', textContent: 'Khoảng ngày đã qua: chỉ dò được từ hôm nay trở đi.' }));
+      const ok = plan.filter(p => p.at), late = plan.filter(p => !p.at);
+      if (!plan.length) return out.replaceChildren(h('div', { className: 'status ok', textContent: `Đủ bài: mọi Page đang chọn đã có bài mỗi ngày từ ${fmtDay(days[0])} đến ${fmtDay(days.at(-1))}.` }));
+      const byPage = new Map(); for (const p of ok) (byPage.get(p.key) || byPage.set(p.key, []).get(p.key)).push(p);
+      out.replaceChildren(
+        h('div', { className: 'status pending', textContent: `Thiếu ${plan.length} bài trong ${days.length} ngày (${byPage.size} Page).${late.length ? ` ${late.length} chỗ hôm nay đã quá giờ đăng, bỏ qua.` : ''}` }),
+        ...[...byPage].map(([key, slots]) => h('div', { className: 'row', style: 'margin-top:8px;flex-wrap:wrap;gap:6px' },
+          h('strong', { textContent: (App.pageById(key)?.name || key) + ` · thiếu ${slots.length}:` }),
+          ...slots.sort((a, b) => a.at - b.at).map(p => h('span', { className: 'chip', textContent: fmtTime(p.at) })))),
+        ok.length ? h('button', { className: 'btn btn-primary', style: 'margin-top:12px', onclick: async e => {
+          e.currentTarget.disabled = true;
+          const queue = await DB.get(QUEUE, []);
+          for (const p of ok) queue.push({ id: uid('fs'), pageKey: p.key, pageName: App.pageById(p.key)?.name || '', at: p.at, status: 'draft', slot: true, text: '', createdAt: Date.now(), source: 'gap-slot' });
+          await DB.set(QUEUE, queue);
+          App.ai?.syncCatalog?.();
+          out.replaceChildren(h('div', { className: 'status ok' }, `Đã tạo ${ok.length} ô trống trong Lịch đăng. Mở Studio AI và bấm "📅 Tạo đủ bài cho ${ok.length} ô trống"; bài viết xong bấm "Đưa sang web" sẽ tự điền vào đúng ô.`,
+            ' ', h('button', { className: 'btn btn-soft btn-sm', textContent: '✦ Mở Studio AI', onclick: ev => App.ai.open({ mode: 'planner', trigger: ev.currentTarget }) })));
+          refresh();
+        } }, `📅 Đưa vào soạn lịch (${ok.length} ô)`) : null);
+    };
+    return h('div', { className: 'card', id: 'plGaps' },
+      h('div', { className: 'card-head' }, h('h3', { className: 'card-title', textContent: 'Dò bài thiếu' })),
+      h('p', { className: 'hint', textContent: 'Mỗi Page phải có đủ "Bài/ngày" (ô Khung giờ & số bài) mỗi ngày. Tính cả bài hẹn trên Meta, bài đã đăng hôm nay và bài đã có giờ trong danh sách.' }),
+      h('div', { className: 'row', style: 'flex-wrap:wrap;gap:10px;margin-top:8px' },
+        h('label', { className: 'row', style: 'gap:6px' }, 'Từ', from), h('label', { className: 'row', style: 'gap:6px' }, 'đến', to),
+        h('button', { className: 'btn btn-soft', onclick: () => scan().catch(e => out.replaceChildren(h('div', { className: 'status err', textContent: e.message }))) }, '🔎 Dò bài thiếu')),
+      out);
+  }
+  const fmtDay = k => new Date(k + 'T00:00').toLocaleDateString('vi-VN', { weekday: 'short', day: '2-digit', month: '2-digit' });
+
   async function reconcile({ quiet = false } = {}) {
     const queue = await DB.get(QUEUE, []);
     const pages = [...new Map(queue.filter(inSel).map(pageOf).filter(Boolean).map(p => [p.id, p])).values()];
@@ -296,6 +349,7 @@
     if(i.imageRequired&&!i.imageData)return patch(i.id,{status:'error',error:'Bài này cần có ảnh nhưng chưa nhận được ảnh. Bổ sung hoặc chuyển lại bản nháp có ảnh trước khi lên lịch.'});
     const page = pageOf(i);
     if (!page) return patch(i.id, { status: 'error', error: 'Không tìm thấy Page. Chọn lại Page cho bài.' });
+    if (!String(i.text || '').trim() && !i.imageData) return patch(i.id, { status: 'error', error: 'Bài trống (chưa có nội dung). Viết nội dung hoặc để Studio AI điền rồi duyệt lại.' });
     if (!i.at || i.at < Date.now() + 600e3) return patch(i.id, { status: 'error', error: 'Giờ đăng phải sau hiện tại ít nhất 10 phút.' });
     // Chống đăng trùng: bài cùng nội dung đã hẹn trên Meta, hoặc đã hẹn/đăng trong danh sách này cho cùng Page.
     const queue = await DB.get(QUEUE, []);
@@ -366,7 +420,7 @@
     const queue = await DB.get(QUEUE, []);
     // Giống nút "✓ Duyệt" của từng bài: cả bài nháp, bài lỗi, bài lỡ giờ (duyệt lại sau khi sửa lỗi).
     let n = 0;
-    await DB.set(QUEUE, queue.map(i => ['draft', 'error', 'missed'].includes(i.status) && !i.aiGenerating && (!i.imageRequired||!!i.imageData) && inSel(i) ? (n++, { ...i, status: 'approved', error: '' }) : i));
+    await DB.set(QUEUE, queue.map(i => ['draft', 'error', 'missed'].includes(i.status) && !(i.slot && !String(i.text || '').trim()) && !i.aiGenerating && (!i.imageRequired||!!i.imageData) && inSel(i) ? (n++, { ...i, status: 'approved', error: '' }) : i));
     $('plLog').replaceChildren(); log(n ? 'ok' : 'err', n ? `Đã duyệt ${n} bài (nháp và bài lỗi). Bấm "Lên lịch tất cả bài đã duyệt" để hẹn.` : 'Không có bài nháp hay bài lỗi nào để duyệt.');
     refresh();
   }
@@ -392,7 +446,7 @@
     const s = await getSettings();
     const queue = await DB.get(QUEUE, []);
     // Mọi bài chưa hẹn trên Facebook (nháp, đã duyệt, lỗi, lỡ giờ) của Page đang chọn; bài đã có giờ thì hỏi trước khi xếp lại.
-    let waiting = queue.filter(i => ['draft', 'approved', 'error', 'missed'].includes(i.status) && !i.aiGenerating && pageOf(i) && App.isSelected(pageOf(i).id));
+    let waiting = queue.filter(i => ['draft', 'approved', 'error', 'missed'].includes(i.status) && !i.aiGenerating && !(i.slot && !String(i.text || '').trim()) && pageOf(i) && App.isSelected(pageOf(i).id));
     if (!waiting.length) return log('err', 'Không có bài nào chưa hẹn trên Facebook để xếp giờ.');
     const timed = waiting.filter(i => i.at);
     if (timed.length && !confirm(`${timed.length} bài đã có giờ đăng. Xếp lại giờ cho cả những bài này?\n\nOK: xếp lại tất cả · Huỷ: chỉ xếp bài chưa có giờ`)) waiting = waiting.filter(i => !i.at);
