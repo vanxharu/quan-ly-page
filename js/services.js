@@ -137,6 +137,41 @@
   // Máy chủ bình luận/đánh giá: phải gửi nội dung (mỗi dòng 1 bình luận), số lượng = số dòng.
   const needsComments = svc => /custom comments?/i.test(svc?.type || '');
   const commentLines = t => String(t || '').split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+  // Bảo hành (refill): máy chủ có cờ refill trên web/API hoặc tên ghi "Bảo hành N ngày".
+  const warrantyName = name => /bảo hành\s*\d+|\bbh\s*\d+/i.test(name || '') && !/không bảo hành|\bkbh\b/i.test(name || '');
+  const REFILL_DONE = /^(completed|rejected|canceled|cancelled|error)$/i;
+  const REFILL_VI = { pending: 'Chờ xử lý', 'in progress': 'Đang bù', processing: 'Đang bù', completed: 'Đã bù xong', rejected: 'Bị từ chối', canceled: 'Đã huỷ', cancelled: 'Đã huỷ' };
+  const refillVi = st => REFILL_VI[String(st || '').toLowerCase()] || st || 'Chờ xử lý';
+  async function requestRefill(o) {
+    const last = o.refills?.[o.refills.length - 1];
+    if (last && !REFILL_DONE.test(last.status || '')) return toast('Đơn này đang có yêu cầu bảo hành chưa xong.', 5000);
+    if (!confirm(`Gửi yêu cầu bảo hành (bù số lượng tụt) cho đơn #${o.providerOrderId}?\n\n${o.displayName || o.serviceName}\nLink: ${o.link}`)) return;
+    try {
+      const r = await call('refill', { order: Number(o.providerOrderId) });
+      const id = String(r?.refill ?? r?.id ?? r?.refill_id ?? '');
+      if (!id || id === '0' || r?.error) throw Error(r?.error || 'Web dịch vụ không nhận yêu cầu bảo hành (máy chủ có thể không hỗ trợ hoặc chưa đến lúc bảo hành).');
+      const all = await DB.get(ORDERS, []), x = all.find(y => y.id === o.id);
+      if (x) { x.refills = [...(x.refills || []), { id, at: Date.now(), status: 'Pending' }]; await DB.set(ORDERS, all); }
+      toast(`Đã gửi yêu cầu bảo hành (mã ${id}). App tự theo dõi kết quả.`, 6000);
+      App.tabs.services?.refresh?.();
+    } catch (e) { toast('Không gửi được bảo hành: ' + e.message, 8000); }
+  }
+  // Theo dõi các yêu cầu bảo hành chưa xong; xong/bị từ chối thì báo.
+  async function refreshRefills() {
+    const all = await DB.get(ORDERS, []); let changed = 0;
+    for (const o of all) {
+      const last = o.refills?.[o.refills.length - 1];
+      if (!last || REFILL_DONE.test(last.status || '')) continue;
+      try {
+        const r = await call('refill_status', { refill: Number(last.id) || last.id });
+        const st = String((Array.isArray(r) ? r[0]?.status : r?.status) || '');
+        if (st && st !== last.status) { last.status = st; last.updatedAt = Date.now(); changed++;
+          if (REFILL_DONE.test(st)) App.notify?.(`🛡 Bảo hành ${refillVi(st).toLowerCase()}: ${o.customer?.name || 'Khách'} · ${o.displayName || o.serviceName}`, `Đơn #${o.providerOrderId}`); }
+      } catch {}
+    }
+    if (changed) await DB.set(ORDERS, all);
+    return changed;
+  }
   const estCost = (svc, qty) => svc ? (svc.unitCost || 0) * qty : 0;
   const num = v => Number(String(v ?? '').replace(/[^0-9.\-]/g, ''));
   const m2 = v => `${(Number(v) || 0).toLocaleString('vi-VN', { maximumFractionDigits: 2 })}đ`;
@@ -584,7 +619,7 @@
         const cost = q.costManual && String(x.id) === String(q.serviceId) ? q.cost : estCost(x, n);
         const order = { id: uid('ord'), at: Date.now(), updatedAt: Date.now(), source: 'service', provider: new URL(s.apiUrl).hostname, providerOrderId: String(r.order),
           payCode: q.payCode, quoteAt: q.at, paidAmount: q.paidAmount, paidAt: q.paidAt, payNote: q.payNote || '', listPrice: q.listPrice || 0,
-          comments: q.comments || '', termMonths: q.termMonths || 0, vipEnd: q.termMonths ? addMonths(Date.now(), q.termMonths) : 0, renewOf: q.renewOf || '',
+          comments: q.comments || '', refillable: !!x.refill || warrantyName(x.name), termMonths: q.termMonths || 0, vipEnd: q.termMonths ? addMonths(Date.now(), q.termMonths) : 0, renewOf: q.renewOf || '',
           serviceId: x.id, serviceName: x.name, displayName: q.displayName, packageId: q.packageId, link: q.link, customerKey: q.customerKey, pageKey: q.pageKey, pageName: q.pageName, pageAvatar: q.pageAvatar,
           customer: { name: q.customer?.name || '', phone: '', address: '' }, items: [{ name: q.displayName, qty: n, price: q.sell / n, cost: cost / n }], costManual: q.costManual,
           discount: 0, shipFee: 0, shipCost: 0, status: 'new', svcStatus: 'Pending', note: `Đơn dịch vụ #${r.order} · ${q.payCode}` };
@@ -654,7 +689,7 @@
     return changed;
   }
   // Theo dõi ngầm 3 phút/lần khi có đơn chưa xong (chỉ khi đã nhập API key).
-  setInterval(async () => { try { if ((await settings()).apiKey && await refreshStatus() && App.current() === 'services') App.tabs.services.refresh(); } catch {} }, 3 * 60e3);
+  setInterval(async () => { try { if (!(await settings()).apiKey) return; const a = await refreshStatus().catch(() => 0), b = await refreshRefills(); if ((a || b) && App.current() === 'services') App.tabs.services.refresh(); } catch {} }, 3 * 60e3);
 
   // ── Hộp thư: link khách gửi + nút tạo đơn ── (gắn dưới khung CRM của hội thoại)
   function inboxBox(ctx) {
@@ -677,7 +712,7 @@
 
   // ── Tab Dịch vụ ──
   const PERIODS = [['7d', '7 ngày'], ['30d', '30 ngày'], ['month', 'Tháng này'], ['all', 'Tất cả']];
-  let period = '30d', q = '';
+  let period = '30d', q = '', refillOk = new Set();
   const since = () => { const d = new Date(); if (period === '7d') return Date.now() - 7 * 864e5; if (period === '30d') return Date.now() - 30 * 864e5; if (period === 'month') return new Date(d.getFullYear(), d.getMonth(), 1).getTime(); return 0; };
   const quoteState = q => q.state === 'paid' ? ['Đã thu, chưa tạo đơn', 'err'] : expired(q) ? ['Hết hạn', 'pending'] : q.paidAmount ? ['Thiếu ' + money(amountDue(q)), 'pending'] : ['Chờ thanh toán', 'pending'];
   const quoteActions = q => h('div', { className: 'row', style: 'gap:4px;flex-wrap:wrap' },
@@ -759,7 +794,7 @@
         h('div', { className: 'toolbar' },
           h('div', { className: 'chips', id: 'svPeriod' }), h('span', { className: 'grow' }),
           h('span', { className: 'hint', id: 'svBalance' }),
-          h('button', { className: 'btn btn-ghost', textContent: '↻ Cập nhật trạng thái', onclick: async () => { try { toast(`Đã cập nhật ${await refreshStatus()} đơn.`); this.refresh(); } catch (e) { toast(e.message, 6000); } } }),
+          h('button', { className: 'btn btn-ghost', textContent: '↻ Cập nhật trạng thái', onclick: async () => { try { const n = await refreshStatus(), r = await refreshRefills(); toast(`Đã cập nhật ${n} đơn${r ? `, ${r} yêu cầu bảo hành` : ''}.`); this.refresh(); } catch (e) { toast(e.message, 6000); } } }),
           h('button', { className: 'btn btn-ghost', textContent: '＋ Thêm đơn theo mã', title: 'Đơn đã tạo thẳng trên web dịch vụ: nhập mã đơn để app theo dõi giá gốc, trạng thái', onclick: () => importById() }),
           h('button', { className: 'btn btn-ghost', textContent: 'Mở web dịch vụ ↗', onclick: () => openWeb() }),
           h('button', { className: 'btn btn-primary', textContent: '＋ Báo giá', onclick: () => createDialog() })),
@@ -777,6 +812,7 @@
       const s = await settings(), from = since();
       $('svPeriod').replaceChildren(...PERIODS.map(([k, t]) => h('button', { type: 'button', className: 'chip', 'aria-pressed': String(period === k), textContent: t, onclick: () => { period = k; this.refresh(); } })));
       const all = (await DB.get(ORDERS, [])).filter(o => o.source === 'service' && o.at >= from);
+      refillOk = new Set(); if (s.apiKey) try { for (const x of await services()) if (x.refill || warrantyName(x.name)) refillOk.add(x.id); } catch {}
       const list = all.filter(o => !q || norm([o.customer?.name, o.link, o.serviceName, o.providerOrderId, App.pageById(o.pageKey)?.name].join(' ')).includes(q)).sort((a, b) => b.at - a.at);
       const sum = Pure.summarize(all), running = all.filter(o => ['new', 'shipping'].includes(o.status)).length;
       // Dọn báo giá quá hạn hơn 7 ngày mà khách chưa trả đồng nào.
@@ -801,10 +837,12 @@
             o.vipEnd ? h('div', { className: 'hint' + (!o.renewedBy && o.vipEnd - Date.now() < 864e5 ? ' neg' : ''), textContent: o.renewedBy ? '🔁 đã gia hạn' : '🔔 hạn ' + fmtTime(o.vipEnd) }) : null,
             o.status === 'cancelled' && (o.paidAmount || o.payCode) ? h('div', { className: 'neg hint', textContent: `⚠ Đã thu ${money(o.paidAmount || orderSell(o))}: tạo lại hoặc hoàn tiền khách` }) : null,
             /^partial$/i.test(o.svcStatus) ? h('div', { className: 'neg hint', textContent: `⚠ Chạy thiếu ${num(o.remains).toLocaleString('vi-VN')}` }) : null,
+            o.refills?.length ? (r => h('div', { className: 'hint' + (/rejected/i.test(r.status) ? ' neg' : ''), title: `Mã bảo hành ${r.id} · gửi lúc ${fmtTime(r.at)}`, textContent: `🛡 Bảo hành: ${refillVi(r.status)}${o.refills.length > 1 ? ` (lần ${o.refills.length})` : ''}` }))(o.refills[o.refills.length - 1]) : null,
             o.chargeOdd ? h('div', { className: 'neg hint', title: 'Số tiền Baostar trả về lệch quá nhiều so với giá gốc ước tính (có thể khác đơn vị tiền). App giữ giá gốc ước tính.', textContent: `⚠ Baostar báo trừ ${o.chargeOdd} (lệch đơn vị?)` }) : null),
           h('td', { textContent: o.completedAt ? fmtTime(o.completedAt) : '' }),
           h('td', {}, h('div', { className: 'row', style: 'gap:4px;flex-wrap:nowrap' },
             h('button', { type: 'button', className: 'btn btn-ghost btn-sm', title: o.invoiceSentAt ? 'Đã gửi đơn lúc ' + fmtTime(o.invoiceSentAt) : 'Xuất đơn gửi khách', textContent: o.invoiceSentAt ? '📤 ✓' : '📤 Đơn', onclick: () => invoiceDialog(o, o.payCode ? 'paid' : 'new') }),
+            (o.refillable || refillOk.has(String(o.serviceId))) && o.status !== 'cancelled' ? h('button', { type: 'button', className: 'btn btn-ghost btn-sm', title: 'Yêu cầu Baostar bảo hành (bù số lượng tụt)', textContent: '🛡', onclick: () => requestRefill(o) }) : null,
             h('button', { type: 'button', className: 'btn btn-ghost btn-sm', title: o.progressSentAt ? 'Đã báo tiến độ lúc ' + fmtTime(o.progressSentAt) : 'Báo tiến độ cho khách', textContent: '📊', onclick: async () => { await refreshStatus([o]).catch(() => {}); const f = (await DB.get(ORDERS, [])).find(y => y.id === o.id) || o; invoiceDialog(f, 'progress'); } })))); }))) : h('div', { className: 'empty', textContent: 'Chưa có đơn dịch vụ trong khoảng này. Tạo đơn từ Hộp thư (nút "＋ Tạo đơn dịch vụ") hoặc nút ＋ Tạo đơn.' }));
       drawSettings(s, this);
       if (s.apiKey) call('balance').then(b => { $('svBalance').textContent = `Số dư: ${num(b?.balance ?? b).toLocaleString('vi-VN')} ${b?.currency || ''}`; }).catch(e => { $('svBalance').textContent = e.message; });
@@ -1018,5 +1056,5 @@
     if (s.apiKey) drawPrices(); else priceBox.replaceChildren(h('p', { className: 'hint', textContent: 'Nhập API key rồi Lưu để tải danh sách dịch vụ.' }));
     drawPkgs(); drawInvoiceSettings(s); drawIcons();
   }
-  App.services = { createDialog, inboxBox, refreshStatus, linksIn, call, openWeb, mapStatus, catalogProgress, noteLines, speedOf, invoiceDialog, invoiceText, paymentDialog, confirmCreate, quotes, renewQuote, vipTick, termOf };
+  App.services = { createDialog, inboxBox, refreshStatus, linksIn, call, openWeb, mapStatus, catalogProgress, noteLines, speedOf, invoiceDialog, invoiceText, paymentDialog, confirmCreate, quotes, renewQuote, vipTick, termOf, requestRefill, refreshRefills };
 })();
