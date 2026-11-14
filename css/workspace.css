@@ -284,3 +284,38 @@ td.num.neg{font-weight:700}
 [data-panel=inbox] .th-meta a:hover{color:var(--primary);text-decoration:underline}
 [data-panel=inbox] .th-btn,[data-panel=inbox] #ibReload{flex:none;height:28px;min-height:0;padding:0 10px;font-size:11px;border-radius:8px;border:1px solid var(--border);background:transparent;color:var(--text-secondary);cursor:pointer;font-weight:500}
 [data-panel=inbox] .th-btn:hover,[data-panel=inbox] #ibReload:hover{background:var(--bg-hover);color:var(--text-primary)}
+/* Tạo đơn trong Hộp thư (11/2026): khung neo thay cột danh sách, 3 bước, chip link/số lượng, tuỳ chỉnh gấp gọn */
+.svc-dialog.svc-dock{position:fixed;margin:0;z-index:60;max-height:none;max-width:none;overflow:auto;border-radius:16px;padding:16px;box-shadow:0 12px 40px #0006;border-color:var(--primary-border,var(--border))}
+.svc-dock form{gap:8px}
+.svc-dock .card-head{position:sticky;top:-16px;z-index:2;background:var(--bg-card);margin:-16px -16px 0;padding:14px 16px 10px;border-bottom:1px solid var(--border)}
+.svc-dock .svc-actions{position:sticky;bottom:-16px;background:var(--bg-card);margin:0 -16px -16px;padding:10px 16px;border-top:1px solid var(--border);z-index:2}
+.svc-step{display:flex;align-items:center;gap:8px;font-size:12px;font-weight:700;color:var(--text-secondary);margin-top:6px;text-transform:uppercase;letter-spacing:.3px}
+.svc-step b{display:grid;place-items:center;width:20px;height:20px;border-radius:50%;background:var(--primary);color:#fff;font-size:11px}
+.svc-chips{display:flex;flex-wrap:wrap;gap:5px;align-items:center}
+.svc-chips[hidden]{display:none}
+.svc-chips .hint{font-size:11px}
+.svc-chip{all:unset;cursor:pointer;font-size:11px;padding:3px 9px;border-radius:999px;border:1px solid var(--border);color:var(--text-secondary);max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.svc-chip:hover{background:var(--bg-hover);color:var(--text-primary)}
+.svc-chip.on{border-color:var(--primary);color:var(--primary);background:var(--primary-soft)}
+.svc-quick{display:flex;flex-direction:column;gap:6px}
+.svc-quick[hidden]{display:none}
+.svc-hintline{font-size:12px;padding:7px 10px;border-radius:9px;background:var(--primary-soft);color:var(--text-primary)}
+.svc-repeat{justify-content:flex-start;text-align:left;white-space:normal}
+.svc-adv{border:1px solid var(--border);border-radius:10px;padding:6px 10px}
+.svc-adv>summary{cursor:pointer;font-size:12px;color:var(--text-secondary);padding:2px 0}
+.svc-adv[open]>summary{margin-bottom:8px}
+.svc-adv>*:not(summary){margin-bottom:6px}
+.svc-warn{font-size:12px;display:grid;gap:2px}
+.crm-order-btn{font-weight:700}
+#ibOrder{margin-bottom:8px}
+.ord-bar{display:flex;align-items:center;gap:8px;padding:7px 10px;border-radius:10px;font-size:12px;border:1px solid var(--border);background:var(--bg-input)}
+.ord-bar.pay{border-color:var(--pending-text,#d29922);background:var(--pending-bg)}
+.ord-bar.paid{border-color:var(--err-text,#f85149);background:var(--err-bg)}
+.ord-bar.run{border-color:var(--primary-border,var(--border));background:var(--primary-soft)}
+.ord-main{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ord-state{margin-left:8px;font-size:11px;color:var(--text-secondary)}
+.ord-bar .btn{flex:none;height:28px;min-height:0;padding:0 10px;font-size:11.5px}
+.ord-chip{font-size:9.5px;font-weight:700;padding:1px 6px;border-radius:4px;white-space:nowrap}
+.ord-chip.pay{color:var(--pending-text);background:var(--pending-bg)}
+.ord-chip.paid{color:var(--err-text);background:var(--err-bg)}
+.ord-chip.run{color:var(--primary);background:var(--primary-soft)}

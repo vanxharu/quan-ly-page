@@ -10,8 +10,9 @@
   const QUOTES = 'svcQuotesV1', QUOTE_TTL = 24 * 3600e3;
   const creating = new Set(); // khoá trong bộ nhớ: mỗi báo giá chỉ một lượt tạo đơn tại một thời điểm
   const quotes = () => DB.get(QUOTES, []);
-  const saveQuote = async q => { const all = await quotes(), i = all.findIndex(x => x.id === q.id); if (i < 0) all.push(q); else all[i] = q; await DB.set(QUOTES, all); return q; };
-  const dropQuote = async id => DB.set(QUOTES, (await quotes()).filter(x => x.id !== id));
+  let pingT = 0; const ping = () => { clearTimeout(pingT); pingT = setTimeout(() => App.inbox?.orderChanged?.(), 300); }; // báo Hộp thư vẽ lại thanh trạng thái đơn
+  const saveQuote = async q => { const all = await quotes(), i = all.findIndex(x => x.id === q.id); if (i < 0) all.push(q); else all[i] = q; await DB.set(QUOTES, all); ping(); return q; };
+  const dropQuote = async id => { await DB.set(QUOTES, (await quotes()).filter(x => x.id !== id)); ping(); };
   const expired = q => q.state === 'quote' && Date.now() > (q.expiresAt || Infinity);
   const newPayCode = () => 'DV' + Array.from(crypto.getRandomValues(new Uint8Array(6)), b => 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'[b % 31]).join('');
   const DEFAULTS = { home: 'https://smm.baostar.net', apiUrl: 'https://smm.baostar.net/api/v2', apiKey: '', prices: {} };
@@ -307,12 +308,40 @@
   const reactionFamily = (list, svc) => { if (!svc) return []; const root = svc.parent ? list.find(x => x.id === svc.parent) : svc; if (!root) return [];
     const fam = [root, ...list.filter(x => x.parent === root.id)]; return fam.length > 1 && fam.every(x => REACTION.test(x.child || '')) ? fam : []; };
   const pkgCost = (pkg, list) => { const svc = list.find(x => x.id === String(pkg.serviceId)); return svc ? svc.unitCost : 0; };
+  // Đoán dịch vụ + số lượng từ lời khách ("1k like", "500 follow", "2 nghìn view"): tin mới nhất trước.
+  const GUESS = [['like', /^(like|lượt thích|thích|tim|thả tim)$/i, /like|thích|cảm xúc|reaction/],
+    ['follow', /^(follow|fl|theo dõi|sub|subscriber|member|thành viên)$/i, /follow|theo dõi|sub|thành viên|member/],
+    ['view', /^(view|lượt xem|mắt|xem)$/i, /view|xem|mắt/], ['share', /^(share|chia sẻ)$/i, /share|chia sẻ/],
+    ['comment', /^(comment|cmt|bình luận)$/i, /comment|bình luận|cmt/]];
+  function guessOrder(messages) {
+    const said = (messages || []).filter(m => (m.isCustomer || m.mine === false) && m.text).map(m => String(m.text)).reverse().slice(0, 10);
+    for (const t of said) for (const m of t.matchAll(/(\d+(?:[.,]\d+)?)\s*(k|nghìn|ngàn)?\s*(like|lượt thích|thích|thả tim|tim|follow|fl|theo dõi|subscriber|sub|member|thành viên|view|lượt xem|mắt|share|chia sẻ|comment|cmt|bình luận)/gi)) {
+      const qty = Math.round(Number(m[1].replace(',', '.')) * (m[2] ? 1000 : 1)), g = GUESS.find(([, re]) => re.test(m[3]));
+      if (qty > 0 && g) return { kind: g[0], match: g[2], qty, said: m[0].trim() };
+    }
+    return null;
+  }
+  // Đơn gần nhất của khách (để "Lặp lại đơn trước"): bản lưu lúc tạo báo giá, không có thì ghép từ các đơn đã tạo cùng mã thanh toán.
+  async function lastOrderOf(key) {
+    if (!key) return null;
+    const saved = await DB.get('svcLast:' + key, null).catch(() => null);
+    if (saved?.lines?.length) return saved;
+    const mine = (await DB.get(ORDERS, [])).filter(o => o.source === 'service' && o.customerKey === key).sort((a, b) => b.at - a.at);
+    if (!mine.length) return null;
+    const same = mine.filter(o => o.payCode && o.payCode === mine[0].payCode), use = same.length ? same : [mine[0]];
+    return { at: mine[0].at, link: mine[0].link, lines: use.map(o => ({ serviceId: String(o.serviceId || o.items?.[0]?.serviceId || ''), serviceName: o.serviceName || '', displayName: o.displayName || o.serviceName || 'Dịch vụ',
+      qty: qtyOf(o), sell: orderSell(o), cost: Number(o.cost ?? o.items?.[0]?.cost) || 0, link: o.link, packageId: o.packageId || '', termMonths: o.termMonths || 0, comments: o.comments || '', listPrice: 0 })).filter(l => l.serviceId) };
+  }
+  const closeDock = () => document.querySelectorAll('dialog.svc-dock').forEach(d => d.close());
   async function createDialog(ctx = {}, link = '') {
     const s = await settings();
+    const dock = !!ctx.dock; if (dock) closeDock();
     let list = [];
     try { list = await services(); } catch (e) { return toast(e.message, 7000); }
     const pkgs = s.packages || [];
-    const dlg = h('dialog', { className: 'svc-dialog', onclose: () => dlg.remove() });
+    const dlg = h('dialog', { className: 'svc-dialog' + (dock ? ' svc-dock' : ''), onclose: () => dlg.remove() });
+    const chatLinks = linksIn(ctx.messages);
+    if (!link && chatLinks[0]) link = chatLinks[0];
     const linkIn = h('input', { type: 'text', inputMode: 'url', value: link, placeholder: 'Link cần làm (bài viết, trang cá nhân, video…)', required: true });
     const pkgSel = h('select', {}, h('option', { value: '', textContent: '— Chọn máy chủ trực tiếp —' }),
       ...pkgs.map(p => { const svc = list.find(x => x.id === String(p.serviceId)), off = svc && stateOf(svc)[1] === 'err';
@@ -331,10 +360,16 @@
     const lineLinkBox = h('label', { className: 'field' }, 'Link riêng cho dịch vụ này (nếu khác link chung)', lineLink);
     const reactBox = h('div', { className: 'svc-react', hidden: true }); let reactIns = new Map(), reactRoot = '';
     const cart = []; let dirty = true;
+    const dayAgo = Date.now() - 864e5, recent = new Map(); // link|máy chủ → mô tả đơn/báo giá trong 24 giờ
+    const normLink = l => String(l || '').trim().replace(/[?#].*$/, '').replace(/\/+$/, '').toLowerCase();
+    for (const o of await DB.get(ORDERS, []).catch(() => [])) if (o.source === 'service' && o.at > dayAgo) recent.set(normLink(o.link) + '|' + String(o.serviceId || o.items?.[0]?.serviceId), `đơn #${o.providerOrderId || o.payCode || ''} lúc ${fmtTime(o.at)}`);
+    for (const q of await quotes().catch(() => [])) if (q.at > dayAgo) for (const l of linesOf(q)) recent.set(normLink(l.link) + '|' + String(l.serviceId), `báo giá ${q.payCode} lúc ${fmtTime(q.at)}`);
+    const dupOf = (lk, sid) => recent.get(normLink(lk) + '|' + String(sid)) || '';
+    const last = await lastOrderOf(ctx.key);
     const cartBox = h('div', { className: 'svc-cart', hidden: true });
     let listPrice = 0;
     const remember = h('input', { type: 'checkbox', checked: true });
-    const noteBox = h('div', { className: 'svc-notes' }), info = h('div', { className: 'svc-sum' }), err = h('div', { className: 'status err', hidden: true });
+    const noteBox = h('div', { className: 'svc-notes' }), info = h('div', { className: 'svc-sum' }), err = h('div', { className: 'status err', hidden: true }), warnBox = h('div', { className: 'status pending svc-warn', hidden: true });
     pkgSel.hidden = true; search.hidden = true; pick.hidden = true;
     const linkPlat = () => LINK_PLAT[platformOf(linkIn.value)] || '';
     const pkgItems = [{ value: '', label: 'Chọn máy chủ trực tiếp', sub: 'Không dùng gói, chọn máy chủ Baostar bên dưới', always: true },
@@ -405,11 +440,15 @@
         Number(termIn.value) > 0 ? h('span', {}, '🔔 Hạn ', h('strong', { textContent: `${termIn.value} tháng` }), ' (nhắc gia hạn)') : null,
         fam.length && p?.kind === 'fixed' && reactSum !== Number(p.qty) ? h('span', { className: 'neg', textContent: `Tổng cảm xúc ${reactSum} phải bằng ${p.qty}` }) : null,
         svc && !fam.length && (n < svc.min || n > svc.max) ? h('span', { className: 'neg', textContent: `Số lượng phải từ ${svc.min} đến ${svc.max}` }) : null);
+      // Kiểm tra trước khi tạo: link khác nền tảng của dịch vụ, trùng đơn cùng link + dịch vụ trong 24 giờ.
+      const lk = lineLink.value.trim() || linkIn.value.trim(), lp = LINK_PLAT[platformOf(lk)] || '', sp = svc?.platform || p && pkgItems.find(i => i.value === p.id)?.platform || '';
+      const warns = [lp && sp && norm(lp) !== norm(sp) ? `Link là ${lp} nhưng dịch vụ là ${sp}` : '', svc && dupOf(lk, svc.id) ? `Link này đã có ${dupOf(lk, svc.id)} cùng dịch vụ` : ''].filter(Boolean);
+      warnBox.hidden = !warns.length; warnBox.replaceChildren(...warns.map(w => h('div', { textContent: '⚠ ' + w })));
       drawCart();
     };
     const reset = (...els) => els.forEach(el => { el.dataset.touched = ''; });
     pkgSel.onchange = () => { dirty = true; reset(unit, total, costIn, shown, termIn); recalc(); };
-    search.oninput = draw; pick.onchange = () => { dirty = true; reset(unit, total, costIn, shown, termIn); recalc(); }; linkIn.oninput = () => { draw(); pkgPick.setPlat(linkPlat()); svcPick.setPlat(linkPlat()); };
+    search.oninput = draw; pick.onchange = () => { dirty = true; reset(unit, total, costIn, shown, termIn); recalc(); }; linkIn.oninput = () => { drawChips(); draw(); pkgPick.setPlat(linkPlat()); svcPick.setPlat(linkPlat()); };
     qty.oninput = () => { dirty = true; reset(total, costIn); recalc(); };
     unit.oninput = () => { dirty = true; unit.dataset.touched = '1'; reset(total); recalc(); };
     commentsIn.oninput = () => { dirty = true; reset(total, costIn); recalc(); };
@@ -446,7 +485,33 @@
     const fail = m => { err.textContent = m; err.hidden = false; };
     const resetEditor = () => { lineLink.value = ''; commentsIn.value = ''; reactRoot = ''; reset(unit, total, costIn, shown, termIn); dirty = false; recalc(); };
     const rememberPrice = async () => { const p = pkg(), svc = chosen(); if (svc && !p && remember.checked && unit.value !== '' && touched(unit)) await saveSettings({ prices: { ...(await settings()).prices, [svc.id]: Number(unit.value) } }); };
-    const addBtn = h('button', { type: 'button', className: 'btn btn-soft', textContent: '＋ Thêm dịch vụ này vào đơn', title: 'Thêm dòng đang soạn vào đơn rồi chọn dịch vụ tiếp theo',
+    // Bước nhỏ: tiêu đề có số; link khách gửi thành nút bấm chọn; nút số lượng nhanh.
+    const step = (n, t) => h('div', { className: 'svc-step' }, h('b', { textContent: String(n) }), t);
+    const linkChips = h('div', { className: 'svc-chips', hidden: !chatLinks.length });
+    const drawChips = () => linkChips.replaceChildren(h('span', { className: 'hint', textContent: 'Link khách gửi:' }), ...chatLinks.slice(0, 6).map(l => h('button', { type: 'button', className: 'svc-chip' + (l === linkIn.value.trim() ? ' on' : ''), title: l,
+      textContent: (LINK_PLAT[platformOf(l)] ? LINK_PLAT[platformOf(l)] + ' · ' : '') + l.replace(/^https?:\/\/(www\.|m\.)?/, '').slice(0, 34) + (l.length > 44 ? '…' : ''),
+      onclick: () => { linkIn.value = l; linkIn.oninput(); } })));
+    const qtyQuick = h('div', { className: 'svc-chips' }, h('span', { className: 'hint', textContent: 'Nhanh:' }), ...[100, 500, 1000, 2000, 5000, 10000].map(n => h('button', { type: 'button', className: 'svc-chip', textContent: n >= 1000 ? n / 1000 + 'K' : String(n),
+      onclick: () => { if (qty.readOnly) return; qty.value = n; qty.oninput(); } })));
+    // Gợi ý từ lời khách + lặp lại đơn trước (đầu khung).
+    const quick = h('div', { className: 'svc-quick' });
+    const guess = guessOrder(ctx.messages);
+    const applyGuess = () => {
+      if (!guess) return false;
+      const plat = linkPlat(), cands = pkgs.filter(pk => guess.match.test(norm(pk.name)) && (!plat || !pkgItems.find(i => i.value === pk.id)?.platform || norm(pkgItems.find(i => i.value === pk.id).platform) === norm(plat)));
+      const pk = cands.find(x => x.kind === 'fixed' && Number(x.qty) === guess.qty) || cands.find(x => x.kind !== 'fixed') || null;
+      if (pk) { pkgSel.value = pk.id; pkgPick.set?.(pk.id); pkgSel.onchange(); }
+      else { search.value = guess.kind; draw(); }
+      if (!qty.readOnly) { qty.value = guess.qty; qty.oninput(); }
+      return true;
+    };
+    quick.replaceChildren(
+      guess ? h('div', { className: 'svc-hintline' }, '✨ Theo tin khách ', h('strong', { textContent: `“${guess.said}”` }), ` → điền sẵn ${guess.kind} · ${guess.qty.toLocaleString('vi-VN')}. Kiểm tra lại gói trước khi tạo.`) : '',
+      last?.lines?.length ? h('button', { type: 'button', className: 'btn btn-soft btn-sm svc-repeat', title: 'Tạo báo giá giống lần trước (link, dịch vụ, số lượng, giá)',
+        textContent: `↻ Lặp lại đơn trước: ${[...new Set(last.lines.map(l => l.displayName))].join(', ').slice(0, 60)} · ${money(sumOf(last.lines, 'sell'))}`,
+        onclick: () => { cart.splice(0, cart.length, ...last.lines.map(l => ({ ...l, id: uid('ln') }))); if (last.link) linkIn.value = last.link; drawChips(); dirty = false; drawCart(); toast('Đã chép đơn trước vào đơn. Kiểm tra rồi bấm Tạo báo giá & gửi.', 4000); } }) : '');
+    quick.hidden = !guess && !last?.lines?.length;
+    const addBtn = h('button', { type: 'button', className: 'btn btn-soft', textContent: '＋ Thêm dịch vụ khác', title: 'Thêm dòng đang soạn vào đơn rồi chọn dịch vụ tiếp theo',
       onclick: async () => { err.hidden = true; const r = editorLines(); if (r.error) return fail(r.error); await rememberPrice(); cart.push(...r.lines); resetEditor(); toast(`Đã thêm ${r.lines.length} dòng. Chọn dịch vụ tiếp theo hoặc bấm Tạo báo giá.`, 3500); } });
     function drawCart() {
       if (!cart.length) { cartBox.hidden = true; return; }
@@ -467,6 +532,9 @@
       const lines = [...cart];
       if (!cart.length || dirty) { const r = editorLines(); if (r.error) return fail(cart.length ? r.error + ' (hoặc đưa các ô về như cũ để chỉ tạo các dòng đã thêm)' : r.error); await rememberPrice(); lines.push(...r.lines); }
       if (!lines.length) return fail('Đơn chưa có dịch vụ nào.');
+      const dups = lines.map(l => dupOf(l.link, l.serviceId) && `• ${l.displayName}: đã có ${dupOf(l.link, l.serviceId)}`).filter(Boolean);
+      const wrong = lines.map(l => { const x = list.find(y => y.id === String(l.serviceId)), lp = LINK_PLAT[platformOf(l.link)] || ''; return x?.platform && lp && norm(x.platform) !== norm(lp) ? `• ${l.displayName}: link ${lp}, dịch vụ ${x.platform}` : ''; }).filter(Boolean);
+      if ((dups.length || wrong.length) && !confirm(['Kiểm tra trước khi tạo:', ...(dups.length ? ['Trùng đơn trong 24 giờ (cùng link + dịch vụ):', ...dups] : []), ...(wrong.length ? ['Link không hợp nền tảng dịch vụ:', ...wrong] : []), '', 'Vẫn tạo báo giá?'].join('\n'))) return;
       const first = lines[0], now = Date.now(), names = [...new Set(lines.map(l => l.displayName))];
       const q = await saveQuote({ id: uid('quo'), payCode: newPayCode(), at: now, expiresAt: now + QUOTE_TTL, state: 'quote', paidAmount: 0, lines,
         link: linkIn.value.trim() || first.link, qty: sumOf(lines, 'qty'), sell: sumOf(lines, 'sell'), cost: sumOf(lines, 'cost'), listPrice: sumOf(lines, 'listPrice'),
@@ -475,29 +543,41 @@
         renewOf: ctx.renewOf || '', renewEnd: ctx.renewEnd || 0,
         customerKey: ctx.key || '', pageKey: ctx.page?.id || '', pageName: ctx.page?.name || '', pageAvatar: App.pageAvatarUrl(ctx.page) || '', customer: { name: ctx.name || '' } });
       if (ctx.key) App.crm?.update?.(ctx.key, { pageId: ctx.page?.id, pageName: ctx.page?.name, name: ctx.name, orderStatus: 'Chờ thanh toán' }).catch(() => {});
+      if (ctx.key) DB.set('svcLast:' + ctx.key, { at: now, link: q.link, lines: lines.map(({ id, done, error, order, ...l }) => l) }).catch(() => {});
+      App.inbox?.orderChanged?.();
       dlg.close(); toast(`Đã tạo báo giá ${q.payCode} (${lines.length} dịch vụ). Gửi cho khách, khi nhận tiền bấm "Đã nhận tiền".`, 6000);
       App.tabs.services?.refresh?.();
       invoiceDialog(q, 'quote');
     } },
-      h('div', { className: 'card-head' }, h('h3', { className: 'card-title', textContent: 'Báo giá dịch vụ' + (ctx.name ? ' · ' + ctx.name : '') }),
+      h('div', { className: 'card-head' }, h('h3', { className: 'card-title', textContent: (dock ? '🧾 Tạo đơn' : 'Báo giá dịch vụ') + (ctx.name ? ' · ' + ctx.name : '') }),
         h('button', { type: 'button', className: 'icon-btn', 'aria-label': 'Đóng', textContent: '×', onclick: () => dlg.close() })),
-      h('label', { className: 'field' }, 'Link chung của đơn', linkIn),
+      quick,
+      step(1, 'Link cần làm'), linkIn, linkChips,
       cartBox,
-      pkgs.length ? h('div', { className: 'field' }, 'Gói của tôi', pkgSel, pkgPick.el) : h('p', { className: 'hint', style: 'margin:0' }, pkgSel, 'Chưa có gói bán: chọn máy chủ trực tiếp bên dưới (tạo gói ở tab Dịch vụ › Gói bán của tôi).'),
-      svcBox, noteBox, lineLinkBox, reactBox,
-      commentsBox,
-      h('div', { className: 'row', style: 'gap:10px;flex-wrap:wrap' }, h('label', { className: 'field', style: 'flex:1' }, 'Số lượng', qty), unitBox),
-      h('div', { className: 'row', style: 'gap:10px;flex-wrap:wrap' },
-        h('label', { className: 'field', style: 'flex:1' }, 'Thành tiền khách trả (sửa được)', total),
-        h('label', { className: 'field', style: 'flex:1' }, 'Giá gốc cả đơn (sửa được)', costIn)),
-      h('div', { className: 'row', style: 'gap:10px;flex-wrap:wrap' },
-        h('label', { className: 'field', style: 'flex:3' }, 'Tên dịch vụ khách thấy trên đơn', shown),
-        h('label', { className: 'field', style: 'flex:1' }, 'Nhắc gia hạn (tháng)', termIn)),
-      rememberBox, info, err,
-      h('div', { className: 'row', style: 'gap:8px;justify-content:flex-end' },
-        h('button', { type: 'button', className: 'btn btn-ghost', textContent: 'Mở web dịch vụ ↗', onclick: () => { if (linkIn.value) navigator.clipboard?.writeText(linkIn.value).catch(() => {}); openWeb(); } }),
-        addBtn, h('button', { type: 'submit', className: 'btn btn-primary', textContent: 'Tạo báo giá' })));
-    dlg.append(form); document.body.append(dlg); draw(); dlg.showModal(); (link ? pkgSel : linkIn).focus();
+      step(2, 'Dịch vụ'),
+      pkgs.length ? h('div', { className: 'field' }, pkgSel, pkgPick.el) : h('p', { className: 'hint', style: 'margin:0' }, pkgSel, 'Chưa có gói bán: chọn máy chủ trực tiếp bên dưới (tạo gói ở tab Dịch vụ › Gói bán của tôi).'),
+      svcBox, noteBox, reactBox, commentsBox,
+      step(3, 'Số lượng & giá'),
+      h('div', { className: 'row', style: 'gap:10px;flex-wrap:wrap;align-items:flex-end' }, h('label', { className: 'field', style: 'flex:1;min-width:110px' }, 'Số lượng', qty), unitBox,
+        h('label', { className: 'field', style: 'flex:1;min-width:120px' }, 'Khách trả', total)),
+      qtyQuick,
+      h('details', { className: 'svc-adv' }, h('summary', { textContent: 'Tuỳ chỉnh (giá gốc, tên khách thấy, nhắc gia hạn, link riêng)' }),
+        h('div', { className: 'row', style: 'gap:10px;flex-wrap:wrap' },
+          h('label', { className: 'field', style: 'flex:1' }, 'Giá gốc cả đơn', costIn),
+          h('label', { className: 'field', style: 'flex:1' }, 'Nhắc gia hạn (tháng)', termIn)),
+        h('label', { className: 'field' }, 'Tên dịch vụ khách thấy trên đơn', shown),
+        lineLinkBox, rememberBox),
+      info, warnBox, err,
+      h('div', { className: 'row svc-actions', style: 'gap:8px;justify-content:flex-end;flex-wrap:wrap' },
+        h('button', { type: 'button', className: 'btn btn-ghost btn-sm', textContent: 'Web dịch vụ ↗', title: 'Copy link rồi mở web dịch vụ', onclick: () => { if (linkIn.value) navigator.clipboard?.writeText(linkIn.value).catch(() => {}); openWeb(); } }),
+        addBtn, h('button', { type: 'submit', className: 'btn btn-primary', textContent: 'Tạo báo giá & gửi →' })));
+    // Khung neo: phủ đúng cột danh sách khách của Hộp thư (hội thoại bên phải vẫn đọc được); không có thì neo mép phải.
+    const place = () => { const host = document.querySelector('[data-panel=inbox]:not([hidden]) .split>.card'), r = host?.getBoundingClientRect();
+      if (r?.width > 250) { const top = Math.max(12, Math.min(r.top, innerHeight - 520)); Object.assign(dlg.style, { left: r.left + 'px', top: top + 'px', width: Math.max(r.width, 360) + 'px', height: Math.max(420, innerHeight - top - 12) + 'px', right: 'auto' }); }
+      else Object.assign(dlg.style, { left: 'auto', right: '12px', top: '12px', width: 'min(440px, calc(100vw - 24px))', height: 'calc(100vh - 24px)' }); };
+    if (dock) { place(); addEventListener('resize', place); dlg.addEventListener('close', () => removeEventListener('resize', place)); }
+    dlg.append(form); document.body.append(dlg); drawChips(); draw(); if (dock) dlg.show(); else dlg.showModal();
+    if (!applyGuess()) (link ? pkgSel : linkIn).focus();
   }
   // ── Xuất đơn gửi khách: tin nhắn chữ + ảnh hoá đơn (tên gói của bạn, không lộ máy chủ gốc) ──
   const BANKS = [['970436', 'Vietcombank'], ['970415', 'VietinBank'], ['970418', 'BIDV'], ['970405', 'Agribank'], ['970422', 'MBBank'], ['970407', 'Techcombank'],
@@ -801,7 +881,7 @@
     const field = kind === 'progress' ? 'progressSentAt' : kind === 'quote' ? 'sentAt' : 'invoiceSentAt';
     const store = kind === 'quote' ? QUOTES : ORDERS, all = await DB.get(store, []), ids = o.groupIds || [o.id];
     const xs = all.filter(y => ids.includes(y.id)); if (!xs.length) return;
-    for (const x of xs) x[field] = Date.now(); await DB.set(store, all); App.tabs.services?.refresh?.();
+    for (const x of xs) x[field] = Date.now(); await DB.set(store, all); App.tabs.services?.refresh?.(); ping();
   }
   async function openWeb() {
     const s = await settings();
@@ -838,7 +918,7 @@
         if (FINAL.test(next.svcStatus) && !o.completedAt && next.status === 'done') next.completedAt = Date.now();
         if (JSON.stringify(next) !== JSON.stringify(o)) { next.updatedAt = Date.now(); Object.assign(o, next); changed++; }
       }
-      await DB.set(ORDERS, fresh);
+      await DB.set(ORDERS, fresh); if (changed) ping();
     }
     return changed;
   }
@@ -854,14 +934,36 @@
         h('strong', { textContent: q.payCode }), h('span', { textContent: `${q.displayName} · ${money(q.sell)}` }), h('span', { className: 'status svc-pill ' + cls, textContent: st }), quoteActions(q)); }),
         ...vips.map(o => h('div', { className: 'row', style: 'gap:6px;flex-wrap:wrap;align-items:center' }, h('strong', { textContent: '🔔 ' + (o.displayName || o.serviceName) }),
           h('span', { className: 'status svc-pill ' + (daysLeft(o) <= 1 ? 'err' : 'pending'), textContent: leftText(o) }), vipActions(o, qs)))); });
-    return h('div', { className: 'svc-inbox' }, qBox,
-      h('div', { className: 'row', style: 'gap:6px;flex-wrap:wrap;align-items:center' },
-        h('strong', { textContent: 'Dịch vụ' }),
-        h('button', { type: 'button', className: 'btn btn-soft btn-sm', textContent: '＋ Báo giá dịch vụ', onclick: () => createDialog(ctx, links[0] || '') })),
-      links.length ? h('div', { className: 'svc-links' }, ...links.slice(0, 5).map(l => h('div', { className: 'row', style: 'gap:6px' },
-        h('a', { href: l, target: '_blank', rel: 'noopener noreferrer', className: 'hint', textContent: l.length > 60 ? l.slice(0, 57) + '…' : l, title: l }),
-        h('button', { type: 'button', className: 'btn btn-ghost btn-sm', textContent: '📋 Copy', onclick: () => navigator.clipboard.writeText(l).then(() => toast('Đã copy link.')) }),
-        h('button', { type: 'button', className: 'btn btn-ghost btn-sm', textContent: 'Báo giá', onclick: () => createDialog(ctx, l) })))) : h('p', { className: 'hint', textContent: 'Chưa thấy link nào khách gửi trong hội thoại này.' }));
+    // Nút tạo đơn + link khách gửi đã chuyển vào nút "🧾 Tạo đơn" (khung bên phải); ở đây chỉ còn báo giá / dịch vụ sắp hết hạn của khách.
+    return h('div', { className: 'svc-inbox' }, qBox);
+  }
+
+  // ── Trạng thái đơn của từng khách (Hộp thư): báo giá chờ thanh toán / đã thu chưa tạo đơn / đơn đang chạy ──
+  // Mỗi khách lấy việc cần làm gấp nhất: đã thu chưa tạo đơn > chờ thanh toán > đang chạy.
+  async function orderStates() {
+    const map = new Map(), rank = { paid: 3, pay: 2, run: 1 };
+    const put = (key, st) => { if (key && (!map.has(key) || rank[st.kind] > rank[map.get(key).kind])) map.set(key, st); };
+    for (const q of await quotes()) put(q.customerKey, q.state === 'paid' ? { kind: 'paid', chip: '💰 Đã thu', q } : { kind: 'pay', chip: expired(q) ? '⌛ Hết hạn' : '💳 Chờ TT', q });
+    const run = (await DB.get(ORDERS, [])).filter(o => o.source === 'service' && o.customerKey && o.status !== 'done' && o.status !== 'cancelled' && Date.now() - o.at < 30 * 864e5);
+    for (const o of run) { const cur = map.get(o.customerKey); if (cur?.kind === 'run') cur.orders.push(o); else put(o.customerKey, { kind: 'run', chip: '🚀 Đang chạy', orders: [o] }); }
+    return map;
+  }
+  // Thanh ghim trên ô nhập tin: đơn hiện tại của khách + đúng 1 nút cho bước tiếp theo.
+  function orderBar(st) {
+    if (!st) return null;
+    const btn = (t, fn, cls = 'btn-primary') => h('button', { type: 'button', className: 'btn btn-sm ' + cls, textContent: t, onclick: fn });
+    if (st.q) { const q = st.q, [label] = quoteState(q);
+      const act = q.state === 'paid' ? btn('🚀 Tạo đơn', () => confirmCreate(q))
+        : expired(q) ? btn('⏱ Gia hạn 24h', async () => { q.expiresAt = Date.now() + QUOTE_TTL; await saveQuote(q); App.tabs.services?.refresh?.(); }, 'btn-soft')
+        : !q.sentAt ? btn('📤 Gửi báo giá', () => invoiceDialog(q, 'quote'))
+        : btn('✅ Đã nhận tiền', () => paymentDialog(q));
+      return h('div', { className: 'ord-bar ' + st.kind }, h('span', { className: 'ord-main' }, h('strong', { textContent: '#' + q.payCode }), ` · ${q.displayName} · `, h('strong', { textContent: money(amountDue(q) || q.sell) }),
+        h('span', { className: 'ord-state', textContent: label + (q.state === 'quote' && q.sentAt && !expired(q) ? ' · đã gửi' : '') })),
+        q.state === 'quote' && q.sentAt && !expired(q) ? btn('📤', () => invoiceDialog(q, 'quote'), 'btn-ghost') : null, act); }
+    const os = st.orders, o = os[0], code = o.payCode || '', done = os.filter(x => x.svcStatus && /progress|processing/i.test(x.svcStatus)).length;
+    return h('div', { className: 'ord-bar run' }, h('span', { className: 'ord-main' }, h('strong', { textContent: '#' + (o.providerOrderId || code) }), ` · ${os.length > 1 ? os.length + ' dịch vụ' : o.displayName || o.serviceName}`,
+      h('span', { className: 'ord-state', textContent: os.length > 1 ? `Đang chạy${done ? ` · ${done}/${os.length} đã bắt đầu` : ''}` : progressLine(o) })),
+      btn('📊 Gửi tiến độ', async () => { const g = code ? await groupOf(code) : o; invoiceDialog(g || o, 'progress'); }, 'btn-soft'));
   }
 
   // ── Tab Dịch vụ ──
@@ -1210,5 +1312,5 @@
     if (s.apiKey) drawPrices(); else priceBox.replaceChildren(h('p', { className: 'hint', textContent: 'Nhập API key rồi Lưu để tải danh sách dịch vụ.' }));
     drawPkgs(); drawInvoiceSettings(s); drawIcons();
   }
-  App.services = { createDialog, inboxBox, refreshStatus, linksIn, call, openWeb, mapStatus, catalogProgress, noteLines, speedOf, invoiceDialog, invoiceText, paymentDialog, confirmCreate, quotes, renewQuote, vipTick, termOf, requestRefill, refreshRefills };
+  App.services = { createDialog, closeDock, orderStates, orderBar, inboxBox, refreshStatus, linksIn, call, openWeb, mapStatus, catalogProgress, noteLines, speedOf, invoiceDialog, invoiceText, paymentDialog, confirmCreate, quotes, renewQuote, vipTick, termOf, requestRefill, refreshRefills };
 })();

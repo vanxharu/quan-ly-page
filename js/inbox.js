@@ -164,6 +164,7 @@
           h('div', { className: 'thread', id: 'ibThread' }, empty('Chọn một hội thoại bên trái để xem tin nhắn.')),
           h('div', { id: 'ibCrm', className: 'crm', hidden: true }),
           h('div', { className: 'composer' },
+            h('div', { id: 'ibOrder', hidden: true }),
             h('div', { className: 'popover', id: 'ibPicker', hidden: true }, picker.el),
             h('div', { className: 'attach', id: 'ibAttach', hidden: true }),
             h('div', { id: 'ibWindow', className: 'status', hidden: true, style: 'margin-bottom:6px' }),
@@ -317,6 +318,7 @@
   const bsMsgCache = new Map();
   async function openBs(c, { silent = false, older = false } = {}) {
     if (!silent) {
+      App.services?.closeDock?.();
       saveDraft(); S.conv = c; resetThread(); drawHead(c);
       $('ibReload').hidden = false;
       // Hiện ngay bản đọc lần trước (nếu có) trong lúc khung ẩn mở hội thoại, rồi thay bằng bản mới.
@@ -404,6 +406,17 @@
   // Ảnh mẫu tin có thể là link: đổi sang data URL để đưa vào Business Suite từ bộ nhớ.
   const asDataUrl = async src => src.startsWith('data:') ? src : fetch(src).then(r => r.blob()).then(b => new Promise((ok, no) => { const f = new FileReader(); f.onload = () => ok(f.result); f.onerror = no; f.readAsDataURL(b); }));
   // Tự gắn nhãn theo lời khách + khung CRM; dùng chung cho hội thoại API và Business Suite (Business Suite không có PSID).
+  // Thanh trạng thái đơn của khách đang mở (trên ô nhập tin) + chip 💳/🚀 trong danh sách khách.
+  async function drawOrder() {
+    if (!App.services?.orderStates) return;
+    S.orderMap = await App.services.orderStates().catch(() => S.orderMap);
+    const box = $('ibOrder'); if (!box) return;
+    const bar = S.conv ? App.services.orderBar(S.orderMap?.get(S.conv.key)) : null;
+    box.hidden = !bar; box.replaceChildren(...(bar ? [bar] : []));
+    if (App.current() === 'inbox') drawList();
+  }
+  App.inbox.orderChanged = () => drawOrder().catch(() => {});
+  setInterval(() => { if (App.current() === 'inbox' && !document.hidden) drawOrder().catch(() => {}); }, 60e3);
   async function tagAndCrm(c, { render }) {
     const st = await settings();
     if (S.conv !== c) return;
@@ -417,6 +430,7 @@
     $('ibCrm').hidden = false;
     if (render) await App.crm.renderPanel($('ibCrm'), { page: c.page, psid, name: c.other.name || '', messages: S.messages, isCurrent: () => draftKey(S.conv) === draftKey(c) });
     if (render && App.services && S.conv === c) $('ibCrm').append(App.services.inboxBox({ page: c.page, key: c.key, name: c.other.name || '', messages: S.messages }));
+    if (render) drawOrder();
     drawList();
   }
   async function sendBs(c, text) {
@@ -659,7 +673,8 @@
               c.unread_count ? h('span', { className: 'badge', title: `Khách đã nhắn ${c.unread_count} tin chưa đọc`, textContent: c.unread_count > 99 ? '99+' : c.unread_count }) : null,
               h('span', { className: 'time', textContent: c.timeText || (new Date(c.updated_time).toDateString() === today ? new Date(c.updated_time).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }) : fmtShort(c.updated_time)) })),
             h('div', { className: 'snippet', textContent: c.snippet || '' }),
-            ((wait != null && wait < 7 * 1440) || labels.length) ? h('div', { className: 'tags' },
+            ((wait != null && wait < 7 * 1440) || labels.length || S.orderMap?.has(c.key)) ? h('div', { className: 'tags' },
+              S.orderMap?.has(c.key) ? h('span', { className: 'ord-chip ' + S.orderMap.get(c.key).kind, title: 'Đơn dịch vụ của khách', textContent: S.orderMap.get(c.key).chip }) : null,
               wait != null && wait < 7 * 1440 ? h('span', { className: 'wait' + (wait > st.waitMinutes ? ' late' : ''), title: 'Khách đang chờ trả lời', textContent: '⏳ ' + InboxRules.formatWait(wait) }) : null,
               ...labels.slice(0, 3).map(l => tag(l))) : null));
       }) : [empty(S.convs.length ? 'Không có hội thoại khớp bộ lọc.' : 'Chưa có tin nhắn.')]));
@@ -668,6 +683,7 @@
     S.draftReady = false; S.image = ''; S.tpl = null;
     if(!$('ibText'))return; // Đổi Page trước khi mở Hộp thư vẫn hợp lệ.
     $('ibText').value = ''; $('ibText').disabled = true; drawAttach();
+    if ($('ibOrder')) $('ibOrder').hidden = true;
     $('ibTitle').replaceChildren('Chưa chọn hội thoại'); $('ibReload').hidden = true; $('ibSend').disabled = true; $('ibCrm').hidden = true;
     $('ibThread').replaceChildren(empty('Chọn một hội thoại bên trái để xem tin nhắn.'));
   }
@@ -688,7 +704,7 @@
   }
   async function openConv(c, { silent = false } = {}) {
     const switching = draftKey(S.conv) !== draftKey(c) || !S.draftReady;
-    if (switching) saveDraft();
+    if (switching) { saveDraft(); App.services?.closeDock?.(); }
     S.conv = c;
     drawHead(c);
     queuePics([c]);
