@@ -78,7 +78,9 @@ function readThreads(scroll) {
     // Mốc giờ: dòng chữ giống giờ; không có thì lấy từ thẻ <abbr>/<time>/aria-label (Meta hay đổi cách hiện).
     const tagged = [...el.querySelectorAll('abbr, time, [aria-label]')].map(x => (x.getAttribute('aria-label') || x.getAttribute('title') || x.innerText || '').trim()).find(isTime);
     const time = lines.find(isTime) || tagged || '';
-    const snippet = lines.filter(s => s !== time).sort((a, b) => b.length - a.length)[0] || '';
+    // Bỏ nhãn của Business Suite trên dòng (vd "Đã chu…", "Khách …", "Nov 02", "AI đang phản hồi") khỏi tin cuối.
+    const chip = s => (s.length <= 14 && /…$/.test(s)) || /^[A-Z][a-z]{2} \d{1,2}$/.test(s) || /^(AI đang phản hồi|AI đã chuyển|Trao đổi thêm|Đã chuyển đổi|Khách hàng mới|Tiếp nhận|Ordered|Intake)$/i.test(s) || /^\+\d+ nhãn/.test(s);
+    const snippet = lines.filter(s => s !== time && !chip(s)).sort((a, b) => b.length - a.length)[0] || '';
     const leaf = snippet && leaves.find(x => (x.innerText || x.textContent || '').trim() === snippet);
     return {
       uid: el.getAttribute('data-maiba-contact-id'), name, snippet, time, raw: time ? undefined : lines.slice(0, 8),
