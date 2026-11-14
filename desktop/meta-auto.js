@@ -597,7 +597,10 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
     if (!comp) { const why = await whyNoComposer(wc), dir = await dumpPage(wc, 'khong-o-nhap'); tried.push(why ? 'Meta báo: ' + why : 'trang không có ô trả lời'); if (dir) tried.push('đã lưu ảnh chụp vào ' + dir); attachImage.locked = true; return false; }
     attachImage.locked = false;
     const before = await pics();
-    const waitPreview = async () => { for (let i = 0; i < 10; i++) { await sleep(500); if (await pics() > before) return true; } return false; };
+    // Dấu hiệu đã nhận ảnh: có ảnh xem trước (blob/data) HOẶC vùng soạn tin đổi hẳn (Business Suite chèn khung đính kèm), kiểm tra mỗi 150ms.
+    const compSize = () => wc.executeJavaScript(`(() => { const b = document.querySelector('[data-ga-composer]'); return b ? b.getElementsByTagName('*').length : 0; })()`).catch(() => 0);
+    const size0 = await compSize();
+    const waitPreview = async (ms = 4000) => { const end = Date.now() + ms; while (Date.now() < end) { await sleep(150); if (await pics() > before || await compSize() > size0 + 3) { await sleep(250); return true; } } return false; };
     const m = String(image).match(/^data:(image\/(\w+));base64,(.+)$/);
     // Các cách đưa ảnh vào ô nhập. Cách nào thành công thì nhớ lại (attach-method.txt) và lần sau thử cách đó trước → không mất thời gian cho cách hỏng.
     const ways = {
@@ -641,8 +644,8 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
           if (kind === 'paste') { const ev = new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }); this.dispatchEvent(ev); return ev.defaultPrevented; }
           let ok = false; for (const t of ['dragenter', 'dragover', 'drop']) { const ev = new DragEvent(t, { dataTransfer: dt, bubbles: true, cancelable: true }); this.dispatchEvent(ev); ok = ok || ev.defaultPrevented; }
           return ok; }` }).catch(e => ({ error: e.message }));
-      if (await waitPreview()) return true;
-      // Trang đã nhận (chặn xử lý mặc định) = Messenger đã lấy ảnh, chỉ là app chưa nhận ra khung xem trước → coi như xong (sau khi gửi app vẫn kiểm tra).
+      // Trang đã nhận (chặn xử lý mặc định) = Messenger đã lấy ảnh → chỉ chờ ngắn cho khung đính kèm hiện (không chờ đủ 4 giây).
+      if (await waitPreview(r?.result?.value ? 1500 : 4000)) return true;
       if (r?.result?.value) return true;
       tried.push(`${kind}: ${r?.error ? 'lỗi ' + r.error : 'không nhận'}`);
       return false;
@@ -697,21 +700,36 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
     return await wc.executeJavaScript(`(${readMessages})(false)`).catch(() => null) || { error: 'Không đọc được tin.' };
   }, args.bg ? 0 : 1); // đọc trước (nền) nhường việc bạn đang chờ
   // Gửi tin như người dùng gõ trong Business Suite (không qua API → không bị giới hạn của app chưa duyệt).
-  const sendThread = args => !threadArgs(args) ? Promise.resolve({ error: 'Thiếu Page hoặc khách.' }) : queue(args.pageId, async () => {
+  // Nhật ký thời gian gửi (Downloads/GetHelps-debug/gui-tin.json, 20 lần gần nhất): chờ hàng đợi, mở hội thoại, đính ảnh, xác nhận…
+  const sendLog = [];
+  const writeSendLog = e => { try { sendLog.unshift(e); sendLog.splice(20); const dir = path.join(app.getPath('downloads'), 'GetHelps-debug'); fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'gui-tin.json'), JSON.stringify(sendLog, null, 1)); } catch {} };
+  const sendThread = args => { const T = { at: new Date().toISOString(), anh: !!args.image, kb: args.image ? Math.round(String(args.image).length * 0.75 / 1024) : 0, chu: String(args.text || '').length, buoc: {} }, t0 = Date.now();
+    const mark = k => { T.buoc[k] = (Date.now() - t0) / 1000; };
+    if (!threadArgs(args)) return Promise.resolve({ error: 'Thiếu Page hoặc khách.' });
+    return queue(args.pageId, () => { mark('hang-doi'); return sendCore(args, mark); }, 1).then(r => { mark('xong'); T.ketqua = r?.error ? 'lỗi: ' + String(r.error).slice(0, 80) : 'ok'; T.cach = attachImage.last?.tried?.slice(-1)[0] || ''; writeSendLog(T); return r; },
+      e => { mark('xong'); T.ketqua = 'lỗi: ' + e.message; writeSendLog(T); throw e; });
+  };
+  const sendCore = async (args, mark) => {
     const text = String(args.text || '').trim(), image = args.image || '';
     if (!text && !image) return { error: 'Thiếu nội dung.' };
     let ok = await openThreadHidden(String(args.pageId), String(args.uid));
+    mark('mo-hoi-thoai');
     if (ok !== true) return { error: ok === 'login' ? 'login' : 'Không mở được hội thoại trong Business Suite.' };
     const wc = slot(args.pageId).win.webContents, dbg = wc.debugger;
     // Dọn ô nhập tại chỗ; chỉ khi không gỡ được ảnh sót mới tải lại hội thoại (cách cũ, chậm).
     if (await findComposer(wc, 4000) && !await clearComposer(wc)) {
       slot(args.pageId).opened = ''; ok = await openThreadHidden(String(args.pageId), String(args.uid));
       if (ok !== true) return { error: ok === 'login' ? 'login' : 'Không mở được hội thoại trong Business Suite.' };
+      mark('tai-lai-trang');
     }
+    mark('don-o-nhap');
     const read = () => wc.executeJavaScript(`(${readMessages})(false)`).catch(() => null);
     const myPics = r => (r?.messages || []).filter(m => m.mine && m.pic).length;
-    const picsBefore = myPics(await read());
-    if (image && !await attachImage(wc, image)) {
+    const picsBefore = image ? myPics(await read()) : 0;
+    const attached = image ? await attachImage(wc, image) : true;
+    if (image) mark('dinh-anh');
+    if (!attached) {
       const d = attachImage.last;
       if (attachImage.locked) return { error: `Không thấy ô nhập tin trong Business Suite (khung ẩn). ${d?.tried.join(' · ')}` };
       return { error: `Không đưa được ảnh vào Business Suite. [${d?.tried.join(' · ')} · ${describe(d?.comp)}]` };
@@ -729,7 +747,7 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
       if (line) await dbg.sendCommand('Input.insertText', { text: line });
     }
     await sleep(image ? 300 : 100);
-    const t0 = Date.now();
+    mark('go-chu'); const t0 = Date.now();
     await dbg.sendCommand('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Enter', windowsVirtualKeyCode: 13, text: '\r', unmodifiedText: '\r' });
     await dbg.sendCommand('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Enter', windowsVirtualKeyCode: 13 });
     // So khớp bỏ khoảng trắng: Business Suite gộp/bỏ dấu cách đầu dòng (vd dòng thụt lề "   Nội dung CK") nên so nguyên văn sẽ trượt.
@@ -744,17 +762,17 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
     for (let i = 0; i < (image ? 210 : 105); i++) {
       await sleep(150);
       if (tail) textOk ||= lsSent(); if (image) picOk ||= lsPic();
-      if (textOk && picOk) return done();
+      if (textOk && picOk) { mark('xac-nhan-goc'); return done(); }
       if (i % 6 === 5) {
         const r = await read();
         const mine = (r?.messages || []).filter(m => m.mine && m.text).slice(-3);
         textOk ||= mine.some(m => norm(m.text).includes(tail)); picOk ||= myPics(r) > picsBefore;
-        if (textOk && picOk) return { done: true, ...r };
+        if (textOk && picOk) { mark('xac-nhan-man-hinh'); return { done: true, ...r }; }
       }
     }
     if (textOk && !picOk) { await dumpPage(wc, 'gui-thieu-anh'); return { error: 'Chữ đã gửi, nhưng chưa thấy ảnh trong hội thoại. Kiểm tra cột Meta; nếu thiếu ảnh thì Copy ảnh và dán vào đó (đừng gửi lại cả tin để tránh lặp).' }; }
     return { error: 'Đã bấm gửi nhưng chưa thấy tin trong Business Suite — kiểm tra lại trong cột Meta trước khi gửi lại.' };
-  }, 1);
+  };
 
   // Điền sẵn trình soạn bài Business Suite. Trả về khi người dùng đã đăng/hẹn (trang rời khỏi trình soạn) hoặc sau 15 phút.
   // Trình soạn Business Suite (giao diện 11/2026): nút "Thêm ảnh/video" mở hộp chọn file, ô văn bản nằm trong
