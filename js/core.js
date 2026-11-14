@@ -957,8 +957,10 @@ if (window.metaDesktop?.version) (async () => {
   btn.hidden = true;
   // Kiểm tra ngầm khi mở app: có bản mới thì tải sẵn, nút đổi thành "Mở lại để lên x.y.z" (tắt app cũng tự cập nhật).
   window.metaDesktop.checkUpdate().then(r => { if (r.state === 'ready') { btn.dataset.ready = '1'; btn.hidden = false; btn.textContent = `Cập nhật ${r.version}`; btn.classList.add('btn-primary'); } }).catch(() => {});
+  // Đang mở app lâu: 30 phút kiểm tra lại một lần, nút luôn ghi bản mới nhất.
+  setInterval(() => window.metaDesktop.checkUpdate().then(r => { if (r.state === 'ready' && !btn.disabled) { btn.dataset.ready = '1'; btn.hidden = false; btn.textContent = `Cập nhật ${r.version}`; btn.classList.add('btn-primary'); } }).catch(() => {}), 30 * 60e3);
   btn.onclick = async () => {
-    if (btn.dataset.ready) return window.metaDesktop.installUpdate();
+    if (btn.dataset.ready) { btn.disabled = true; btn.textContent = 'Đang lấy bản mới nhất…'; return window.metaDesktop.installUpdate(); }
     btn.disabled = true; tag.textContent = 'Đang kiểm tra…';
     try {
       const r = await window.metaDesktop.checkUpdate();

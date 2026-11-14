@@ -381,12 +381,13 @@ app.whenReady().then(async () => {
     const u = getUpdater(), r = await u.checkForUpdates();
     if (!r?.isUpdateAvailable) return { state: 'latest' };
     await (r.downloadPromise || new Promise((ok, bad) => { u.once('update-downloaded', ok); u.once('error', bad); }));
-    return { state: 'ready', version: downloaded || r.updateInfo.version };
+    downloaded = r.updateInfo.version; // luôn là bản mới nhất vừa kiểm tra (không giữ bản tải từ lần trước)
+    return { state: 'ready', version: downloaded };
   };
   const checkUpdate = () => checking ||= (async () => {
     try {
-      if (downloaded) return { state: 'ready', version: downloaded };
-      try { return await checkOnce(); } catch { await sleep(5000); return await checkOnce(); }
+      // Luôn hỏi lại GitHub: đã tải sẵn bản cũ hơn mà có bản mới hơn thì tải bản mới (bản đã tải thì electron-updater dùng lại ngay).
+      try { return await checkOnce(); } catch { await sleep(5000); try { return await checkOnce(); } catch (e) { if (downloaded) return { state: 'ready', version: downloaded }; throw e; } }
     } finally { checking = null; }
   })();
   ipcMain.handle('app-version', () => app.getVersion());
@@ -397,8 +398,11 @@ app.whenReady().then(async () => {
   });
   // Cài im lặng rồi tự mở lại app: không hiện trình cài đặt, không phải bấm Next.
   // Đóng hẳn mọi cửa sổ trước (kể cả khung ẩn Business Suite / ChatGPT) để bộ cài ghi đè được file; còn tiến trình giữ file thì bộ cài hỏng giữa chừng.
-  ipcMain.handle('update-install', e => {
-    if (!fromPage(e) || !downloaded) return;
+  ipcMain.handle('update-install', async e => {
+    if (!fromPage(e)) return;
+    // Ngay trước khi cài: kiểm tra lại một lần để luôn lên bản mới nhất (có thể vừa phát hành thêm bản sau lúc tải sẵn).
+    await checkUpdate().catch(() => {});
+    if (!downloaded) return;
     for (const w of BrowserWindow.getAllWindows()) if (!w.isDestroyed()) w.destroy();
     getUpdater().quitAndInstall(true, true);
   });
