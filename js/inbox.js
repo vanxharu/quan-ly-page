@@ -239,6 +239,29 @@
     const d = await DB.get('bsList:' + p.id, null).catch(() => null);
     return d?.rows?.length && Date.now() - d.at < 3 * 864e5 ? bsConvs(p, d.rows, d.at) : [];
   }
+  // Đọc trước tin của 5 khách mới nhất mỗi Page (chạy nền trong khung ẩn của Page đó): bấm vào khách là hiện tin ngay.
+  // Chỉ đọc lại khách có tin cuối đổi. Xong thì mở lại hội thoại bạn đang xem (nếu cùng Page) để vẫn theo dõi trực tiếp.
+  const prefetching = new Set();
+  async function bsPrefetch(p, list) {
+    if (prefetching.has(p.id) || !window.metaDesktop?.readThread) return;
+    prefetching.add(p.id);
+    try {
+      const top = [...list].sort((a, b) => new Date(b.updated_time) - new Date(a.updated_time)).slice(0, 5);
+      let moved = false;
+      for (const c of top) {
+        if (S.conv?.id === c.id) continue; // đang xem: tự cập nhật trực tiếp rồi
+        const old = bsMsgCache.get(c.id) || await DB.get('bsMsg:' + c.id, null).catch(() => null);
+        if (old?.snippet === c.snippet && old.messages?.length) continue;
+        const r = await window.metaDesktop.readThread({ pageId: String(p.id), uid: c.uid, bg: true }).catch(() => null);
+        if (!r?.messages?.length) continue;
+        moved = true;
+        const keep = { snippet: c.snippet, messages: r.messages.filter(m => !/^blob:/.test(m.pic || '')).slice(-60) };
+        bsMsgCache.set(c.id, keep); DB.set('bsMsg:' + c.id, keep).catch(() => {});
+      }
+      const cur = S.conv;
+      if (moved && cur?.bs && cur.page.id === p.id) window.metaDesktop.readThread({ pageId: String(p.id), uid: cur.uid, bg: true }).catch(() => {});
+    } finally { prefetching.delete(p.id); }
+  }
   async function bsThreads(p, { force = false } = {}) {
     if (!window.metaDesktop?.listThreads) return null;
     const hit = bsCache.get(p.id);
@@ -264,6 +287,7 @@
     }
     bsNotified.set(p.id, true);
     bsCache.set(p.id, { at: Date.now(), list });
+    setTimeout(() => bsPrefetch(p, list).catch(() => {}), 500);
     return list;
   }
   // Hội thoại từ Business Suite: app đọc tin trong khung ẩn và hiện ngay trong khung chat; gửi tin cũng qua khung ẩn
@@ -292,7 +316,7 @@
     // Đọc lại ngầm mà không có gì mới: không vẽ lại (giữ chỗ cuộn, không nháy).
     const sig = JSON.stringify(r.messages || []);
     if (silent && !older && c.bsSig === sig) return;
-    if (!older) { c.bsSig = sig; const keep = { messages: (r.messages || []).filter(m => !/^blob:/.test(m.pic || '')).slice(-60) }; bsMsgCache.set(c.id, keep); DB.set('bsMsg:' + c.id, keep).catch(() => {}); }
+    if (!older) { c.bsSig = sig; const keep = { snippet: c.snippet, messages: (r.messages || []).filter(m => !/^blob:/.test(m.pic || '')).slice(-60) }; bsMsgCache.set(c.id, keep); DB.set('bsMsg:' + c.id, keep).catch(() => {}); }
     drawBs(c, r, older ? { silent: true, keepTop: true } : { silent, older });
     S.messages = (r.messages || []).filter(m => !m.sep).map(m => ({ isCustomer: !m.mine, text: m.text || '' }));
     clearIfSent(c, r.messages || []);

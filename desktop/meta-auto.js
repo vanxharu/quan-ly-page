@@ -521,7 +521,7 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
     const wc = slot(args.pageId).win.webContents;
     if (args.older) { await wc.executeJavaScript(`(${readMessages})(true)`).catch(() => {}); await sleep(2500); }
     return await wc.executeJavaScript(`(${readMessages})(false)`).catch(() => null) || { error: 'Không đọc được tin.' };
-  }, 1);
+  }, args.bg ? 0 : 1); // đọc trước (nền) nhường việc bạn đang chờ
   // Gửi tin như người dùng gõ trong Business Suite (không qua API → không bị giới hạn của app chưa duyệt).
   const sendThread = args => !threadArgs(args) ? Promise.resolve({ error: 'Thiếu Page hoặc khách.' }) : queue(args.pageId, async () => {
     const text = String(args.text || '').trim(), image = args.image || '';
