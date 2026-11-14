@@ -509,7 +509,9 @@
       if (r.error) throw new Error(r.error === 'login' ? 'Chưa đăng nhập Business Suite trong app.' : r.error);
       if (tpl) await App.recordTemplateUse(tpl, c.key);
       c.fromCustomer = false;
-      if (S.conv === c) { if (!pending && $('ibText').value.trim() === text && S.image === image) { $('ibText').value = ''; S.image = ''; S.tpl = null; drawAttach(); await saveDraft(); } drawBs(c, r); }
+      if (S.conv === c) { if (!pending && $('ibText').value.trim() === text && S.image === image) { $('ibText').value = ''; S.image = ''; S.tpl = null; drawAttach(); await saveDraft(); }
+        // Gửi thẳng (không mở hội thoại trong khung gửi) có thể không kèm danh sách tin → đọc lại để thấy tin vừa gửi.
+        if (r.messages?.length) drawBs(c, r); else { pending?.remove(); pending = null; c.bsSig = ''; openBs(c, { silent: true }).catch(() => {}); } }
       pending?.remove();
       bsCache.delete(c.page.id);
     } catch (e) {

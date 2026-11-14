@@ -328,6 +328,11 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
     const dbg = wc.debugger, pending = new Map();
     dbg.on('message', (_e, method, params) => {
       // Gói tin Business Suite gửi lên Meta (qua WebSocket) trong lúc app gửi tin → ghi mẫu để làm "gửi thẳng" (không bấm nút).
+      if (method === 'Network.webSocketFrameSent' && params.response?.opcode === 2) { // học app_id / version_id của Business Suite (đổi theo bản web) để gửi thẳng
+        const t = Buffer.from(String(params.response.payloadData || ''), 'base64').toString('utf8');
+        if (t.includes('/ls_req')) { const a = t.match(/"app_id":"(\d+)"/), v = t.match(/version_id\\":\\"(\d+)/) || t.match(/\\"version\\":(\d+)/), g = t.match(/sync_group\\\\\\":(\d+)/);
+          const c = lsStore(pageId).lsCfg ||= {}; if (a) c.app = a[1]; if (v) c.ver = v[1]; if (g) c.group = g[1]; c.at = Date.now(); c.wc = wc; }
+      }
       if (method === 'Network.webSocketFrameSent' && Date.now() < (lsStore(pageId).capture || 0)) {
         const f = params.response || {}, raw = f.opcode === 2 ? Buffer.from(String(f.payloadData || ''), 'base64') : Buffer.from(String(f.payloadData || ''), 'utf8');
         if (raw.length > 40 && raw.includes('/ls_req') && !raw.includes('"type":2')) sentSample(pageId, { at: new Date().toISOString(), opcode: f.opcode, bytes: raw.length, text: raw.toString('utf8').replace(/[\x00-\x08\x0e-\x1f]/g, '·').slice(0, 20000), b64: raw.length < 60000 ? raw.toString('base64') : '' });
@@ -752,6 +757,29 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
     return await wc.executeJavaScript(`(${readMessages})(false)`).catch(() => null) || { error: 'Không đọc được tin.' };
   }, args.bg ? 0 : 1); // đọc trước (nền) nhường việc bạn đang chờ
   // Gửi tin như người dùng gõ trong Business Suite (không qua API → không bị giới hạn của app chưa duyệt).
+  // ── Gửi thẳng tin CHỮ qua kết nối Lightspeed của Business Suite (đúng gói "label 46" mà Business Suite gửi khi bạn bấm Gửi) ──
+  // Không cần mở hội thoại, gõ chữ hay bấm nút → thường < 1 giây. Mã otid/epoch = giờ(ms) << 22 | số ngẫu nhiên (như Business Suite).
+  // Gói MQTT PUBLISH QoS1 lên chủ đề /ls_req; mã gói = request_id (dùng dải số cao để không trùng bộ đếm của trang).
+  const snow = () => String(BigInt(Date.now()) * 4194304n + BigInt(Math.floor(Math.random() * 4194304)));
+  async function directSend(wc, pageId, uid, text) {
+    const cfg = lsStore(pageId).lsCfg;
+    if (!cfg?.app || !cfg?.ver) return 'chưa học được app_id/version_id';
+    const req = 40000 + Math.floor(Math.random() * 25000);
+    const task = { failure_count: null, label: '46', payload: `{"thread_id":${uid},"otid":"${snow()}","source":4456448,"send_type":1,"sync_group":${Number(cfg.group) || 205},"mark_thread_read":1,"text":${JSON.stringify(text)}}`,
+      queue_name: String(uid), task_id: req };
+    const payload = `{"epoch_id":${snow()},"tasks":[${JSON.stringify(task)}],"version_id":"${cfg.ver}"}`;
+    const body = JSON.stringify({ app_id: cfg.app, payload, request_id: req, type: 3 });
+    return wc.executeJavaScript(`(() => { const body = ${JSON.stringify(body)}, pid = ${req};
+      const ws = (window.__gaWS || []).filter(w => w.readyState === 1 && /chat|gateway|edge/i.test(w.url || '')).pop();
+      if (!ws) return 'chưa bám được kết nối (' + (window.__gaWS || []).length + ' socket)';
+      const enc = new TextEncoder(), topic = enc.encode('/ls_req'), data = enc.encode(body);
+      const rest = 2 + topic.length + 2 + data.length, len = []; let n = rest; do { let b = n % 128; n = Math.floor(n / 128); if (n) b |= 128; len.push(b); } while (n);
+      const out = new Uint8Array(1 + len.length + rest); let i = 0;
+      out[i++] = 0x32; for (const b of len) out[i++] = b;
+      out[i++] = topic.length >> 8; out[i++] = topic.length & 255; out.set(topic, i); i += topic.length;
+      out[i++] = pid >> 8; out[i++] = pid & 255; out.set(data, i);
+      ws.send(out); return 'ok'; })()`).catch(e => 'lỗi: ' + e.message);
+  }
   // Nhật ký thời gian gửi (Downloads/GetHelps-debug/gui-tin.json, 20 lần gần nhất): chờ hàng đợi, mở hội thoại, đính ảnh, xác nhận…
   const sendLog = [];
   const writeSendLog = e => { try { sendLog.unshift(e); sendLog.splice(20); const dir = path.join(app.getPath('downloads'), 'GetHelps-debug'); fs.mkdirSync(dir, { recursive: true });
@@ -759,12 +787,29 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
   const sendThread = args => { const T = { at: new Date().toISOString(), anh: !!args.image, kb: args.image ? Math.round(String(args.image).length * 0.75 / 1024) : 0, chu: String(args.text || '').length, buoc: {} }, t0 = Date.now();
     const mark = k => { T.buoc[k] = (Date.now() - t0) / 1000; };
     if (!threadArgs(args)) return Promise.resolve({ error: 'Thiếu Page hoặc khách.' });
-    return sendQueue(args.pageId, ss => { mark('hang-doi'); T.khung = ss.send ? 'gui' : 'doc'; return sendCore(args, mark, ss); }, 1).then(r => { mark('xong'); T.ketqua = r?.error ? 'lỗi: ' + String(r.error).slice(0, 80) : 'ok'; T.cach = attachImage.last?.tried?.slice(-1)[0] || ''; writeSendLog(T); return r; },
+    return sendQueue(args.pageId, ss => { mark('hang-doi'); T.khung = ss.send ? 'gui' : 'doc'; return sendCore(args, mark, ss); }, 1).then(r => { mark('xong'); T.ketqua = r?.error ? 'lỗi: ' + String(r.error).slice(0, 80) : 'ok'; T.cach = args.image ? attachImage.last?.tried?.slice(-1)[0] || '' : sendCore.how || 'nut'; sendCore.how = ''; writeSendLog(T); return r; },
       e => { mark('xong'); T.ketqua = 'lỗi: ' + e.message; writeSendLog(T); throw e; });
   };
   const sendCore = async (args, mark, sl) => {
     const text = String(args.text || '').trim(), image = args.image || '';
     if (!text && !image) return { error: 'Thiếu nội dung.' };
+    // Tin chỉ có chữ: thử gửi thẳng trước; Meta xác nhận (tin của Page về qua dữ liệu gốc) trong 4 giây thì xong. Không được thì gõ + bấm Gửi như cũ.
+    if (!image && sl.send) {
+      const nn = t => String(t || '').normalize('NFC').replace(/[^\p{L}\p{N}]/gu, '').toLowerCase(), want = nn(text), t1 = Date.now();
+      const echoed = () => [...(lsStore(args.pageId).msgs.get(String(args.uid))?.values() || [])].some(m => m.ts >= t1 - 3000 && want && nn(m.text).includes(want.slice(0, 40)));
+      const r = await directSend(sl.win.webContents, String(args.pageId), String(args.uid), text);
+      mark('gui-thang'); sendCore.how = 'thang: ' + r;
+      if (r === 'ok') {
+        for (let i = 0; i < 40 && !echoed(); i++) await sleep(100);
+        if (echoed()) { mark('xac-nhan-goc'); const lr = lsMessages(args.pageId, args.uid);
+          return { done: true, direct: true, ...(lsStore(args.pageId).loaded.has(String(args.uid)) && lr.length ? { messages: lr, source: 'ls' } : {}) }; }
+        sendCore.how = 'thang: không thấy Meta xác nhận';
+        // Có thể tin đã đi mà xác nhận chậm: chờ thêm 2 giây trước khi gửi lại bằng cách bấm nút (tránh gửi 2 lần).
+        for (let i = 0; i < 20 && !echoed(); i++) await sleep(100);
+        if (echoed()) { mark('xac-nhan-goc'); return { done: true, direct: true }; }
+      }
+    }
+    sendCore.how = sendCore.how || '';
     let ok = await openThreadHidden(String(args.pageId), String(args.uid), sl);
     mark('mo-hoi-thoai');
     if (ok !== true) return { error: ok === 'login' ? 'login' : 'Không mở được hội thoại trong Business Suite.' };
