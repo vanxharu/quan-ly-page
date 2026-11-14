@@ -339,3 +339,4 @@ td.num.neg{font-weight:700}
 [data-panel=inbox] .list>.item{padding:9px 10px}
 [data-panel=inbox] #ibLabel{max-width:76px;text-overflow:ellipsis}
 [data-panel=inbox] #ibLabel.on{border-color:var(--primary);color:var(--primary);background:var(--primary-soft);font-weight:700}
+[data-panel=inbox] .ib-pending{opacity:.6}[data-panel=inbox] .ib-pending .hint{font-size:10px;align-self:flex-end}

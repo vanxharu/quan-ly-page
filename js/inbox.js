@@ -462,6 +462,13 @@
   async function sendBs(c, text) {
     const image = S.image, tpl = S.tpl;
     S.sending = true; updateSendState();
+    // Tin chỉ có chữ: xoá ô nhập + hiện tin "Đang gửi…" ngay, không chờ Business Suite xác nhận; lỗi thì trả chữ lại ô nhập.
+    let pending = null;
+    if (!image && text && S.conv === c) {
+      $('ibText').value = ''; S.tpl = null; saveDraft();
+      pending = h('div', { className: 'msgrow me ib-pending' }, h('div', { className: 'msg me', textContent: text }), h('span', { className: 'hint', textContent: 'Đang gửi…' }));
+      $('ibThread').append(pending); $('ibThread').scrollTop = $('ibThread').scrollHeight;
+    }
     try {
       const data = image ? await asDataUrl(image).catch(() => { throw new Error('Không đọc được ảnh đính kèm.'); }) : '';
       const r = await window.metaDesktop.sendThread({ pageId: String(c.page.id), uid: c.uid, text, image: data });
@@ -470,10 +477,12 @@
       if (r.error) throw new Error(r.error === 'login' ? 'Chưa đăng nhập Business Suite trong app.' : r.error);
       if (tpl) await App.recordTemplateUse(tpl, c.key);
       c.fromCustomer = false;
-      if (S.conv === c) { if ($('ibText').value.trim() === text && S.image === image) { $('ibText').value = ''; S.image = ''; S.tpl = null; drawAttach(); await saveDraft(); } drawBs(c, r); }
+      if (S.conv === c) { if (!pending && $('ibText').value.trim() === text && S.image === image) { $('ibText').value = ''; S.image = ''; S.tpl = null; drawAttach(); await saveDraft(); } drawBs(c, r); }
+      pending?.remove();
       bsCache.delete(c.page.id);
     } catch (e) {
       S.sendError = e.message;
+      if (pending) { pending.remove(); if (S.conv === c && !$('ibText').value.trim() && !/^Đã bấm gửi/.test(e.message)) { $('ibText').value = text; S.tpl = tpl; saveDraft(); } }
       // Có khi tin đã đi mà app chưa nhận ra: đọc lại hội thoại để bạn thấy ngay, rồi mới hiện lỗi.
       if (S.conv === c) { c.bsSig = ''; await openBs(c, { silent: true }).catch(() => {}); }
       if (S.conv === c) $('ibThread').append(h('div', { className: 'status err' }, e.message));

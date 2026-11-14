@@ -681,7 +681,7 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
     const comp = await findComposer(wc, image ? 2000 : 10000);
     if (!comp) { const why = await whyNoComposer(wc), dir = await dumpPage(wc, 'khong-o-nhap'); if (dir) return { error: `Không thấy ô nhập tin trong Business Suite.${why ? ' Meta báo: ' + why + '.' : ''} Đã lưu ảnh chụp vào ${dir}` }; return { error: `Business Suite không cho trả lời hội thoại này (không có ô nhập tin).${why ? ' Meta báo: ' + why + '.' : ''} Thường do khách nhắn lần cuối đã quá 7 ngày: chờ khách nhắn lại, hoặc liên hệ qua Zalo/SĐT.` }; }
     if (!await mouse(wc, { selector: '[data-ga-editor]' })) return { error: `Không bấm được ô nhập tin của Business Suite. [${describe(comp)}]` };
-    await sleep(300);
+    await sleep(120);
     const lines = text ? text.split('\n') : [];
     for (const [i, line] of lines.entries()) {
       if (i) { // xuống dòng trong cùng một tin
@@ -690,19 +690,29 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
       }
       if (line) await dbg.sendCommand('Input.insertText', { text: line });
     }
-    await sleep(300);
+    await sleep(image ? 300 : 100);
+    const t0 = Date.now();
     await dbg.sendCommand('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Enter', windowsVirtualKeyCode: 13, text: '\r', unmodifiedText: '\r' });
     await dbg.sendCommand('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Enter', windowsVirtualKeyCode: 13 });
     // So khớp bỏ khoảng trắng: Business Suite gộp/bỏ dấu cách đầu dòng (vd dòng thụt lề "   Nội dung CK") nên so nguyên văn sẽ trượt.
     const norm = t => String(t || '').replace(/\s+/g, '').toLowerCase();
     const tail = norm(lines.filter(l => l.trim()).pop()).slice(-40);
     let textOk = !tail, picOk = !image;
-    for (let i = 0; i < (image ? 40 : 20); i++) { // ảnh tải lên lâu hơn chữ
-      await sleep(800);
-      const r = await read();
-      const mine = (r?.messages || []).filter(m => m.mine && m.text).slice(-3);
-      textOk ||= mine.some(m => norm(m.text).includes(tail)); picOk ||= myPics(r) > picsBefore;
-      if (textOk && picOk) return { done: true, ...r };
+    // Xác nhận nhanh: dữ liệu gốc của Meta (WebSocket) báo tin của Page vừa gửi trong hội thoại này → xong ngay (thường < 1 giây).
+    // Đọc màn hình chỉ là dự phòng (mỗi ~0,9 giây). Tối đa ~16 giây chữ / ~32 giây có ảnh.
+    const lsSent = () => [...(lsStore(args.pageId).msgs.get(String(args.uid))?.values() || [])].some(m => m.mine && m.ts >= t0 - 5000 && (tail ? norm(m.text).includes(tail) : !!m.pic));
+    const lsPic = () => [...(lsStore(args.pageId).msgs.get(String(args.uid))?.values() || [])].some(m => m.mine && m.pic && m.ts >= t0 - 5000);
+    const done = async () => { const lr = lsMessages(args.pageId, args.uid); if (lsStore(args.pageId).loaded.has(String(args.uid)) && lr.length) return { done: true, messages: lr, source: 'ls' }; return { done: true, ...(await read()) }; };
+    for (let i = 0; i < (image ? 210 : 105); i++) {
+      await sleep(150);
+      if (tail) textOk ||= lsSent(); if (image) picOk ||= lsPic();
+      if (textOk && picOk) return done();
+      if (i % 6 === 5) {
+        const r = await read();
+        const mine = (r?.messages || []).filter(m => m.mine && m.text).slice(-3);
+        textOk ||= mine.some(m => norm(m.text).includes(tail)); picOk ||= myPics(r) > picsBefore;
+        if (textOk && picOk) return { done: true, ...r };
+      }
     }
     if (textOk && !picOk) { await dumpPage(wc, 'gui-thieu-anh'); return { error: 'Chữ đã gửi, nhưng chưa thấy ảnh trong hội thoại. Kiểm tra cột Meta; nếu thiếu ảnh thì Copy ảnh và dán vào đó (đừng gửi lại cả tin để tránh lặp).' }; }
     return { error: 'Đã bấm gửi nhưng chưa thấy tin trong Business Suite — kiểm tra lại trong cột Meta trước khi gửi lại.' };
