@@ -661,7 +661,7 @@
   const KIND_HEAD = { quote: 'BÁO GIÁ · CHỜ THANH TOÁN', paid: 'ĐÃ NHẬN THANH TOÁN · ĐƠN ĐANG CHẠY', progress: 'CẬP NHẬT TIẾN ĐỘ ĐƠN HÀNG', new: 'XÁC NHẬN ĐƠN HÀNG' };
   // Đơn nhiều dịch vụ: từng dòng (tên · số lượng · tiền), link riêng nếu khác link chung, đơn đã tạo thì kèm tiến độ.
   const multi = o => (o.lines?.length || 0) > 1;
-  const lineText = (o, l, i) => `${i + 1}. ${l.displayName} · ${Number(l.qty).toLocaleString('vi-VN')} · ${money(l.sell)}${l.link && l.link !== o.link ? ` · ${l.link}` : ''}${l.order ? ` · ${progressLine(l.order)}` : ''}`;
+  const lineText = (o, l, i) => `${i + 1}. ${l.displayName} · ${Number(l.qty).toLocaleString('vi-VN')}${Number(l.sell) ? ` · ${money(l.sell)}` : ''}${l.link && l.link !== o.link ? ` · ${l.link}` : ''}${l.order ? ` · ${progressLine(l.order)}` : ''}`;
   function invoiceText(o, inv, kind) {
     const q = qtyOf(o), name = o.displayName || o.items?.[0]?.name || 'Dịch vụ';
     const L = [`${kind === 'quote' && o.renewOf ? '🔔 GIA HẠN DỊCH VỤ' : KIND_TITLE[kind] || KIND_TITLE.new} #${payCode(o)}`,
@@ -819,15 +819,20 @@
     // Sửa tay từng dòng khi tạo đơn: số lượng, link, bình luận, tên khách thấy. Chỉ dùng cho đơn Baostar lần này — báo giá đã lưu và tiền khách không đổi
     // (đổi số lượng thì giá gốc / lãi tính lại theo số mới).
     const edits = new Map(), opened = new Set();
+    // Tách / thêm lúc tạo đơn: mỗi phần là 1 đơn Baostar riêng (máy chủ, link, số lượng riêng). Phần thêm không tính tiền khách (sell 0)
+    // → tổng tiền khách giữ nguyên, giá gốc / lãi tính theo các phần thực tạo.
+    const extras = [];
+    const isExtra = l => extras.some(x => x.id === l.id);
     const eff = l => { const e = edits.get(l.id); return !e || l.done ? l : { ...l, ...e, ...(e.qty != null && Number(e.qty) !== Number(l.qty) ? { costManual: false } : {}) }; };
     let balance = null, busy = false;
     const sid = l => alt.get(l.id) || String(l.serviceId);
     const svcOf = l => list.find(x => x.id === sid(l));
-    const lines = () => linesOf(q).map(eff);
-    const setEdit = (l, k, v) => { const base = linesOf(q).find(y => y.id === l.id) || {}, e = { ...(edits.get(l.id) || {}) };
+    const lines = () => [...linesOf(q).map(eff), ...extras.filter(x => !linesOf(q).some(y => y.id === x.id))];
+    const setEdit = (l, k, v) => { const ex = extras.find(x => x.id === l.id); if (ex) { ex[k] = k === 'qty' ? Math.max(0, Math.round(Number(v) || 0)) : v; return; }
+      const base = linesOf(q).find(y => y.id === l.id) || {}, e = { ...(edits.get(l.id) || {}) };
       if (String(v) === String(base[k] ?? '')) delete e[k]; else e[k] = k === 'qty' ? Math.max(0, Math.round(Number(v) || 0)) : v;
       if (Object.keys(e).length) edits.set(l.id, e); else edits.delete(l.id); };
-    const editForm = l => { const x = svcOf(l), base = linesOf(q).find(y => y.id === l.id) || l;
+    const editForm = l => { const x = svcOf(l), base = linesOf(q).find(y => y.id === l.id) || l, extra = isExtra(l);
       const inp = (k, label, attrs = {}) => h('label', { className: 'field', style: attrs.style || '' }, label,
         h(attrs.area ? 'textarea' : 'input', { ...(attrs.area ? { rows: 4 } : { type: attrs.type || 'text' }), value: l[k] ?? '', ...(attrs.min ? { min: attrs.min } : {}),
           oninput: e => setEdit(l, k, e.target.value), onchange: () => draw() }));
@@ -838,8 +843,9 @@
         inp('link', 'Link'),
         x && needsComments(x) ? inp('comments', 'Nội dung bình luận (mỗi dòng 1 bình luận)', { area: true }) : null,
         h('div', { className: 'row', style: 'gap:8px;align-items:center' },
-          h('span', { className: 'hint', style: 'flex:1', textContent: `Gốc: ${base.displayName} · ${Number(base.qty).toLocaleString('vi-VN')} · ${base.link}. Tiền khách giữ nguyên; chỉ dùng khi tạo đơn lần này (báo giá không đổi).` }),
-          edits.has(l.id) ? h('button', { type: 'button', className: 'btn btn-ghost btn-sm', textContent: 'Hoàn tác', onclick: () => { edits.delete(l.id); draw(); } }) : null,
+          h('span', { className: 'hint', style: 'flex:1', textContent: extra ? 'Phần tách / thêm: tạo thành 1 đơn Baostar riêng, không tính thêm tiền khách. Đổi máy chủ ở nút bên trên.'
+            : `Gốc: ${base.displayName} · ${Number(base.qty).toLocaleString('vi-VN')} · ${base.link}. Tiền khách giữ nguyên; chỉ dùng khi tạo đơn lần này (báo giá không đổi).` }),
+          !extra && edits.has(l.id) ? h('button', { type: 'button', className: 'btn btn-ghost btn-sm', textContent: 'Hoàn tác', onclick: () => { edits.delete(l.id); draw(); } }) : null,
           h('button', { type: 'button', className: 'btn btn-soft btn-sm', textContent: 'Xong', onclick: () => { opened.delete(l.id); draw(); } }))); };
     let checking = false;
     const cat = await DB.get(WEBCAT, null);
@@ -863,11 +869,18 @@
         return h('div', { className: 'svc-line' + (l.done ? ' done' : why ? ' bad' : '') },
           h('span', { className: 'svc-line-no', textContent: String(i + 1) }), x ? platBadge(x.platform, 20) : null,
           h('span', { className: 'cp-main' }, h('span', { className: 'cp-title', textContent: `${l.displayName} · ${Number(l.qty).toLocaleString('vi-VN')}` }),
-            h('span', { className: 'cp-sub', textContent: `MC ${sid(l)}${alt.has(l.id) ? ' (đã đổi)' : ''} · ${l.link}${edits.has(l.id) && !l.done ? ' · ✏ đã sửa' : ''}` }),
+            h('span', { className: 'cp-sub', textContent: `${l.extra ? '⑂ phần thêm · ' : ''}MC ${sid(l)}${alt.has(l.id) ? ' (đã đổi)' : ''} · ${l.link}${edits.has(l.id) && !l.done ? ' · ✏ đã sửa' : ''}` }),
             l.error && !l.done ? h('span', { className: 'neg hint', textContent: 'Lỗi lần trước: ' + l.error }) : null,
             why ? h('span', { className: 'neg hint', textContent: '✗ ' + why }) : null),
           h('span', { className: 'status svc-pill ' + (l.done ? 'ok' : cls), textContent: checking && !l.done ? '…' : st }),
           l.done ? null : h('span', { className: 'row', style: 'gap:4px;flex:none' },
+            h('button', { type: 'button', className: 'btn btn-ghost btn-sm', textContent: '⑂ Tách', title: 'Chia dòng này thành 2 đơn (khác máy chủ / link / số lượng)', disabled: busy, onclick: () => {
+              const n = Number(l.qty) || 0, half = Math.floor(n / 2);
+              if (!isExtra(l) && n > 1) setEdit(l, 'qty', n - half); else if (isExtra(l) && n > 1) l.qty = n - half;
+              const part = { ...l, id: uid('ln'), qty: half || n, sell: 0, listPrice: 0, cost: 0, costManual: false, done: null, error: '', extra: true };
+              if (alt.has(l.id)) alt.set(part.id, alt.get(l.id));
+              extras.splice(extras.indexOf(extras.find(x => x.id === l.id)) + 1 || extras.length, 0, part); opened.add(part.id); draw(); } }),
+            isExtra(l) ? h('button', { type: 'button', className: 'btn btn-ghost btn-sm', textContent: '✕', title: 'Bỏ phần này', disabled: busy, onclick: () => { extras.splice(extras.findIndex(x => x.id === l.id), 1); opened.delete(l.id); alt.delete(l.id); draw(); } }) : null,
             h('button', { type: 'button', className: 'btn btn-ghost btn-sm' + (opened.has(l.id) ? ' on' : ''), textContent: '✏ Sửa', title: 'Sửa số lượng, link, bình luận, tên khách thấy', disabled: busy,
               onclick: () => { if (opened.has(l.id)) opened.delete(l.id); else opened.add(l.id); draw(); } }),
             h('button', { type: 'button', className: 'btn btn-ghost btn-sm', textContent: 'Đổi máy chủ', disabled: busy, onclick: async () => {
@@ -908,7 +921,9 @@
         const fresh = (await quotes()).find(y => y.id === q.id);
         if (!fresh) { dlg.close(); App.tabs.services?.refresh?.(); return toast('Báo giá này đã được tạo đơn hoặc đã huỷ.', 7000); }
         if (fresh.creatingAt && Date.now() - fresh.creatingAt < 180e3) return toast('Báo giá này đang được tạo đơn ở cửa sổ khác. Đợi vài giây rồi xem lại danh sách.', 7000);
-        q = fresh; q.lines = linesOf(q); q.creatingAt = Date.now(); await saveQuote(q);
+        q = fresh; q.lines = linesOf(q);
+        for (const x of extras) if (!q.lines.some(y => y.id === x.id) && todo.some(t => t.id === x.id)) { const { extra, ...keep } = x; q.lines.push({ ...keep, serviceId: sid(x), split: true }); } // phần tách / thêm thành dòng thật (thử lại không tạo trùng)
+        q.creatingAt = Date.now(); await saveQuote(q);
         const multi = !!fresh.lines?.length;
         for (const l of q.lines) {
           if (l.done || !todo.some(t => t.id === l.id)) continue;
@@ -947,7 +962,14 @@
     dlg.append(h('div', { className: 'card-head' }, h('h3', { className: 'card-title', textContent: `Kiểm tra & tạo đơn · ${q.payCode}` }),
         h('button', { type: 'button', className: 'icon-btn', 'aria-label': 'Đóng', textContent: '×', onclick: () => dlg.close() })),
       h('p', { className: 'hint', textContent: `${q.customer?.name || 'Khách'} · ${lines().length} dịch vụ · mỗi dòng là 1 đơn Baostar` }),
-      box, checks, err,
+      box,
+      h('div', { className: 'row', style: 'gap:6px;margin:-2px 0 4px' }, h('button', { type: 'button', className: 'btn btn-soft btn-sm', textContent: '＋ Thêm dịch vụ / máy chủ', title: 'Thêm 1 đơn Baostar nữa vào lần tạo này (không tính thêm tiền khách)',
+        onclick: async () => { if (busy) return; const v = await pickServerDialog(list.filter(y => stateOf(y)[1] !== 'err'), ''); if (!v) return; const x = list.find(y => y.id === v), first = linesOf(q)[0] || {};
+          const part = { id: uid('ln'), serviceId: v, serviceName: x?.name || '', displayName: x?.category || x?.name || 'Dịch vụ', link: first.link || q.link || '', qty: x?.min || 100, sell: 0, cost: 0, listPrice: 0,
+            costManual: false, comments: '', packageId: '', termMonths: 0, extra: true };
+          extras.push(part); opened.add(part.id); draw(); } }),
+        h('span', { className: 'hint', textContent: '⑂ Tách: chia 1 dòng ra nhiều máy chủ / link / số lượng. Tiền khách không đổi.' })),
+      checks, err,
       h('div', { className: 'row', style: 'gap:8px;justify-content:flex-end' }, h('button', { type: 'button', className: 'btn btn-ghost', textContent: 'Để sau', onclick: () => dlg.close() }), btn));
     document.body.append(dlg); dlg.showModal(); draw();
   }
