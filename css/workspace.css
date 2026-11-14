@@ -250,10 +250,10 @@ td.num.neg{font-weight:700}
 .svc-react-cell input{width:100%}
 /* Hộp thư gọn (11/2026): thanh lọc một hàng + menu ⋯, đầu hội thoại một dòng, nút tải thêm nhỏ, không dòng phím tắt */
 [data-panel=inbox] .split>.card:first-child{display:flex;flex-direction:column}
-[data-panel=inbox] .ib-toolbar{display:flex;align-items:center;gap:6px;margin:10px 0 6px;flex-wrap:nowrap;min-width:0}
-[data-panel=inbox] .ib-toolbar .chips{display:flex;gap:4px;flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none;min-width:0;flex:1}
-[data-panel=inbox] .ib-toolbar .chip{min-height:26px;padding:3px 9px;font-size:11px;white-space:nowrap;flex:none}
-[data-panel=inbox] #ibLabel{width:auto;max-width:96px;height:28px;min-height:0;line-height:1.2;padding:2px 6px;font-size:11px;flex:none;border-radius:8px}
+[data-panel=inbox] .ib-toolbar{display:flex;align-items:center;gap:5px;margin:10px 0 6px;flex-wrap:wrap;min-width:0}
+[data-panel=inbox] .ib-toolbar .chips{display:flex;gap:3px;flex-wrap:nowrap;flex:0 1 auto;margin-right:auto}
+[data-panel=inbox] .ib-toolbar .chip{min-height:26px;padding:3px 6px;font-size:10.5px;white-space:nowrap;flex:none}
+[data-panel=inbox] #ibLabel{width:auto;max-width:72px;height:28px;min-height:0;line-height:1.2;padding:2px 6px;font-size:11px;flex:none;border-radius:8px}
 [data-panel=inbox] .ib-menu{position:relative;flex:none}
 [data-panel=inbox] .ib-menu>summary{list-style:none;cursor:pointer;width:28px;height:28px;display:grid;place-items:center;border:1px solid var(--border);border-radius:8px;color:var(--text-secondary);font-size:15px;line-height:1;user-select:none}
 [data-panel=inbox] .ib-menu>summary::-webkit-details-marker{display:none}
@@ -267,7 +267,9 @@ td.num.neg{font-weight:700}
 [data-panel=inbox] .ib-pf::after{content:'';position:absolute;left:0;right:0;bottom:0;height:2px;border-radius:2px;background:var(--border)}
 [data-panel=inbox] .ib-pf>i{position:absolute;left:0;bottom:0;height:2px;border-radius:2px;background:var(--primary);z-index:1;transition:width .3s}
 [data-panel=inbox] .list{flex:1 1 auto}
-[data-panel=inbox] .list>.item{flex:none;min-height:0;padding:10px}
+[data-panel=inbox] .list{display:flex;flex-direction:column}
+[data-panel=inbox] .list>*{flex:none}
+[data-panel=inbox] .list>.item{min-height:auto;padding:10px}
 [data-panel=inbox] .item .tags{margin-top:5px}
 [data-panel=inbox] .tags:empty{display:none}
 [data-panel=inbox] .ib-more{all:unset;cursor:pointer;align-self:center;margin-top:6px;padding:5px 12px;border-radius:999px;font-size:11px;color:var(--text-secondary)}

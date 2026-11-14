@@ -501,7 +501,7 @@
     S.crm = await App.crm.all();
     const labels = await App.crm.allLabels();
     const cur = $('ibLabel').value;
-    $('ibLabel').replaceChildren(h('option', { value: '', textContent: 'Mọi nhãn' }), ...labels.map(l => h('option', { value: l, textContent: l, selected: l === cur })));
+    $('ibLabel').replaceChildren(h('option', { value: '', textContent: 'Nhãn' }), ...labels.map(l => h('option', { value: l, textContent: l, selected: l === cur })));
     S.errorPages = errorPages; S.errors = errors;
     // Hội thoại đang mở có tin mới → đọc lại luôn.
     const fresh = S.conv && S.convs.find(c => c.id === S.conv.id);
