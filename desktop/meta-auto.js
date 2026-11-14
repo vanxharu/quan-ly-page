@@ -315,6 +315,9 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
     if (!wc || wc.__gaLight) return; wc.__gaLight = true;
     const dbg = wc.debugger, pending = new Map();
     dbg.on('message', (_e, method, params) => {
+      // Ảnh đang tải lên Meta (để chỉ bấm Gửi khi ảnh đã lên xong).
+      if (method === 'Network.requestWillBeSent' && /upload|rupload/i.test(params.request?.url || '') && /POST|PUT/i.test(params.request?.method || '')) { const up = lsStore(pageId).uploads ||= new Map(); up.set(params.requestId, Date.now()); }
+      else if ((method === 'Network.loadingFinished' || method === 'Network.loadingFailed') && lsStore(pageId).uploads?.delete(params.requestId)) lsStore(pageId).uploadsDone = Date.now();
       if (method === 'Fetch.requestPaused') dbg.sendCommand('Fetch.failRequest', { requestId: params.requestId, errorReason: 'BlockedByClient' }).catch(() => {});
       else if (method === 'Network.webSocketFrameReceived' && (lsStore(pageId).frames = (lsStore(pageId).frames || 0) + 1)) { const f = params.response || {}; const raw = f.opcode === 2 ? Buffer.from(String(f.payloadData || ''), 'base64').toString('utf8') : String(f.payloadData || ''); if (/ls_resp|upsertMessage|deleteThenInsert/.test(raw)) lsGot(pageId, raw); }
       else if (method === 'Network.responseReceived' && /\/api\/graphql|lightspeed|ls_req/i.test(params.response?.url || '')) pending.set(params.requestId, params.response.url);
@@ -687,16 +690,22 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
   const threadArgs = ({ pageId, uid }) => /^\d+$/.test(String(pageId)) && /^\d+$/.test(String(uid));
   // Hội thoại đã có dữ liệu gốc (đã tải một đoạn tin, tin mới tự đổ về): trả ngay, không phải mở trong khung ẩn.
   const lsReady = args => !args.older && lsStores.get(String(args.pageId))?.loaded.has(String(args.uid)) && lsMessages(args.pageId, args.uid).some(m => !m.sep);
-  const readThread = args => !threadArgs(args) ? Promise.resolve({ error: 'Thiếu Page hoặc khách.' })
-    : lsReady(args) ? Promise.resolve({ messages: lsMessages(args.pageId, args.uid), source: 'ls' })
-    : queue(args.pageId, async () => {
+  // Đọc cùng một hội thoại nhiều lần liền nhau (tin mới tới dồn dập, đọc định kỳ 20 giây) → dùng chung một lượt đọc đang chờ, không xếp hàng chồng lên làm tắc việc gửi tin.
+  const reading = new Map();
+  const readThread = args => { if (!threadArgs(args)) return Promise.resolve({ error: 'Thiếu Page hoặc khách.' });
+    if (lsReady(args)) return Promise.resolve({ messages: lsMessages(args.pageId, args.uid), source: 'ls' });
+    const k = `${args.pageId}:${args.uid}:${args.older ? 'o' : ''}`;
+    if (reading.has(k)) return reading.get(k);
+    const pr = readThreadQ(args).finally(() => reading.delete(k)); reading.set(k, pr); return pr; };
+  const lsWaited = new Set();
+  const readThreadQ = args => queue(args.pageId, async () => {
     const ok = await openThreadHidden(String(args.pageId), String(args.uid));
     if (ok === 'login') return { error: 'login' };
     if (!ok) return { error: 'Không mở được hội thoại trong Business Suite.' };
     const wc = slot(args.pageId).win.webContents, st = lsStore(args.pageId), uid = String(args.uid);
     if (args.older) { await wc.executeJavaScript(`(${readMessages})(true)`).catch(() => {}); await sleep(2500); }
     // Vừa mở hội thoại: dữ liệu gốc thường về trong ~1 giây → dùng nó (đủ, chính xác hơn đọc màn hình).
-    for (let i = 0; i < 6 && !st.loaded.has(uid); i++) await sleep(250);
+    if (!lsWaited.has(uid)) { lsWaited.add(uid); for (let i = 0; i < 6 && !st.loaded.has(uid); i++) await sleep(250); } // chỉ chờ lần đầu
     if (st.loaded.has(uid) && lsMessages(args.pageId, uid).some(m => !m.sep)) return { messages: lsMessages(args.pageId, uid), source: 'ls' };
     return await wc.executeJavaScript(`(${readMessages})(false)`).catch(() => null) || { error: 'Không đọc được tin.' };
   }, args.bg ? 0 : 1); // đọc trước (nền) nhường việc bạn đang chờ
@@ -745,6 +754,11 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
       if (line) await dbg.sendCommand('Input.insertText', { text: line });
     }
     await sleep(image ? 300 : 100);
+    if (image) { // chờ ảnh tải lên Meta xong (tối đa 10 giây) rồi mới bấm Gửi, nếu không Business Suite chỉ gửi chữ
+      const st = lsStore(args.pageId);
+      for (let i = 0; i < 66; i++) { const busy = [...(st.uploads?.values() || [])].some(t => Date.now() - t < 30e3); if (!busy && (i >= 2 || st.uploadsDone > Date.now() - 3000)) break; await sleep(150); }
+      mark('tai-anh-len');
+    }
     mark('go-chu'); const t0 = Date.now();
     // Bấm nút "Gửi" của Business Suite (Enter có khi không gửi khi đang có ảnh đính kèm); không thấy nút thì bấm Enter.
     const pressEnter = async () => { await mouse(wc, { selector: '[data-ga-editor]' });
@@ -771,10 +785,12 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
     for (let i = 0; i < (image ? 210 : 105); i++) {
       await sleep(150);
       if (all) textOk ||= lsSent(); if (image) picOk ||= lsPic();
+      // Ảnh còn nằm trong ô sau khi chữ đã đi (ảnh lên chậm) → bấm Gửi thêm lần nữa khi ảnh tải xong.
+      if (image && !picOk && textOk && i === 12 && await wc.executeJavaScript(`document.querySelectorAll('${ATT_CLOSE}').length`).catch(() => 0)) await mouse(wc, sendBtn);
       if (textOk && picOk) { mark('xac-nhan-goc'); return done(); }
       if (i % 6 === 5) {
         const r = await read();
-        textOk ||= hits(r) > hitsBefore; picOk ||= myPics(r) > picsBefore || allPics(r) > allBefore;
+        textOk ||= hits(r) > hitsBefore; picOk ||= myPics(r) > picsBefore;
         // Sau ~2 giây chữ vẫn nằm trong ô nhập = chưa gửi → bấm Enter thêm một lần (dự phòng).
         if (!backup && !textOk && i >= 11 && await stillTyped()) { backup = true; await pressEnter(); }
         if (textOk && picOk) { mark('xac-nhan-man-hinh'); return { done: true, ...r }; }
