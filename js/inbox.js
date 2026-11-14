@@ -421,10 +421,11 @@
   }
   const viewPic = src => { const box = h('div', { className: 'pic-view', onclick: () => box.remove() }, h('img', { src, alt: '' }), h('a', { href: src, download: 'anh.jpg', className: 'btn btn-ghost btn-sm', textContent: '⬇ Tải ảnh', onclick: e => e.stopPropagation() }));
     document.body.append(box); };
-  const picEl = u => { const img = h('img', { src: picSrc(u), alt: '', loading: 'lazy', className: 'msg-pic', title: 'Bấm để xem lớn', onclick: () => viewPic(img.src),
+  const picEl = u => { const img = h('img', { src: /^https:/.test(u) ? picSrc(u) : u, alt: '', loading: 'lazy',
       onerror: async () => { if (img.dataset.retry) return; img.dataset.retry = '1'; const d = await cachePic(u); if (d) img.src = d; } });
-    if (!picMem.get(picKey(u))) cachePic(u).then(d => { if (d && img.src !== d) img.src = d; }).catch(() => {});
-    return img; };
+    if (/^https:/.test(u) && !picMem.get(picKey(u))) cachePic(u).then(d => { if (d && img.src !== d) img.src = d; }).catch(() => {});
+    // Ảnh nhỏ gọn trong khung chat; bấm để xem lớn.
+    return h('button', { type: 'button', className: 'msg-pic', title: 'Bấm để xem ảnh lớn', onclick: () => viewPic(img.src) }, img, h('span', { className: 'msg-pic-zoom', textContent: '🔍' })); };
   function drawBs(c, r, { silent = false, older = false, keepTop = false } = {}) {
     const thread = $('ibThread'), atBottom = thread.scrollHeight - thread.clientHeight - thread.scrollTop < 70;
     const all = r.messages || [];
@@ -495,7 +496,7 @@
     if ((text || image) && S.conv === c) {
       $('ibText').value = ''; S.tpl = null; S.image = ''; drawAttach(); saveDraft();
       pending = h('div', { className: 'msgrow me ib-pending' }, h('div', { className: 'msg me' }, text || null,
-        image ? h('img', { src: image, alt: '', style: 'display:block;max-width:220px;border-radius:10px;margin-top:4px' }) : null),
+        image ? picEl(image) : null),
         h('span', { className: 'hint', textContent: image ? 'Đang gửi ảnh…' : 'Đang gửi…' }));
       $('ibThread').append(pending); $('ibThread').scrollTop = $('ibThread').scrollHeight;
     }
@@ -845,7 +846,7 @@
           : me(m) ? App.avatar(c.page.name, App.pageAvatarUrl(c.page), 24) : messageAvatar(c),
         h('div', { className: 'msg' + (me(m) ? ' me' : ''), title: fmtTime(m.created_time) },
         m.message || null,
-        ...(m.attachments?.data || []).map(a => a.image_data?.url ? h('img', { src: a.image_data.url, alt: '', style: 'display:block;max-width:220px;border-radius:10px;margin-top:4px' })
+        ...(m.attachments?.data || []).map(a => a.image_data?.url ? picEl(a.image_data.url)
           : h('a', { href: a.file_url || '#', target: '_blank', rel: 'noopener', textContent: `📎 ${a.name || 'Tệp đính kèm'}` })),
         !m.message && !m.attachments?.data?.length ? '(nhãn dán / tin đặc biệt)' : null))));
       drawSeen(c);

@@ -340,7 +340,11 @@ td.num.neg{font-weight:700}
 [data-panel=inbox] #ibLabel{max-width:76px;text-overflow:ellipsis}
 [data-panel=inbox] #ibLabel.on{border-color:var(--primary);color:var(--primary);background:var(--primary-soft);font-weight:700}
 [data-panel=inbox] .ib-pending{opacity:.6}[data-panel=inbox] .ib-pending .hint{font-size:10px;align-self:flex-end}
-.msg-pic{display:block;max-width:200px;max-height:260px;border-radius:10px;margin-top:4px;cursor:zoom-in;object-fit:cover;background:var(--bg-hover)}
+.msg-pic{all:unset;position:relative;display:block;width:fit-content;margin-top:4px;cursor:zoom-in;border-radius:10px;overflow:hidden;line-height:0}
+.msg-pic img{display:block;max-width:150px;max-height:150px;min-width:60px;min-height:60px;object-fit:cover;border-radius:10px;background:var(--bg-hover);transition:filter .15s}
+.msg-pic:hover img{filter:brightness(.8)}
+.msg-pic-zoom{position:absolute;right:6px;bottom:6px;font-size:12px;line-height:1;padding:4px;border-radius:999px;background:#000a;opacity:0;transition:opacity .15s}
+.msg-pic:hover .msg-pic-zoom{opacity:1}
 .pic-view{position:fixed;inset:0;z-index:200;background:#000c;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;cursor:zoom-out}
 .pic-view img{max-width:92vw;max-height:84vh;border-radius:10px;box-shadow:0 10px 40px #000a}
 .pic-view .btn{background:#fff2;color:#fff}
