@@ -229,9 +229,20 @@
   const orderOf = o => ({ sell: (o.items?.[0]?.price || 0) * (o.items?.[0]?.qty || 0), cost: (o.items?.[0]?.cost || 0) * (o.items?.[0]?.qty || 0) });
 
   // Link khách gửi trong hội thoại (Facebook, TikTok, Instagram, YouTube, Shopee… hoặc link bất kỳ).
+  // Link khách gửi: CHỈ lấy từ tin của khách (tin của shop — báo giá, bài viết của Page — không tính), mới nhất trước.
+  // Nhận cả link gõ không có https:// (facebook.com/…, fb.watch/…, tiktok.com/…, vt.tiktok.com/…, instagram.com/…, youtu.be/…).
+  const LINK_RE = /(?:https?:\/\/[^\s<>"')]+)|(?:(?:www\.|m\.|web\.|vt\.|vm\.)?(?:facebook\.com|fb\.com|fb\.watch|fb\.me|tiktok\.com|instagram\.com|youtube\.com|youtu\.be|shopee\.vn|t\.me)\/[^\s<>"')]+)/gi;
   function linksIn(messages) {
     const out = [];
-    for (const m of messages || []) for (const u of String(m.text || '').match(/https?:\/\/[^\s<>"')]+/g) || []) { const clean = u.replace(/[.,;!?]+$/, ''); if (!out.includes(clean)) out.push(clean); }
+    const fromCustomer = m => m.isCustomer === true || m.mine === false || (m.isCustomer == null && m.mine == null && !m.fromPage);
+    for (const m of messages || []) {
+      if (!fromCustomer(m)) continue;
+      for (const u of String(m.text || '').match(LINK_RE) || []) {
+        let clean = u.replace(/[.,;!?…]+$/, '');
+        if (!/^https?:\/\//i.test(clean)) clean = 'https://' + clean;
+        if (!out.includes(clean)) out.push(clean);
+      }
+    }
     return out.reverse(); // mới nhất trước
   }
   const platformOf = link => /tiktok/i.test(link) ? 'tiktok' : /instagram/i.test(link) ? 'instagram' : /youtu/i.test(link) ? 'youtube' : /shopee/i.test(link) ? 'shopee' : /t\.me|telegram/i.test(link) ? 'telegram' : /facebook|fb\.(com|watch|me)/i.test(link) ? 'facebook' : '';
