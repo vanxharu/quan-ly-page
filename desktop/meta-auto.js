@@ -189,7 +189,9 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
       running = true;
       tasks.sort((a, b) => b.prio - a.prio || a.n - b.n);
       const t = tasks.shift();
-      try { t.ok(await t.fn()); } catch (e) { t.bad(e); } finally { running = false; next(); }
+      // Một việc treo (trang đang chuyển, lệnh không trả lời) không được chặn cả hàng: quá 2,5 phút thì bỏ, làm việc sau.
+      let timer; const limit = new Promise((_, bad) => { timer = setTimeout(() => bad(new Error('Khung Business Suite không phản hồi (quá 150 giây). Thử lại.')), 150e3); });
+      try { t.ok(await Promise.race([t.fn(), limit])); } catch (e) { t.bad(e); } finally { clearTimeout(timer); running = false; next(); }
     };
     let n = 0;
     const q = (fn, prio = 0) => new Promise((ok, bad) => { tasks.push({ fn, prio, ok, bad, n: n++ }); next(); });
@@ -200,6 +202,15 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
   // Mỗi Page một khung ẩn riêng (chạy song song): đọc danh sách Page này không làm mất hội thoại đang mở của Page khác,
   // bấm khách Page nào cũng mở ngay trong khung của Page đó. Khung đầu tiên dùng cửa sổ có sẵn; tối đa 8 khung, dư thì đóng khung lâu không dùng.
   const slots = new Map();
+  // Lệnh chạy trong trang có thể không bao giờ trả lời (trang đang tải lại, khung bị treo) → giới hạn 20 giây mỗi lệnh.
+  const guard = wc => {
+    if (!wc || wc.__gaGuard) return; wc.__gaGuard = true;
+    const run = wc.executeJavaScript.bind(wc);
+    wc.executeJavaScript = (code, ...rest) => Promise.race([run(code, ...rest), new Promise((_, bad) => setTimeout(() => bad(new Error('Trang không trả lời')), 20e3))]);
+    const send = wc.debugger.sendCommand.bind(wc.debugger);
+    wc.debugger.sendCommand = (...a) => Promise.race([send(...a), new Promise((_, bad) => setTimeout(() => bad(new Error('DevTools không trả lời')), 20e3))]);
+  };
+  guard(worker.webContents);
   const slot = pageId => {
     pageId = String(pageId);
     let sl = slots.get(pageId);
@@ -211,6 +222,7 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
       }
       const shared = !rootFree && !makeWorker ? [...slots.values()].find(x => x.win === worker) : null; // không tạo được khung mới: dùng chung khung gốc
       const win = rootFree || !makeWorker ? worker : makeWorker();
+      guard(win.webContents);
       sl = { pageId, win, opened: '', used: Date.now(), queue: shared?.queue || makePrioQueue(), lastPing: 0 };
       if (!shared) sl.win.webContents.on('console-message', (e, level, message) => {
         const msg = typeof e?.message === 'string' ? e.message : String(message || '');
