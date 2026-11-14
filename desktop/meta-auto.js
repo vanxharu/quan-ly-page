@@ -183,7 +183,20 @@ function createMetaAuto({ worker, composer, metaView, showMeta = () => () => {},
     window.__gaObs.observe(col, { childList: true, subtree: true, characterData: true }); return true; })()`).catch(() => false);
   // Hai hàng chờ riêng: đọc avatar (khung ẩn) không phải chờ trình soạn bài (có thể mở lâu).
   const makeQueue = () => { let chain = Promise.resolve(); return fn => (chain = chain.then(fn, fn)); };
-  const queue = makeQueue(), composeQueue = makeQueue();
+  // Khung ẩn làm từng việc một. Việc bạn đang chờ (mở hội thoại, gửi tin) được chen lên trước việc chạy nền (đọc danh sách, tra avatar).
+  const makePrioQueue = () => {
+    const tasks = []; let running = false;
+    const next = async () => {
+      if (running || !tasks.length) return;
+      running = true;
+      tasks.sort((a, b) => b.prio - a.prio || a.n - b.n);
+      const t = tasks.shift();
+      try { t.ok(await t.fn()); } catch (e) { t.bad(e); } finally { running = false; next(); }
+    };
+    let n = 0;
+    return (fn, prio = 0) => new Promise((ok, bad) => { tasks.push({ fn, prio, ok, bad, n: n++ }); next(); });
+  };
+  const queue = makePrioQueue(), composeQueue = makeQueue();
 
   // Danh sách hội thoại Business Suite: mỗi dòng có data-maiba-contact-id (UID Facebook thật của khách), tên và ảnh.
   // Đọc cả danh sách của một Page một lần (lưu 10 phút), rồi so tên với khách trong app.
@@ -429,7 +442,7 @@ function createMetaAuto({ worker, composer, metaView, showMeta = () => () => {},
     const wc = worker.webContents;
     if (args.older) { await wc.executeJavaScript(`(${readMessages})(true)`).catch(() => {}); await sleep(2500); }
     return await wc.executeJavaScript(`(${readMessages})(false)`).catch(() => null) || { error: 'Không đọc được tin.' };
-  });
+  }, 1);
   // Gửi tin như người dùng gõ trong Business Suite (không qua API → không bị giới hạn của app chưa duyệt).
   const sendThread = args => queue(async () => {
     const text = String(args.text || '').trim(), image = args.image || '';
@@ -474,7 +487,7 @@ function createMetaAuto({ worker, composer, metaView, showMeta = () => () => {},
     }
     if (textOk && !picOk) { await dumpPage(wc, 'gui-thieu-anh'); return { error: 'Chữ đã gửi, nhưng chưa thấy ảnh trong hội thoại. Kiểm tra cột Meta; nếu thiếu ảnh thì Copy ảnh và dán vào đó (đừng gửi lại cả tin để tránh lặp).' }; }
     return { error: 'Đã bấm gửi nhưng chưa thấy tin trong Business Suite — kiểm tra lại trong cột Meta trước khi gửi lại.' };
-  });
+  }, 1);
 
   // Điền sẵn trình soạn bài Business Suite. Trả về khi người dùng đã đăng/hẹn (trang rời khỏi trình soạn) hoặc sau 15 phút.
   // Trình soạn Business Suite (giao diện 11/2026): nút "Thêm ảnh/video" mở hộp chọn file, ô văn bản nằm trong

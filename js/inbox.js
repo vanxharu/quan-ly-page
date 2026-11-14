@@ -204,15 +204,10 @@
     }
     return null;
   }
-  async function bsThreads(p, { force = false } = {}) {
-    if (!window.metaDesktop?.listThreads) return null;
-    const hit = bsCache.get(p.id);
-    if (hit && !force && Date.now() - hit.at < 60e3) return hit.list;
-    const r = await window.metaDesktop.listThreads({ pageId: String(p.id) });
-    if (r?.error === 'login') { if (bsLoginWarned) return null; bsLoginWarned = true; toast('Đăng nhập Business Suite trong cột Meta (menu "Hộp thư Meta") để app đọc tin khi API lỗi.', 8000); return null; }
-    if (!r?.rows?.length) return null;
-    let prev = Date.now() + 1000;
-    const list = r.rows.map(row => {
+  // Dòng danh sách Business Suite → hội thoại trong app.
+  function bsConvs(p, rows, base = Date.now()) {
+    let prev = base + 1000;
+    return rows.map(row => {
       const at = Math.min(bsTime(row.time) ?? prev, prev - 1000); prev = at; // giữ đúng thứ tự Business Suite
       const c = { id: `bs:${p.id}:${row.uid}`, bs: true, uid: row.uid, page: p, other: { id: 'bs' + row.uid, name: row.name },
         snippet: row.snippet, timeText: row.time, updated_time: new Date(at).toISOString(), unread_count: row.unread ? 1 : 0,
@@ -221,6 +216,27 @@
       if (row.pic) S.pics.set(pictureKey(c), row.pic);
       return c;
     });
+  }
+  // Danh sách đã đọc lần trước (lưu máy, tối đa 3 ngày): hiện ngay khi mở Hộp thư, trong lúc khung ẩn đọc bản mới.
+  async function bsSaved(p) {
+    const hit = bsCache.get(p.id); if (hit) return hit.list;
+    const d = await DB.get('bsList:' + p.id, null).catch(() => null);
+    return d?.rows?.length && Date.now() - d.at < 3 * 864e5 ? bsConvs(p, d.rows, d.at) : [];
+  }
+  async function bsThreads(p, { force = false } = {}) {
+    if (!window.metaDesktop?.listThreads) return null;
+    const hit = bsCache.get(p.id);
+    if (hit && !force && Date.now() - hit.at < 60e3) return hit.list;
+    const r = await window.metaDesktop.listThreads({ pageId: String(p.id) });
+    if (r?.error === 'login') { if (bsLoginWarned) return null; bsLoginWarned = true; toast('Đăng nhập Business Suite trong cột Meta (menu "Hộp thư Meta") để app đọc tin khi API lỗi.', 8000); return null; }
+    if (!r?.rows?.length) return null;
+    DB.set('bsList:' + p.id, { at: Date.now(), rows: r.rows }).catch(() => {});
+    const list = bsConvs(p, r.rows);
+      const at = Math.min(bsTime(row.time) ?? prev, prev - 1000); prev = at; // giữ đúng thứ tự Business Suite
+      const c = { id: `bs:${p.id}:${row.uid}`, bs: true, uid: row.uid, page: p, other: { id: 'bs' + row.uid, name: row.name },
+        snippet: row.snippet, timeText: row.time, updated_time: new Date(at).toISOString(), unread_count: row.unread ? 1 : 0,
+        // Nhãn CRM ghép theo Page + tên khách (giống hội thoại đọc qua API); tin cuối "Bạn: …" là Page đã trả lời.
+        key: App.crmKey(p.id, row.name), lastAt: at, fromCustomer: !/^(bạn|you)\s*:/i.test(row.snippet) };
     // Báo tin mới (khách nhắn, chưa đọc) — lần đọc đầu tiên của Page chỉ ghi nhận, không báo.
     const st = await settings();
     const known = bsNotified.has(p.id);
@@ -343,7 +359,21 @@
     if (!silent) $('ibList').replaceChildren(empty(`Đang tải hội thoại của ${pages.length} Page…`));
     const errors = [], errorPages = [];
     const viaBs = bsFirst();
-    const lists = await pool(pages, viaBs ? 1 : 3, async p => (viaBs && await bsThreads(p, { force }).catch(() => null)) || convsFor(p, { maxAge: force ? 0 : silent ? listInterval(p) : 30e3, force, low: silent }).catch(async e => {
+    // Business Suite đọc từng Page một (10–30 giây/Page): hiện ngay danh sách đã lưu, rồi mỗi Page đọc xong là cập nhật luôn.
+    const partial = new Map();
+    const paint = async () => {
+      if (run !== S.loading) return;
+      const all = pages.flatMap(p => partial.get(p.id) || S.convs.filter(c => c.page.id === p.id));
+      S.convs = [...new Map([...S.extra.values(), ...all].map(c => [c.id, c])).values()].sort((a, b) => new Date(b.updated_time) - new Date(a.updated_time));
+      await drawList();
+    };
+    if (viaBs) {
+      const saved = await Promise.all(pages.map(p => bsSaved(p).catch(() => [])));
+      if (run !== S.loading) return;
+      pages.forEach((p, i) => { if (saved[i].length && !S.convs.some(c => c.page.id === p.id)) partial.set(p.id, saved[i]); });
+      if (partial.size) { S.crm = await App.crm.all(); await paint(); partial.clear(); }
+    }
+    const lists = await pool(pages, viaBs ? 1 : 3, async p => (viaBs && await bsThreads(p, { force }).then(l => { if (l?.length) { partial.set(p.id, l); paint(); } return l; }).catch(() => null)) || convsFor(p, { maxAge: force ? 0 : silent ? listInterval(p) : 30e3, force, low: silent }).catch(async e => {
       const why = `${p.name}: ${e.message}${e.code ? ` (mã ${e.code}${e.sub ? '/' + e.sub : ''})` : ''}`;
       const bs = viaBs ? null : await bsThreads(p).catch(() => null);
       if (bs?.length) { errors.push(`${why} → đang hiện ${bs.length} hội thoại đọc từ Business Suite (bấm để mở trong cột Meta).`); return bs; }
