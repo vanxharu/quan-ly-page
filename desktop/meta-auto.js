@@ -311,10 +311,25 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
       fs.writeFileSync(path.join(dir, 'trang-thai.json'), JSON.stringify(data, null, 1));
     } catch {}
   }, 30e3);
+  // Mẫu gói tin gửi (Downloads/GetHelps-debug/ls-gui-mau.json, 12 gói gần nhất): chỉ ghi trong ~20 giây quanh mỗi lần app gửi tin.
+  const sentSamples = [];
+  const sentSample = (pageId, x) => { try { sentSamples.unshift({ page: String(pageId), ...x }); sentSamples.splice(12); const dir = path.join(app.getPath('downloads'), 'GetHelps-debug'); fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'ls-gui-mau.json'), JSON.stringify(sentSamples, null, 1)); } catch {} };
+  // Giữ tham chiếu tới WebSocket của trang (cài trước khi trang tạo kết nối, có hiệu lực từ lần tải trang sau) → bước sau gửi thẳng qua kết nối này.
+  const WS_HOOK = `(() => { const W = window.WebSocket; if (!W || W.__ga) return;
+    const G = function (...a) { const ws = new W(...a); try { (window.__gaWS = window.__gaWS || []).push(ws); if (window.__gaWS.length > 6) window.__gaWS.shift(); } catch (e) {} return ws; };
+    G.prototype = W.prototype; Object.setPrototypeOf(G, W); G.__ga = true;
+    for (const k of ['CONNECTING', 'OPEN', 'CLOSING', 'CLOSED']) try { Object.defineProperty(G, k, { value: W[k] }); } catch (e) {}
+    window.WebSocket = G; })();`;
   const lighten = async (wc, pageId) => {
     if (!wc || wc.__gaLight) return; wc.__gaLight = true;
     const dbg = wc.debugger, pending = new Map();
     dbg.on('message', (_e, method, params) => {
+      // Gói tin Business Suite gửi lên Meta (qua WebSocket) trong lúc app gửi tin → ghi mẫu để làm "gửi thẳng" (không bấm nút).
+      if (method === 'Network.webSocketFrameSent' && Date.now() < (lsStore(pageId).capture || 0)) {
+        const f = params.response || {}, raw = f.opcode === 2 ? Buffer.from(String(f.payloadData || ''), 'base64') : Buffer.from(String(f.payloadData || ''), 'utf8');
+        if (raw.length > 40) sentSample(pageId, { at: new Date().toISOString(), opcode: f.opcode, bytes: raw.length, text: raw.toString('utf8').replace(/[\x00-\x08\x0e-\x1f]/g, '·').slice(0, 20000), b64: raw.length < 60000 ? raw.toString('base64') : '' });
+      }
       // Ảnh đang tải lên Meta (để chỉ bấm Gửi khi ảnh đã lên xong).
       if (method === 'Network.requestWillBeSent' && /upload|rupload/i.test(params.request?.url || '') && /POST|PUT/i.test(params.request?.method || '')) { const up = lsStore(pageId).uploads ||= new Map(); up.set(params.requestId, Date.now()); }
       else if ((method === 'Network.loadingFinished' || method === 'Network.loadingFailed') && lsStore(pageId).uploads?.delete(params.requestId)) lsStore(pageId).uploadsDone = Date.now();
@@ -328,6 +343,8 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
     });
     await dbg.sendCommand('Fetch.enable', { patterns: BLOCK }).catch(() => {});
     await dbg.sendCommand('Network.enable', { maxResourceBufferSize: 4e6, maxTotalBufferSize: 2e7 }).catch(() => {});
+    await dbg.sendCommand('Page.enable').catch(() => {});
+    await dbg.sendCommand('Page.addScriptToEvaluateOnNewDocument', { source: WS_HOOK }).catch(() => {});
   };
   const slot = pageId => {
     pageId = String(pageId);
@@ -627,7 +644,7 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
         } catch (e) { tried.push('nút đính kèm lỗi: ' + e.message); return false; } finally { await dbg.sendCommand('Page.setInterceptFileChooserDialog', { enabled: false }).catch(() => {}); }
       },
       clip: async () => { // dán ảnh thật từ clipboard (trả lại chữ cũ trong clipboard sau đó)
-        let oldText = ''; try { oldText = String(clipboard.readText() || ''); } catch {}
+        let oldText = '', oldImg = null; try { oldText = String(clipboard.readText() || ''); const im = clipboard.readImage(); if (!im.isEmpty()) oldImg = im; } catch {}
         try {
           const img = nativeImage.createFromDataURL(image); if (img.isEmpty()) { tried.push('ảnh hỏng'); return false; }
           if (!await mouse(wc, { selector: '[data-ga-editor]' })) { tried.push('dán: không bấm được ô nhập'); return false; }
@@ -636,7 +653,7 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
           if (await waitPreview()) return true;
           tried.push('dán: không thấy ảnh'); return false;
         } catch (e) { tried.push('dán lỗi: ' + e.message); return false; }
-        finally { setTimeout(() => { try { if (oldText) clipboard.writeText(oldText); } catch {} }, 1500); }
+        finally { setTimeout(() => { try { if (oldImg) clipboard.writeImage(oldImg); else if (oldText) clipboard.writeText(oldText); } catch {} }, 1500); } // trả lại bộ nhớ tạm như cũ
       }
     };
     // Giả dán / kéo-thả ngay trên ô nhập.
@@ -656,14 +673,15 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
       tried.push(`${kind}: ${r?.error ? 'lỗi ' + r.error : 'không nhận'}`);
       return false;
     }
-    const order = ['file', 'paste', 'drop', 'button', 'clip'], best = attachBest();
+    // Dán ảnh thật (clip) trước: Messenger nhận là ẢNH (tự nén trước khi tải lên, có ảnh xem trước) thay vì tệp "anh.jpg" → tải lên nhanh hơn.
+    const order = ['clip', 'paste', 'file', 'drop', 'button'], best = attachBest();
     for (const k of best ? [best, ...order.filter(x => x !== best)] : order) {
       if (await ways[k]()) { if (k !== best) attachBest(k); tried.push('ok: ' + k); return true; }
     }
     return false;
   };
   // Cách đính ảnh thành công gần nhất (nhớ qua các lần mở app).
-  const attachFile = () => path.join(app.getPath('userData'), 'attach-method.txt');
+  const attachFile = () => path.join(app.getPath('userData'), 'attach-method-v2.txt'); // v2: học lại với thứ tự mới (dán thật trước)
   let attachMem = null;
   function attachBest(set) {
     if (set) { attachMem = set; try { fs.writeFileSync(attachFile(), set); } catch {} return set; }
@@ -759,7 +777,7 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
       for (let i = 0; i < 66; i++) { const busy = [...(st.uploads?.values() || [])].some(t => Date.now() - t < 30e3); if (!busy && (i >= 2 || st.uploadsDone > Date.now() - 3000)) break; await sleep(150); }
       mark('tai-anh-len');
     }
-    mark('go-chu'); const t0 = Date.now();
+    mark('go-chu'); const t0 = Date.now(); lsStore(args.pageId).capture = t0 + 20000;
     // Bấm nút "Gửi" của Business Suite (Enter có khi không gửi khi đang có ảnh đính kèm); không thấy nút thì bấm Enter.
     const pressEnter = async () => { await mouse(wc, { selector: '[data-ga-editor]' });
       await dbg.sendCommand('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Enter', windowsVirtualKeyCode: 13, text: '\r', unmodifiedText: '\r' });
