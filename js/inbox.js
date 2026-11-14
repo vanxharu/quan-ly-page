@@ -265,6 +265,28 @@
     bar.style.opacity = '1'; bar.hidden = false; say(`✓ Đã đọc trước ${pf.done} khách`, 100);
     pf.timer = setTimeout(() => { bar.style.opacity = '0'; pf.timer = setTimeout(() => { bar.hidden = true; pf.todo = pf.done = 0; }, 400); }, 4000);
   }
+  // Khách vừa nhắn (tin mới từ dữ liệu gốc) → đọc trước hội thoại đó ngay ở nền, lúc bạn bấm vào là tin đã có sẵn.
+  // Gộp các tin dồn dập trong 1,5 giây; khách đang mở thì đã tự cập nhật nên bỏ qua.
+  const hotQ = new Map(); let hotT = 0, hotBusy = false;
+  function prefetchHot(c) {
+    if (!c?.bs || S.conv?.id === c.id || !window.metaDesktop?.readThread) return;
+    hotQ.set(c.id, c); clearTimeout(hotT); hotT = setTimeout(runHot, 1500);
+  }
+  async function runHot() {
+    if (hotBusy) { hotT = setTimeout(runHot, 1500); return; }
+    hotBusy = true;
+    try {
+      while (hotQ.size) {
+        const [id, c] = hotQ.entries().next().value; hotQ.delete(id);
+        if (S.conv?.id === id) continue;
+        const r = await window.metaDesktop.readThread({ pageId: String(c.page.id), uid: c.uid, bg: true }).catch(() => null);
+        if (!r?.messages?.length) continue;
+        const keep = { snippet: c.snippet, messages: r.messages.filter(m => !/^blob:/.test(m.pic || '')).slice(-60) };
+        bsMsgCache.set(c.id, keep); DB.set('bsMsg:' + c.id, keep).catch(() => {});
+        relabelFrom(c, r.messages).then(ok => { if (ok) App.crm.all().then(x => { S.crm = x; if (App.current() === 'inbox') drawList(); }); }).catch(() => {});
+      }
+    } finally { hotBusy = false; }
+  }
   // Khớp lại nhãn tự gắn ("Hỏi giá"…) từ tin đã đọc của khách (tin Business Suite: mine = của shop).
   async function relabelFrom(c, messages) {
     const said = (messages || []).filter(m => !m.sep).map(m => ({ isCustomer: !m.mine, text: m.text || '' })), st = await settings();
@@ -317,6 +339,7 @@
     if (hit && !force && Date.now() - hit.at < 60e3) return hit.list;
     const r = await window.metaDesktop.listThreads({ pageId: String(p.id), max: S.bsMax || 15, full: force && (S.bsMax || 15) > 15 });
     if (r?.error === 'login') { if (bsLoginWarned) return null; bsLoginWarned = true; toast('Đăng nhập Business Suite trong cột Meta (menu "Hộp thư Meta") để app đọc tin khi API lỗi.', 8000); return null; }
+    if (r?.busy) return bsCache.get(p.id)?.list || null; // khung đang mở hội thoại bạn chọn: giữ danh sách hiện có, đọc lại lần sau
     if (r?.error) throw new Error(r.error); // báo lý do lên đầu danh sách thay vì lặng lẽ dùng danh sách API cũ
     if (!r?.rows?.length) return null;
     // Lần làm mới nhanh chỉ đọc phần đầu danh sách: ghép thêm các hội thoại cũ đã biết (không có trong phần vừa đọc).
@@ -1079,6 +1102,7 @@
         row.snippet = (info.mine ? 'Bạn: ' : '') + info.text; row.fromCustomer = !info.mine;
         row.updated_time = new Date(info.ts).toISOString(); row.lastAt = info.ts; row.timeText = '';
         const viewing = S.conv?.id === row.id && App.current() === 'inbox' && !document.hidden;
+        if (!info.mine && fresh) prefetchHot(row);
         if (!info.mine && fresh && (info.pic || /^Đã gửi một ảnh/.test(info.text) || PAY_SAID.test(info.text || ''))) notePay(row.key, info.pic || /^Đã gửi một ảnh/.test(info.text) ? 'pic' : 'text');
         if (info.mine) row.unread_count = 0; // Page đã trả lời → hết chờ
         else if (!viewing && fresh) {

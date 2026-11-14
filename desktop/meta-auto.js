@@ -495,7 +495,7 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
     // Business Suite trong khung ẩn có khi tải 15–20 giây: còn vòng xoay (progressbar / aria-busy) và chưa có dòng nào thì chờ tiếp, tối đa 30 giây.
     // Chờ tới khi danh sách có dòng đầu tiên (tối đa 60 giây: nhiều Page tải cùng lúc thì mỗi trang chậm hơn), không chỉ lúc còn vòng xoay.
     const hasRows = () => wc.executeJavaScript(`!!document.querySelector('[data-maiba-contact-id]')`).catch(() => false);
-    while (Date.now() - started < 60000 && !await hasRows()) { await sleep(700); if (isLogin(wc.getURL())) return { error: 'login' }; }
+    while (Date.now() - started < 60000 && !await hasRows()) { await sleep(700); if (isLogin(wc.getURL())) return { error: 'login' }; if (sl.queue.urgent() && Date.now() - started > 3000) return { error: 'Đang mở hội thoại bạn chọn, đọc danh sách sau.', busy: true }; }
     if (!await hasRows()) { const dir = await dumpPage(wc, 'khong-co-danh-sach'); return { error: `Business Suite chưa hiện danh sách hội thoại sau 60 giây (${wc.getURL().slice(0, 80)})${dir ? ' · đã lưu ảnh chụp vào ' + dir : ''}` }; }
     for (let i = 0, got = 0; i < (quick ? 1 : 12); i++) {
       await sleep(i ? 700 : quick ? 300 : 1500);
@@ -541,8 +541,9 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
     for (const type of ['mouseMoved', 'mousePressed', 'mouseReleased']) await wc.debugger.sendCommand('Input.dispatchMouseEvent', { type, x: r.x, y: r.y, button: 'left', clickCount: 1 });
     return true;
   };
-  const openThreadHidden = async (pageId, uid, sl = slot(pageId)) => {
-    const wc = sl.win.webContents, id = `${pageId}:${uid}`;
+  // bg = đọc nền (đọc trước): bạn bấm mở khách khác thì dừng ngay; không bao giờ tải lại cả trang (tải lại chiếm khung 15–35 giây).
+  const openThreadHidden = async (pageId, uid, sl = slot(pageId), { bg = false } = {}) => {
+    const wc = sl.win.webContents, id = `${pageId}:${uid}`, yieldNow = () => bg && sl.queue.urgent();
     if (sl.opened === id && wc.getURL().includes(`asset_id=${pageId}`)) return true;
     // Khung chi tiết đã đúng khách này (data-surface "<uid>:<tên>") và có tin → xong.
     const ready = async () => !!(await wc.executeJavaScript(`(() => { const col = document.querySelector('[data-surface$="lib:inbox:detail_column"]');
@@ -553,7 +554,7 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
     if (wc.getURL().includes(`asset_id=${pageId}`)) {
       for (let i = 0; i < 2; i++) {
         if (await mouse(wc, { selector: `[data-maiba-contact-id="${uid}"]` })) {
-          for (let k = 0; k < 20; k++) { await sleep(300); if (await ready()) { sl.opened = id; await watchThread(wc); await watchList(wc); return true; } }
+          for (let k = 0; k < 20; k++) { await sleep(300); if (await ready()) { sl.opened = id; await watchThread(wc); await watchList(wc); return true; } if (yieldNow()) return false; }
           // Không nhận ra dấu hiệu nhưng trang đã chọn đúng khách và có tin → dùng luôn, không tải lại cả trang (tiết kiệm 15–25 giây).
           if (wc.getURL().includes(`selected_item_id=${uid}`) && (await wc.executeJavaScript(`(${readMessages})(false)`).catch(() => null))?.messages?.length) { sl.opened = id; await watchThread(wc); await watchList(wc); return true; }
           break;
@@ -562,8 +563,10 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
           while (box && !(box.scrollHeight > box.clientHeight + 5 && /auto|scroll/.test(getComputedStyle(box).overflowY))) box = box.parentElement;
           if (box) box.scrollTop = 0; })()`).catch(() => {});
         await sleep(800);
+        if (yieldNow()) return false;
       }
     }
+    if (bg) return false; // đọc nền: không tải lại trang, để lần bạn mở khách đó mới tải
     sl.opened = '';
     await wc.loadURL(`https://business.facebook.com/latest/inbox/messenger?asset_id=${pageId}&mailbox_id=${pageId}`).catch(() => {});
     for (let i = 0; i < 70; i++) { // Business Suite ẩn có khi tải chậm: chờ tối đa ~35 giây cho dòng của khách hiện ra
@@ -750,8 +753,9 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
     const pr = readThreadQ(args).finally(() => reading.delete(k)); reading.set(k, pr); return pr; };
   const lsWaited = new Set();
   const readThreadQ = args => queue(args.pageId, async () => {
-    const ok = await openThreadHidden(String(args.pageId), String(args.uid));
+    const ok = await openThreadHidden(String(args.pageId), String(args.uid), slot(args.pageId), { bg: !!args.bg });
     if (ok === 'login') return { error: 'login' };
+    if (!ok && args.bg) return { error: 'bỏ qua (đọc nền nhường chỗ)', skipped: true };
     if (!ok) return { error: 'Không mở được hội thoại trong Business Suite.' };
     const wc = slot(args.pageId).win.webContents, st = lsStore(args.pageId), uid = String(args.uid);
     if (args.older) { await wc.executeJavaScript(`(${readMessages})(true)`).catch(() => {}); await sleep(2500); }
