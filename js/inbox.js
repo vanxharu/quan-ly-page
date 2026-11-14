@@ -293,6 +293,7 @@
     const now = Date.now(), fresh = bsConvs(p, r.rows, now);
     DB.set('bsList:' + p.id, { at: now, rows: [...r.rows, ...keepOld].slice(0, 80) }).catch(() => {});
     const list = [...fresh, ...bsConvs(p, keepOld, old?.at || now)];
+    for (const c of fresh) c.src = r.source || 'dom'; // ls = dữ liệu gốc, dom = đọc màn hình
     // Báo tin mới (khách nhắn, chưa đọc) — lần đọc đầu tiên của Page chỉ ghi nhận, không báo.
     const st = await settings();
     const known = bsNotified.has(p.id);
@@ -644,7 +645,7 @@
             h('div', { className: 'snippet', textContent: c.snippet || '' }),
             (multi || c.bs || wait != null || labels.length) ? h('div', { className: 'tags' },
               multi ? h('span', { className: 'page-chip', textContent: c.page.name }) : null,
-              c.bs ? h('span', { className: 'page-chip', title: 'API Page này đang lỗi, tin đọc từ Business Suite', textContent: 'Business Suite' }) : null,
+              c.bs ? h('span', { className: 'page-chip', title: c.src === 'ls' ? 'Đọc từ dữ liệu gốc Business Suite (nhanh, giờ chính xác)' : 'Đọc từ màn hình Business Suite', textContent: c.src === 'ls' ? 'Business Suite ⚡' : 'Business Suite' }) : null,
               wait != null && wait < 7 * 1440 ? h('span', { className: 'wait' + (wait > st.waitMinutes ? ' late' : ''), title: 'Khách đang chờ trả lời', textContent: '⏳ ' + InboxRules.formatWait(wait) }) : null,
               ...labels.slice(0, 3).map(l => tag(l))) : null));
       }) : [empty(S.convs.length ? 'Không có hội thoại khớp bộ lọc.' : 'Chưa có tin nhắn.')]));

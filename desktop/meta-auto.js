@@ -385,9 +385,12 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
     const names = pageRows.get(String(pageId))?.rows, nameOf = uid => { for (const [, l] of names || []) for (const r of l) if (r.uid === uid) return r.name; return ''; };
     const rows = [...st.threads.values()].filter(t => t.folder !== 'spam').sort((a, b) => b.at - a.at).slice(0, max).map(t => {
       const c = st.contacts.get(t.uid), name = c?.name || nameOf(t.uid);
-      return name ? { uid: t.uid, name, snippet: t.snippet, time: '', at: t.at, unread: t.read > 0 && t.read < t.at && !/^Bạn:/.test(t.snippet), pic: c?.pic || t.pic } : null;
+      return { uid: t.uid, name: name || '', snippet: t.snippet, time: '', at: t.at, unread: t.read > 0 && t.read < t.at && !/^Bạn:/.test(t.snippet), pic: c?.pic || t.pic };
     });
-    return rows.every(Boolean) ? rows : null;
+    // Thiếu tên vài khách (dữ liệu liên hệ chưa về): vẫn dùng nếu đa số có tên; khách thiếu tên tạm ghi "Khách Messenger".
+    if (rows.filter(r => r.name).length < Math.ceil(rows.length * 0.7)) return null;
+    for (const r of rows) if (!r.name) r.name = 'Khách Messenger';
+    return rows;
   };
   const listThreads = ({ pageId, max = 15, full = false }) => !/^\d+$/.test(String(pageId)) ? Promise.resolve({ error: 'Thiếu Page.' })
     : (!full && lsList(pageId, Math.min(Math.max(Number(max) || 15, 5), 80))) ? Promise.resolve({ rows: lsList(pageId, Math.min(Math.max(Number(max) || 15, 5), 80)), source: 'ls' })
