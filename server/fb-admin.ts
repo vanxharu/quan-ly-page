@@ -106,6 +106,32 @@ async function publish_due() {
   return { published: (due || []).length };
 }
 
+// ── Kho theo tài khoản Facebook: tin mẫu, gói bán, API key, tài khoản ngân hàng… ──
+// Xác minh token người dùng thuộc đúng app này (debug_token) rồi dùng user_id Facebook làm khoá; không cần đăng nhập máy chủ.
+async function fbUser(userToken) {
+  const secret = env('FB_APP_SECRET');
+  if (!secret) throw new Error('Chưa dán FB_APP_SECRET vào Secrets của Edge Functions.');
+  if (!userToken) throw new Error('Thiếu token Facebook.');
+  const d = (await fb(`/debug_token?input_token=${encodeURIComponent(userToken)}`, `${APP_ID}|${secret}`)).data || {};
+  if (!d.is_valid || String(d.app_id) !== APP_ID || !/^\d+$/.test(String(d.user_id || ''))) throw new Error('Token Facebook không hợp lệ.');
+  return String(d.user_id);
+}
+async function vault_get({ userToken }) {
+  const id = await fbUser(userToken);
+  const row = (await db(`user_vault?fb_user_id=eq.${id}&select=data,updated_at`))?.[0];
+  return { user: id, data: row?.data || {}, updated_at: row?.updated_at || null };
+}
+// Ghi từng phần (parts: { tên: { at, value } }); phần nào trên máy chủ mới hơn thì giữ (2 máy sửa cùng lúc không đè nhau).
+async function vault_set({ userToken, parts }) {
+  const id = await fbUser(userToken);
+  if (!parts || typeof parts !== 'object') throw new Error('Thiếu dữ liệu.');
+  if (JSON.stringify(parts).length > 15e6) throw new Error('Dữ liệu quá lớn (tối đa 15MB, thường do ảnh trong tin mẫu).');
+  const cur = (await db(`user_vault?fb_user_id=eq.${id}&select=data`))?.[0]?.data || {};
+  for (const [k, v] of Object.entries(parts)) if (v && typeof v.at === 'number' && (!cur[k] || v.at >= (cur[k].at || 0))) cur[k] = { at: v.at, value: v.value };
+  await db('user_vault?on_conflict=fb_user_id', { method: 'POST', body: { fb_user_id: id, data: cur, updated_at: new Date().toISOString() }, prefer: 'resolution=merge-duplicates' });
+  return { user: id, data: cur };
+}
+
 async function serve(req) {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS });
   // Lịch đăng bài (pg_cron): khoá bí mật lưu trong bảng app_config, chỉ máy chủ đọc được.
@@ -114,6 +140,13 @@ async function serve(req) {
     const want = (await db('app_config?key=eq.cron_key&select=value'))?.[0]?.value;
     if (!want || cronKey !== want) return json({ error: 'Sai khoá.' }, 401);
     try { return json(await publish_due()); } catch (e) { return json({ error: e.message }, 500); }
+  }
+  // Kho theo tài khoản Facebook: tự xác minh bằng token Facebook, không cần đăng nhập máy chủ.
+  if (req.method === 'POST') {
+    const peek = await req.clone().json().catch(() => ({}));
+    if (peek.action === 'vault_get' || peek.action === 'vault_set') {
+      try { return json(await (peek.action === 'vault_get' ? vault_get : vault_set)(peek)); } catch (e) { return json({ error: e.message }, 400); }
+    }
   }
   // Chỉ tài khoản đã đăng nhập (chủ / nhân viên) mới gọi được.
   const user = await fetch(`${env('SUPABASE_URL')}/auth/v1/user`, { headers: { apikey: env('SUPABASE_ANON_KEY') || env('SUPABASE_SERVICE_ROLE_KEY'), Authorization: req.headers.get('authorization') || '' } });

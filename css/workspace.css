@@ -319,3 +319,11 @@ td.num.neg{font-weight:700}
 .ord-chip.pay{color:var(--pending-text);background:var(--pending-bg)}
 .ord-chip.paid{color:var(--err-text);background:var(--err-bg)}
 .ord-chip.run{color:var(--primary);background:var(--primary-soft)}
+.cp-uses{flex:none;font-size:10px;font-weight:600;color:var(--text-muted);padding:0 5px;border-radius:999px;background:var(--bg-hover);line-height:16px}
+.cp-uses.star{color:#b7791f;background:#f6c34a26}
+.svc-price-alerts{border-color:var(--pending-text,#d29922)}
+.svc-pa-row{display:flex;align-items:center;gap:10px;padding:8px 0;border-top:1px solid var(--border-subtle,var(--border))}
+.svc-pa-pct{flex:none;font-weight:800;font-size:13px}
+.svc-pa-row.up .svc-pa-pct{color:var(--err-text,#f85149)}
+.svc-pa-row.down .svc-pa-pct{color:var(--ok-text,#2da44e)}
+.svc-pa-row>.grow{flex:1;min-width:0}

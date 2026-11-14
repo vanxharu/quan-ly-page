@@ -1,6 +1,6 @@
 // Meta Assistant cho Windows: mở trang web (luôn là bản mới nhất trên GitHub Pages) trong cửa sổ riêng
 // và chạy sẵn tiện ích Studio AI (ChatGPT) bên trong, không cần Chrome.
-const { app, BaseWindow, BrowserWindow, Menu, WebContentsView, clipboard, ipcMain, net, session, shell } = require('electron');
+const { app, BaseWindow, BrowserWindow, Menu, WebContentsView, clipboard, ipcMain, net, safeStorage, session, shell } = require('electron');
 const path = require('path'), crypto = require('crypto');
 const { ElectronChromeExtensions } = require('electron-chrome-extensions');
 const { createMetaAuto } = require('./meta-auto');
@@ -288,6 +288,23 @@ app.whenReady().then(async () => {
       if (buf.length > 3e6) return { error: 'Ảnh quá lớn.' };
       return { dataUrl: `data:${type.split(';')[0]};base64,${buf.toString('base64')}` };
     } catch (err) { return { error: 'Không tải được ảnh: ' + err.message }; }
+  });
+  // Kho theo tài khoản Facebook trên máy (tin mẫu, gói bán, API key, tài khoản ngân hàng): file riêng cho từng tài khoản trong thư mục app,
+  // mã hoá bằng khoá của Windows (safeStorage). Vẫn còn khi xoá dữ liệu trình duyệt trong app / quên mật khẩu khoá app / cài lại.
+  const vaultFile = id => path.join(app.getPath('userData'), 'vault', `fb-${id}.bin`);
+  ipcMain.handle('vault-get', async (e, id) => {
+    if (!fromPage(e) || !/^\d{3,30}$/.test(String(id))) return { error: 'denied' };
+    try { const fs = require('fs'), buf = fs.readFileSync(vaultFile(id));
+      const text = buf[0] === 0x7b ? buf.toString('utf8') : safeStorage.decryptString(buf);
+      return { data: JSON.parse(text) }; } catch { return { data: {} }; }
+  });
+  ipcMain.handle('vault-set', async (e, id, data) => {
+    if (!fromPage(e) || !/^\d{3,30}$/.test(String(id)) || !data || typeof data !== 'object') return { error: 'denied' };
+    try { const fs = require('fs'), text = JSON.stringify(data); if (text.length > 50e6) return { error: 'Dữ liệu quá lớn.' };
+      fs.mkdirSync(path.dirname(vaultFile(id)), { recursive: true });
+      const tmp = vaultFile(id) + '.tmp';
+      fs.writeFileSync(tmp, safeStorage.isEncryptionAvailable() ? safeStorage.encryptString(text) : Buffer.from(text, 'utf8'));
+      fs.renameSync(tmp, vaultFile(id)); return { ok: true }; } catch (err) { return { error: err.message }; }
   });
   // Danh mục dịch vụ từ trang web (ghi chú gốc, giá web, bảo trì, thời gian TB): đọc bằng phiên cột Dịch vụ, chỉ đọc.
   let svcCatalogRun = null;

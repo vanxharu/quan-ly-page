@@ -132,7 +132,56 @@
     for (const w of cat?.list || []) if (!ids.has(w.id)) merged.push({ id: w.id, name: w.name, category: w.group, platform: w.platform, web: true, webChecked: true, webOnly: true,
       notes: w.notes, status: w.status, avgTime: w.avgTime, startTime: w.startTime, refill: w.refill, min: w.min || 1, max: w.max || 1e9, rate: 0, unitCost: w.rate, costFromWeb: true,
       groupIndex: w.groupIndex ?? 999, pos: w.pos ?? 0, parent: w.parent || '', child: w.child || '', labels: w.labels || '', type: w.type || '' });
+    checkPrices(merged).catch(() => {});
     return merged;
+  }
+  // ── Báo giá gốc thay đổi: máy chủ đang dùng trong gói bán / bảng giá của bạn đổi giá (hoặc bị gỡ) → báo + ghi lại để kiểm tra giá bán ──
+  const SNAP = 'svcCostSnapV1', ALERTS = 'svcPriceAlertsV1'; // SNAP { id: giá gốc/đv } · ALERTS [{ id, name, old, now, at, pkgs, gone }]
+  async function checkPrices(list) {
+    const s = await settings(), watch = new Set([...(s.packages || []).map(p => String(p.serviceId)), ...Object.keys(s.prices || {})].filter(Boolean));
+    if (!watch.size || !list.length) return;
+    const snap = await DB.get(SNAP, null), byId = new Map(list.map(x => [x.id, x])), next = { ...(snap || {}) };
+    const alerts = await DB.get(ALERTS, []), fresh = [];
+    for (const id of watch) {
+      const x = byId.get(id), now = x ? Number(x.unitCost) || 0 : null, old = snap?.[id];
+      if (now) next[id] = now;
+      if (!snap || old == null) continue; // lần đầu chỉ ghi lại giá
+      const gone = !x, changed = now && Math.abs(now - old) / old > 0.005;
+      if (!gone && !changed) continue;
+      if (gone) delete next[id];
+      const pkgs = (s.packages || []).filter(p => String(p.serviceId) === id).map(p => p.name);
+      const a = { id, name: x?.name || `Máy chủ ${id}`, old, now: now || 0, at: Date.now(), pkgs, gone, sell: s.prices?.[id] ?? null };
+      const i = alerts.findIndex(y => y.id === id); if (i >= 0) { a.old = alerts[i].old; alerts.splice(i, 1); } // gộp các lần đổi chưa xem: giữ giá ban đầu
+      if (!gone && Math.abs(a.now - a.old) / a.old <= 0.005) continue; // đổi rồi đổi lại như cũ
+      alerts.unshift(a); fresh.push(a);
+    }
+    await DB.set(SNAP, next);
+    if (!fresh.length) return;
+    await DB.set(ALERTS, alerts.slice(0, 50));
+    const one = fresh[0];
+    App.notify?.(`⚠ Giá gốc dịch vụ thay đổi (${fresh.length})`, one.gone ? `${one.name}: web dịch vụ không còn máy chủ này.` : `${one.name}: ${m2(one.old)} → ${m2(one.now)}/đv${one.pkgs.length ? ' · gói ' + one.pkgs.join(', ') : ''}. Kiểm tra lại giá bán.`);
+    if (App.current?.() === 'services') App.tabs.services?.refresh?.();
+  }
+  // Kiểm tra giá định kỳ khi app mở (6 giờ/lần), chỉ khi đã có API key.
+  setInterval(async () => { try { if ((await settings()).apiKey) await services(true); } catch {} }, 6 * 3600e3);
+  function priceAlertCard(alerts, s) {
+    if (!alerts.length) return null;
+    const pct2 = a => a.gone ? 'Không còn trên web' : `${a.now > a.old ? '+' : ''}${Math.round((a.now - a.old) / a.old * 1000) / 10}%`;
+    return h('div', { className: 'card svc-price-alerts' },
+      h('div', { className: 'toolbar' }, h('h3', { className: 'card-title grow', textContent: `⚠ Giá gốc thay đổi · ${alerts.length} máy chủ` }),
+        h('button', { type: 'button', className: 'btn btn-ghost btn-sm', textContent: 'Đã kiểm tra hết', onclick: async () => { await DB.set(ALERTS, []); App.tabs.services.refresh(); } })),
+      h('p', { className: 'hint', style: 'margin:0 0 6px', textContent: 'Máy chủ dùng trong gói bán / bảng giá của bạn vừa đổi giá gốc. Xem lại giá bán để không bán lỗ.' }),
+      ...alerts.map(a => {
+        const pk = (s.packages || []).filter(p => String(p.serviceId) === a.id);
+        const margin = pk.map(p => { const q = p.kind === 'fixed' ? Number(p.qty) || 0 : 1000, sell = p.kind === 'fixed' ? Number(p.price) || 0 : (Number(p.unitPrice) || 0) * 1000;
+          return `${p.name}: lãi ${money(sell - a.old * q)} → ${money(sell - a.now * q)}${p.kind === 'fixed' ? '' : ' /1000'}`; });
+        return h('div', { className: 'svc-pa-row' + (a.now > a.old || a.gone ? ' up' : ' down') },
+          h('div', { className: 'grow' }, h('strong', { textContent: `MC ${a.id} · ${a.name}` }),
+            h('div', { className: 'hint', textContent: a.gone ? 'Web dịch vụ không còn máy chủ này: đổi máy chủ gốc cho gói.' : `${m2(a.old)} → ${m2(a.now)}/đv (${pct2(a)}) · ${fmtTime(a.at)}` }),
+            margin.length ? h('div', { className: 'hint', textContent: margin.join(' · ') }) : a.sell != null ? h('div', { className: 'hint', textContent: `Giá bán bảng giá: ${m2(a.sell)}/đv → lãi ${m2(a.sell - a.now)}/đv` }) : null),
+          h('span', { className: 'svc-pa-pct', textContent: pct2(a) }),
+          h('button', { type: 'button', className: 'btn btn-ghost btn-sm', textContent: 'Đã xem', onclick: async () => { await DB.set(ALERTS, (await DB.get(ALERTS, [])).filter(x => x.id !== a.id)); App.tabs.services.refresh(); } }));
+      }));
   }
   // Giá gốc ước tính = giá gốc 1 đơn vị × số lượng. Giá thật lấy theo "charge" khi web đã nhận đơn.
   // Máy chủ bình luận/đánh giá: phải gửi nội dung (mỗi dòng 1 bình luận), số lượng = số dòng.
@@ -249,12 +298,14 @@
     const chip = (p, label, n) => h('button', { type: 'button', className: 'cp-chip' + (pf === p ? ' on' : ''), onclick: () => { pf = p; draw(); } },
       p ? platBadge(p, 16) : null, h('span', { textContent: label }), h('small', { textContent: n }));
     const choose = v => { cur = v; if (collapsible) open = false; draw(); onPick(v); };
+    // Số lượt đã bán gói: gói hay dùng (top 5, từ 2 lượt) có ★ + số, gói khác chỉ số nhỏ.
+    const useEl = i => i.uses ? h('span', { className: 'cp-uses' + (i.star ? ' star' : ''), title: `Đã dùng ${i.uses} lần`, textContent: (i.star ? '★ ' : '') + i.uses }) : null;
     const tagEls = i => [...(i.tags || []).map(([t, c]) => h('span', { className: 'cp-tag ' + c, textContent: t })), i.warn ? h('span', { className: 'cp-tag off', textContent: i.warn }) : null];
     const draw = () => {
       const [ci, ck] = find(cur);
       summary.replaceChildren(collapsible && ci ? h('button', { type: 'button', className: 'cp-current cp-sum', title: open ? 'Thu gọn' : 'Bấm để đổi', onclick: () => { open = !open; draw(); if (open) searchIn.focus(); } },
         ci.always ? h('span', { className: 'plat-badge any', textContent: '⚙' }) : platBadge(ci.platform, 22),
-        h('span', { className: 'cp-main' }, h('span', { className: 'cp-title', textContent: ci.label + (ck ? ` · ${ck.label}` : '') }), ci.sub ? h('span', { className: 'cp-sub', textContent: ci.sub }) : null),
+        h('span', { className: 'cp-main' }, h('span', { className: 'cp-line' }, h('span', { className: 'cp-title', textContent: ci.label + (ck ? ` · ${ck.label}` : '') }), useEl(ci)), ci.sub ? h('span', { className: 'cp-sub', textContent: ci.sub }) : null),
         (ck?.price || ci.price) ? h('span', { className: 'cp-price', textContent: ck?.price || ci.price }) : null,
         h('span', { className: 'cp-caret', textContent: open ? '▴ Thu gọn' : '▾ Đổi' })) : '');
       panel.hidden = collapsible && !open && !!ci;
@@ -269,7 +320,7 @@
           onclick: () => choose(i.value), onkeydown: e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); choose(i.value); } } },
           i.always ? h('span', { className: 'plat-badge any', textContent: '⚙' }) : platBadge(i.platform, 22),
           h('span', { className: 'cp-main' },
-            h('span', { className: 'cp-line' }, h('span', { className: 'cp-title', textContent: i.label }), ...tagEls(i)),
+            h('span', { className: 'cp-line' }, h('span', { className: 'cp-title', textContent: i.label }), useEl(i), ...tagEls(i)),
             i.sub ? h('span', { className: 'cp-sub', textContent: i.sub }) : null,
             i.kids?.length ? h('span', { className: 'cp-kids' }, ...[{ value: i.value, label: i.kidLabel || 'mặc định', price: i.price }, ...i.kids].map(k =>
               h('button', { type: 'button', className: 'cp-kid' + (k.value === cur ? ' on' : ''), title: k.price || '', textContent: k.label, onclick: e => { e.stopPropagation(); choose(k.value); } }))) : null),
@@ -376,6 +427,14 @@
       ...pkgs.map(pk => { const svc = list.find(x => x.id === String(pk.serviceId)), plat = svc?.platform || (PLAT[pk.name.split(' · ')[0]] ? pk.name.split(' · ')[0] : '');
         return { value: pk.id, label: plat ? pk.name.replace(plat + ' · ', '') : pk.name, sub: svc ? `Gốc: MC ${svc.id} · ${m2(svc.unitCost)}/đv` : 'Chưa gắn máy chủ gốc', platform: plat, group: plat,
           tags: tagsOf(pk.name), price: pk.kind === 'fixed' ? `${Number(pk.qty).toLocaleString('vi-VN')} = ${money(pk.price)}` : `${m2(pk.unitPrice)}/đv`, warn: svc && stateOf(svc)[1] === 'err' ? 'Gốc bảo trì' : !svc ? 'Thiếu máy chủ' : '' }; })];
+    const uses = new Map(), bump = id => id && uses.set(id, (uses.get(id) || 0) + 1);
+    for (const o of await DB.get(ORDERS, []).catch(() => [])) if (o.source === 'service') bump(o.packageId);
+    for (const q of await quotes().catch(() => [])) for (const l of linesOf(q)) if (!l.done) bump(l.packageId);
+    const top = [...uses.entries()].filter(([, n]) => n >= 2).sort((a, b) => b[1] - a[1]).slice(0, 5).map(([id]) => id);
+    for (const it of pkgItems) if (uses.get(it.value)) { it.uses = uses.get(it.value); it.star = top.includes(it.value); }
+    // Gói hay dùng lên đầu trong cùng nền tảng (giữ thứ tự nhóm).
+    const platOrder = [...new Set(pkgItems.map(i => i.platform || ''))];
+    pkgItems.sort((a, b) => (b.always ? 1 : 0) - (a.always ? 1 : 0) || platOrder.indexOf(a.platform || '') - platOrder.indexOf(b.platform || '') || (b.uses || 0) - (a.uses || 0));
     const pkgPick = cardPicker({ items: pkgItems, value: '', plat: linkPlat(), height: 240, collapsible: true, placeholder: 'Tìm gói…', onPick: v => { pkgSel.value = v; pkgSel.onchange(); } });
     const svcPick = cardPicker({ items: serverItems(list.filter(x => stateOf(x)[1] !== 'err')), value: '', plat: linkPlat(), height: 260, collapsible: true, placeholder: 'Tìm máy chủ (vd: follow, like page, view tiktok, MC 6560)…',
       onPick: v => { pick.value = v; pick.onchange(); } });
@@ -1054,6 +1113,7 @@
           h('button', { className: 'btn btn-ghost', textContent: '＋ Thêm đơn theo mã', title: 'Đơn đã tạo thẳng trên web dịch vụ: nhập mã đơn để app theo dõi giá gốc, trạng thái', onclick: () => importById() }),
           h('button', { className: 'btn btn-ghost', textContent: 'Mở web dịch vụ ↗', onclick: () => openWeb() }),
           h('button', { className: 'btn btn-primary', textContent: '＋ Báo giá', onclick: () => createDialog() })),
+        h('div', { id: 'svPriceAlerts' }),
         h('div', { className: 'kpis', id: 'svKpis' }),
         h('div', { className: 'card', id: 'svVip', hidden: true }),
         h('div', { className: 'card', id: 'svQuotes' }),
@@ -1066,6 +1126,7 @@
     async refresh() {
       if (!$('svOrders')) return;
       const s = await settings(), from = since();
+      { const pa = priceAlertCard(await DB.get(ALERTS, []), s); $('svPriceAlerts').replaceChildren(...(pa ? [pa] : [])); }
       $('svPeriod').replaceChildren(...PERIODS.map(([k, t]) => h('button', { type: 'button', className: 'chip', 'aria-pressed': String(period === k), textContent: t, onclick: () => { period = k; this.refresh(); } })));
       const all = (await DB.get(ORDERS, [])).filter(o => o.source === 'service' && o.at >= from);
       refillOk = new Set(); if (s.apiKey) try { for (const x of await services()) if (x.refill || warrantyName(x.name)) refillOk.add(x.id); } catch {}

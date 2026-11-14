@@ -38,6 +38,7 @@
   App.tab('settings', {
     mount(el) {
       el.append(
+        h('div', { id: 'vaultCard' }),
         h('div', { className: 'card', id: 'srvCard' }),
         // App Windows: mật khẩu mở app + tự khoá (cài trong app, không lưu trên web).
         window.metaDesktop?.lockSettings ? h('div', { className: 'card' }, h('h3', { className: 'card-title', textContent: '🔒 Bảo mật app' }),
@@ -62,6 +63,7 @@
     },
     async refresh() {
       drawRules(); App.server?.drawCard();
+      if (App.vault && $('vaultCard')) $('vaultCard').replaceChildren(App.vault.card());
       window.metaDesktop?.lockState?.().then(st => {
         $('lockInfo').textContent = st.enabled ? `Đang bật: khoá khi mở app${st.onMinimize ? ', khi thu nhỏ / khoá màn hình' : ''}${st.idleMinutes ? `, sau ${st.idleMinutes} phút không dùng máy` : ''}.` : 'Chưa đặt mật khẩu: ai mở máy cũng vào được app.';
         $('lockNow').hidden = !st.enabled;

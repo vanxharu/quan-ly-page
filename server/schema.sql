@@ -165,3 +165,12 @@ create table if not exists user_templates (
 alter table user_templates enable row level security;
 drop policy if exists "own templates" on user_templates;
 create policy "own templates" on user_templates for all to authenticated using (user_id = auth.uid()) with check (user_id = auth.uid());
+
+-- Dữ liệu lưu theo tài khoản Facebook (tin mẫu, gói bán, API key dịch vụ, tài khoản ngân hàng…): mỗi tài khoản FB một dòng.
+-- Chỉ hàm fb-admin (service role) đọc/ghi, sau khi xác minh token Facebook đúng của app này và đúng người dùng → RLS bật, không policy.
+create table if not exists user_vault (
+  fb_user_id text primary key,
+  data jsonb not null default '{}'::jsonb,
+  updated_at timestamptz not null default now()
+);
+alter table user_vault enable row level security;
