@@ -775,7 +775,7 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
     const body = JSON.stringify({ app_id: cfg.app, payload, request_id: req, type: 3 });
     return wc.executeJavaScript(`(() => { const body = ${JSON.stringify(body)}, pid = ${req};
       const all = window.__gaWS || [], ws = all.filter(w => w.readyState === 1 && w.__ls).pop();
-      if (!ws) return 'chưa thấy kết nối Lightspeed (' + all.length + ' socket: ' + all.map(w => (w.url || '').replace(/^wss:\/\//, '').split(/[/?]/)[0] + (w.readyState === 1 ? '' : '·đóng')).join(', ') + ')';
+      if (!ws) return 'chưa thấy kết nối Lightspeed (' + all.length + ' socket: ' + all.map(w => String(w.url || '').replace('wss://', '').split('/')[0].split('?')[0] + (w.readyState === 1 ? '' : '·đóng')).join(', ') + ')';
       const enc = new TextEncoder(), topic = enc.encode('/ls_req'), data = enc.encode(body);
       const rest = 2 + topic.length + 2 + data.length, len = []; let n = rest; do { let b = n % 128; n = Math.floor(n / 128); if (n) b |= 128; len.push(b); } while (n);
       const out = new Uint8Array(1 + len.length + rest); let i = 0;
