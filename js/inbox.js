@@ -373,7 +373,7 @@
       pages.forEach((p, i) => { if (saved[i].length && !S.convs.some(c => c.page.id === p.id)) partial.set(p.id, saved[i]); });
       if (partial.size) { S.crm = await App.crm.all(); await paint(); partial.clear(); }
     }
-    const lists = await pool(pages, viaBs ? 1 : 3, async p => (viaBs && await bsThreads(p, { force }).then(l => { if (l?.length) { partial.set(p.id, l); paint(); } return l; }).catch(() => null)) || convsFor(p, { maxAge: force ? 0 : silent ? listInterval(p) : 30e3, force, low: silent }).catch(async e => {
+    const lists = await pool(pages, viaBs ? 4 : 3, async p => (viaBs && await bsThreads(p, { force }).then(l => { if (l?.length) { partial.set(p.id, l); paint(); } return l; }).catch(() => null)) || convsFor(p, { maxAge: force ? 0 : silent ? listInterval(p) : 30e3, force, low: silent }).catch(async e => {
       const why = `${p.name}: ${e.message}${e.code ? ` (mã ${e.code}${e.sub ? '/' + e.sub : ''})` : ''}`;
       const bs = viaBs ? null : await bsThreads(p).catch(() => null);
       if (bs?.length) { errors.push(`${why} → đang hiện ${bs.length} hội thoại đọc từ Business Suite (bấm để mở trong cột Meta).`); return bs; }

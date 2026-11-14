@@ -312,7 +312,15 @@ app.whenReady().then(async () => {
   const consoleLog = [];
   for (const [name, wc] of [['cot-phai', metaView.webContents], ['soan-ngam', composer.webContents]])
     wc.on('console-message', (e) => { const lvl = e.level ?? ''; if (!['error', 'warning', 2, 3].includes(lvl)) return; consoleLog.push(`[${new Date().toISOString()}] ${name} ${lvl}: ${String(e.message).slice(0, 500)} (${e.sourceId || ''}:${e.lineNumber || ''})`); if (consoleLog.length > 300) consoleLog.shift(); });
-  const auto = createMetaAuto({ worker, composer, metaView, showMeta: showMetaTemp, metaShown: () => side === 'meta',
+  // Khung ẩn thêm cho từng Page (Hộp thư Business Suite chạy song song). Cùng phiên đăng nhập, giả Chrome như khung gốc.
+  const makeWorker = () => {
+    const w = new BrowserWindow({ show: false, width: 1280, height: 900, webPreferences: { partition: META, offscreen: true, sandbox: true, contextIsolation: true, backgroundThrottling: false } });
+    w.webContents.setFrameRate(10); w.webContents.setAudioMuted(true);
+    w.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+    w.ready = asChrome(w.webContents); // giả Chrome xong mới cho tải Business Suite
+    return w;
+  };
+  const auto = createMetaAuto({ worker, makeWorker, composer, metaView, showMeta: showMetaTemp, metaShown: () => side === 'meta',
     progress: data => pageView.webContents.executeJavaScript(`window.App?.composeProgress?.(${JSON.stringify(data)})`).catch(() => {}),
     notify: msg => pageView.webContents.executeJavaScript(`typeof toast === 'function' && toast(${JSON.stringify(msg)}, 30000)`).catch(() => {}),
     threadChanged: id => pageView.webContents.executeJavaScript(`window.App?.inbox?.bsChanged?.(${JSON.stringify(String(id))})`).catch(() => {}) });

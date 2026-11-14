@@ -168,15 +168,9 @@ async function putImage(dbg, objectId, image, base) {
   return r?.result?.value === 1;
 }
 
-function createMetaAuto({ worker, composer, metaView, showMeta = () => () => {}, metaShown = () => true, notify = () => {}, progress = () => {}, threadChanged = () => {} }) {
+function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMeta = () => () => {}, metaShown = () => true, notify = () => {}, progress = () => {}, threadChanged = () => {} }) {
   // Hội thoại đang mở trong khung ẩn có tin mới/đổi → báo ngay cho Hộp thư (không phải chờ chu kỳ đọc lại).
   // Trang ẩn theo dõi khung tin bằng MutationObserver và in một dấu hiệu ra console; ở đây bắt dấu hiệu đó.
-  let lastPing = 0;
-  worker.webContents.on('console-message', (e, level, message) => {
-    const msg = typeof e?.message === 'string' ? e.message : String(message || '');
-    if (msg !== '__GA_THREAD_CHANGED__' || !openedThread || Date.now() - lastPing < 1500) return;
-    lastPing = Date.now(); try { threadChanged(openedThread); } catch {}
-  });
   const watchThread = wc => wc.executeJavaScript(`(() => { try { window.__gaObs?.disconnect(); } catch {}
     const col = document.querySelector('[data-surface$="lib:inbox:detail_column"]'); if (!col) return false;
     let t = 0; window.__gaObs = new MutationObserver(() => { clearTimeout(t); t = setTimeout(() => console.log('__GA_THREAD_CHANGED__'), 500); });
@@ -196,19 +190,45 @@ function createMetaAuto({ worker, composer, metaView, showMeta = () => () => {},
     let n = 0;
     return (fn, prio = 0) => new Promise((ok, bad) => { tasks.push({ fn, prio, ok, bad, n: n++ }); next(); });
   };
-  const queue = makePrioQueue(), composeQueue = makeQueue();
+  const composeQueue = makeQueue();
+  // Mỗi Page một khung ẩn riêng (chạy song song): đọc danh sách Page này không làm mất hội thoại đang mở của Page khác,
+  // bấm khách Page nào cũng mở ngay trong khung của Page đó. Khung đầu tiên dùng cửa sổ có sẵn; tối đa 8 khung, dư thì đóng khung lâu không dùng.
+  const slots = new Map();
+  const slot = pageId => {
+    pageId = String(pageId);
+    let sl = slots.get(pageId);
+    if (!sl) {
+      const rootFree = ![...slots.values()].some(x => x.win === worker);
+      if (!rootFree && makeWorker && slots.size >= 8) { // đóng khung lâu không dùng nhất (không đóng cửa sổ gốc)
+        const old = [...slots.entries()].filter(([, x]) => x.win !== worker).sort((a, b) => a[1].used - b[1].used)[0];
+        if (old) { slots.delete(old[0]); try { old[1].win.destroy(); } catch {} }
+      }
+      const shared = !rootFree && !makeWorker ? [...slots.values()].find(x => x.win === worker) : null; // không tạo được khung mới: dùng chung khung gốc
+      const win = rootFree || !makeWorker ? worker : makeWorker();
+      sl = { pageId, win, opened: '', used: Date.now(), queue: shared?.queue || makePrioQueue(), lastPing: 0 };
+      if (!shared) sl.win.webContents.on('console-message', (e, level, message) => {
+        const msg = typeof e?.message === 'string' ? e.message : String(message || '');
+        if (msg !== '__GA_THREAD_CHANGED__' || Date.now() - sl.lastPing < 1500) return;
+        // Khung gửi dấu hiệu → báo hội thoại đang mở của (các) Page dùng khung này.
+        for (const x of slots.values()) if (x.win === sl.win && x.opened) { sl.lastPing = Date.now(); try { threadChanged(x.opened); } catch {} }
+      });
+      slots.set(pageId, sl);
+    }
+    sl.used = Date.now();
+    return sl;
+  };
+  const queue = (pageId, fn, prio = 0) => { const sl = slot(pageId); return sl.queue(async () => { await sl.win.ready; return fn(); }, prio); };
 
   // Danh sách hội thoại Business Suite: mỗi dòng có data-maiba-contact-id (UID Facebook thật của khách), tên và ảnh.
   // Đọc cả danh sách của một Page một lần (lưu 10 phút), rồi so tên với khách trong app.
-  let openedThread = ''; // hội thoại đang mở trong khung ẩn (pageId:uid); tải lại trang thì xoá
   const pageRows = new Map(); // pageId -> { at, rows: Map(nameKey -> [{uid,name,pic}]) }
   const key = s => String(s || '').normalize('NFC').replace(/\s+/g, ' ').trim().toLowerCase();
   const loadRows = async (pageId, wantName) => {
     const cached = pageRows.get(pageId);
     if (cached && Date.now() - cached.at < 10 * 60e3 && (!wantName || cached.rows.has(key(wantName)) || cached.full)) return cached;
-    const wc = worker.webContents;
+    const sl = slot(pageId), wc = sl.win.webContents;
     if (!cached || !wc.getURL().includes(`asset_id=${pageId}`)) {
-      openedThread = '';
+      sl.opened = '';
       await wc.loadURL(`https://business.facebook.com/latest/inbox/messenger?asset_id=${pageId}&mailbox_id=${pageId}`).catch(() => {});
       await sleep(2500);
     }
@@ -228,7 +248,7 @@ function createMetaAuto({ worker, composer, metaView, showMeta = () => () => {},
     pageRows.set(pageId, entry);
     return entry;
   };
-  const lookupProfile = ({ pageId, psid, name }) => queue(async () => {
+  const lookupProfile = ({ pageId, psid, name }) => queue(pageId, async () => {
     if (!/^\d+$/.test(String(pageId)) || !/^\d+$/.test(String(psid))) return { error: 'Thiếu Page hoặc khách.' };
     const entry = await loadRows(String(pageId), name);
     if (entry.error) return entry;
@@ -239,12 +259,11 @@ function createMetaAuto({ worker, composer, metaView, showMeta = () => () => {},
   });
 
   // Hộp thư dự phòng khi Graph API lỗi: đọc danh sách hội thoại mới nhất của Page trong khung ẩn.
-  const listThreads = ({ pageId, max = 40 }) => queue(async () => {
-    if (!/^\d+$/.test(String(pageId))) return { error: 'Thiếu Page.' };
-    const wc = worker.webContents;
+  const listThreads = ({ pageId, max = 40 }) => !/^\d+$/.test(String(pageId)) ? Promise.resolve({ error: 'Thiếu Page.' }) : queue(pageId, async () => {
+    const sl = slot(pageId), wc = sl.win.webContents;
     // Đang ở hộp thư của đúng Page (vd vừa mở hội thoại): đọc danh sách tại chỗ, không tải lại trang → hội thoại đang theo dõi vẫn giữ.
     const here = wc.getURL().includes(`asset_id=${pageId}`) && await wc.executeJavaScript(`!!document.querySelector('[data-maiba-contact-id]')`).catch(() => false);
-    if (!here) { openedThread = ''; await wc.loadURL(`https://business.facebook.com/latest/inbox/messenger?asset_id=${pageId}&mailbox_id=${pageId}`).catch(() => {}); }
+    if (!here) { sl.opened = ''; await wc.loadURL(`https://business.facebook.com/latest/inbox/messenger?asset_id=${pageId}&mailbox_id=${pageId}`).catch(() => {}); }
     else { // lần đọc trước đã cuộn danh sách xuống: cuộn về đầu để lấy hội thoại mới nhất
       await wc.executeJavaScript(`(() => { let box = document.querySelector('[data-maiba-contact-id]');
         while (box && !(box.scrollHeight > box.clientHeight + 5 && /auto|scroll/.test(getComputedStyle(box).overflowY))) box = box.parentElement;
@@ -278,8 +297,8 @@ function createMetaAuto({ worker, composer, metaView, showMeta = () => () => {},
     return true;
   };
   const openThreadHidden = async (pageId, uid) => {
-    const wc = worker.webContents, id = `${pageId}:${uid}`;
-    if (openedThread === id && wc.getURL().includes(`asset_id=${pageId}`)) return true;
+    const sl = slot(pageId), wc = sl.win.webContents, id = `${pageId}:${uid}`;
+    if (sl.opened === id && wc.getURL().includes(`asset_id=${pageId}`)) return true;
     // Khung chi tiết đã đúng khách này (data-surface "<uid>:<tên>") và có tin → xong.
     const ready = async () => !!(await wc.executeJavaScript(`(() => { const col = document.querySelector('[data-surface$="lib:inbox:detail_column"]');
       return !!(col && col.querySelector('[data-surface^="${uid}:"]') && col.querySelector('[data-message-id]')); })()`).catch(() => false));
@@ -287,7 +306,7 @@ function createMetaAuto({ worker, composer, metaView, showMeta = () => () => {},
     if (wc.getURL().includes(`asset_id=${pageId}`)) {
       for (let i = 0; i < 2; i++) {
         if (await mouse(wc, { selector: `[data-maiba-contact-id="${uid}"]` })) {
-          for (let k = 0; k < 20; k++) { await sleep(300); if (await ready()) { openedThread = id; await watchThread(wc); return true; } }
+          for (let k = 0; k < 20; k++) { await sleep(300); if (await ready()) { sl.opened = id; await watchThread(wc); return true; } }
           break;
         }
         await wc.executeJavaScript(`(() => { let box = document.querySelector('[data-maiba-contact-id]');
@@ -296,7 +315,7 @@ function createMetaAuto({ worker, composer, metaView, showMeta = () => () => {},
         await sleep(800);
       }
     }
-    openedThread = '';
+    sl.opened = '';
     await wc.loadURL(`https://business.facebook.com/latest/inbox/messenger?asset_id=${pageId}&mailbox_id=${pageId}`).catch(() => {});
     for (let i = 0; i < 70; i++) { // Business Suite ẩn có khi tải chậm: chờ tối đa ~35 giây cho dòng của khách hiện ra
       await sleep(500);
@@ -306,11 +325,11 @@ function createMetaAuto({ worker, composer, metaView, showMeta = () => () => {},
     }
     for (let i = 0; i < 30; i++) {
       await sleep(400);
-      if (await ready()) { openedThread = id; await watchThread(wc); return true; }
+      if (await ready()) { sl.opened = id; await watchThread(wc); return true; }
     }
     // Không nhận ra được khách trong khung chi tiết (Meta đổi giao diện): vẫn nhận nếu đã có tin.
     const r = await wc.executeJavaScript(`(${readMessages})(false)`).catch(() => null);
-    if (r?.messages?.length) { openedThread = id; await watchThread(wc); return true; }
+    if (r?.messages?.length) { sl.opened = id; await watchThread(wc); return true; }
     return false;
   };
   // Đưa ảnh vào khung trả lời của Business Suite, thử lần lượt 3 cách (giao diện Meta hay đổi):
@@ -434,23 +453,22 @@ function createMetaAuto({ worker, composer, metaView, showMeta = () => () => {},
     finally { setTimeout(() => { try { if (oldText) clipboard.writeText(oldText); } catch {} }, 1500); }
   };
   const threadArgs = ({ pageId, uid }) => /^\d+$/.test(String(pageId)) && /^\d+$/.test(String(uid));
-  const readThread = args => queue(async () => {
-    if (!threadArgs(args)) return { error: 'Thiếu Page hoặc khách.' };
+  const readThread = args => !threadArgs(args) ? Promise.resolve({ error: 'Thiếu Page hoặc khách.' }) : queue(args.pageId, async () => {
     const ok = await openThreadHidden(String(args.pageId), String(args.uid));
     if (ok === 'login') return { error: 'login' };
     if (!ok) return { error: 'Không mở được hội thoại trong Business Suite.' };
-    const wc = worker.webContents;
+    const wc = slot(args.pageId).win.webContents;
     if (args.older) { await wc.executeJavaScript(`(${readMessages})(true)`).catch(() => {}); await sleep(2500); }
     return await wc.executeJavaScript(`(${readMessages})(false)`).catch(() => null) || { error: 'Không đọc được tin.' };
   }, 1);
   // Gửi tin như người dùng gõ trong Business Suite (không qua API → không bị giới hạn của app chưa duyệt).
-  const sendThread = args => queue(async () => {
+  const sendThread = args => !threadArgs(args) ? Promise.resolve({ error: 'Thiếu Page hoặc khách.' }) : queue(args.pageId, async () => {
     const text = String(args.text || '').trim(), image = args.image || '';
-    if (!threadArgs(args) || (!text && !image)) return { error: 'Thiếu nội dung.' };
-    if (image) openedThread = ''; // tải lại hội thoại: bỏ ảnh đính kèm còn sót từ lần thử trước
+    if (!text && !image) return { error: 'Thiếu nội dung.' };
+    if (image) slot(args.pageId).opened = ''; // tải lại hội thoại: bỏ ảnh đính kèm còn sót từ lần thử trước
     const ok = await openThreadHidden(String(args.pageId), String(args.uid));
     if (ok !== true) return { error: ok === 'login' ? 'login' : 'Không mở được hội thoại trong Business Suite.' };
-    const wc = worker.webContents, dbg = wc.debugger;
+    const wc = slot(args.pageId).win.webContents, dbg = wc.debugger;
     const read = () => wc.executeJavaScript(`(${readMessages})(false)`).catch(() => null);
     const myPics = r => (r?.messages || []).filter(m => m.mine && m.pic).length;
     const picsBefore = myPics(await read());
