@@ -795,29 +795,43 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
   const sendThread = args => { const T = { at: new Date().toISOString(), anh: !!args.image, kb: args.image ? Math.round(String(args.image).length * 0.75 / 1024) : 0, chu: String(args.text || '').length, buoc: {} }, t0 = Date.now();
     const mark = k => { T.buoc[k] = (Date.now() - t0) / 1000; };
     if (!threadArgs(args)) return Promise.resolve({ error: 'Thiếu Page hoặc khách.' });
+    const finish = r => { mark('xong'); T.ketqua = r?.error ? 'lỗi: ' + String(r.error).slice(0, 80) : 'ok'; T.cach = args.image ? attachImage.last?.tried?.slice(-1)[0] || '' : sendCore.how || 'nut'; sendCore.how = ''; writeSendLog(T); return r; };
+    // Tin chỉ có chữ: gửi thẳng NGAY qua khung nào của Page đã sẵn sàng (khung gửi, hoặc khung đọc khi khung gửi còn đang khởi động) — không xếp hàng.
+    if (!args.image && String(args.text || '').trim()) return (async () => {
+      const pid = String(args.pageId), wc = await directReady(sendSlots.get(pid), pid) || await directReady(slots.get(pid), pid);
+      if (wc) { T.khung = wc === sendSlots.get(pid)?.win?.webContents ? 'gui' : 'doc'; mark('hang-doi'); const d = await tryDirect(args, wc, mark); if (d) return finish(d); args.directTried = true; }
+      return sendQueue(args.pageId, ss => { mark('hang-doi'); T.khung = ss.send ? 'gui' : 'doc'; return sendCore(args, mark, ss); }, 1).then(finish, e => { mark('xong'); T.ketqua = 'lỗi: ' + e.message; writeSendLog(T); throw e; });
+    })();
     return sendQueue(args.pageId, ss => { mark('hang-doi'); T.khung = ss.send ? 'gui' : 'doc'; return sendCore(args, mark, ss); }, 1).then(r => { mark('xong'); T.ketqua = r?.error ? 'lỗi: ' + String(r.error).slice(0, 80) : 'ok'; T.cach = args.image ? attachImage.last?.tried?.slice(-1)[0] || '' : sendCore.how || 'nut'; sendCore.how = ''; writeSendLog(T); return r; },
       e => { mark('xong'); T.ketqua = 'lỗi: ' + e.message; writeSendLog(T); throw e; });
   };
+  // Gửi thẳng tin chữ qua một khung của Page (không cần mở hội thoại); Meta xác nhận (tin của Page về qua dữ liệu gốc) thì xong.
+  // Trả kết quả khi đã gửi được; null = chưa gửi được (gọi bên ngoài sẽ gõ + bấm Gửi như cũ).
+  async function tryDirect(args, wc, mark) {
+    const text = String(args.text || '').trim();
+    const nn = t => String(t || '').normalize('NFC').replace(/[^\p{L}\p{N}]/gu, '').toLowerCase(), want = nn(text), t1 = Date.now();
+    const echoed = () => [...(lsStore(args.pageId).msgs.get(String(args.uid))?.values() || [])].some(m => m.ts >= t1 - 3000 && want && nn(m.text).includes(want.slice(0, 40)));
+    const r = await directSend(wc, String(args.pageId), String(args.uid), text);
+    mark('gui-thang'); sendCore.how = 'thang: ' + r;
+    if (r !== 'ok') return null;
+    const done = () => { mark('xac-nhan-goc'); const lr = lsMessages(args.pageId, args.uid);
+      return { done: true, direct: true, ...(lsStore(args.pageId).loaded.has(String(args.uid)) && lr.length ? { messages: lr, source: 'ls' } : {}) }; };
+    for (let i = 0; i < 30 && !echoed(); i++) await sleep(100);
+    if (echoed()) return done();
+    const acked = lsStore(args.pageId).reqAck > t1;
+    sendCore.how = 'thang: ' + (acked ? 'Meta đã nhận gói nhưng chưa thấy tin' : 'Meta không trả lời gói');
+    // Meta đã nhận gói → tin có thể đang đi: chờ thêm 3 giây trước khi gửi lại bằng nút (tránh gửi 2 lần).
+    if (acked) { for (let i = 0; i < 30 && !echoed(); i++) await sleep(100); if (echoed()) return done(); }
+    return null;
+  }
+  // Khung đã sẵn sàng gửi thẳng: đã tải xong Hộp thư của Page và bám được kết nối Lightspeed.
+  const directReady = async (sl, pageId) => { try { const wc = sl?.win?.webContents; if (!wc || wc.isDestroyed() || wc.isLoading() || !wc.getURL().includes(`asset_id=${pageId}`)) return null;
+    const cfg = lsStore(pageId).lsCfg; if (!cfg?.app || !cfg?.ver) return null;
+    return await Promise.race([wc.executeJavaScript(`(window.__gaWS || []).some(w => w.readyState === 1 && w.__ls)`).catch(() => false), sleep(500).then(() => false)]) ? wc : null; } catch { return null; } };
   const sendCore = async (args, mark, sl) => {
     const text = String(args.text || '').trim(), image = args.image || '';
     if (!text && !image) return { error: 'Thiếu nội dung.' };
-    // Tin chỉ có chữ: thử gửi thẳng trước; Meta xác nhận (tin của Page về qua dữ liệu gốc) trong 4 giây thì xong. Không được thì gõ + bấm Gửi như cũ.
-    if (!image && sl.send) {
-      const nn = t => String(t || '').normalize('NFC').replace(/[^\p{L}\p{N}]/gu, '').toLowerCase(), want = nn(text), t1 = Date.now();
-      const echoed = () => [...(lsStore(args.pageId).msgs.get(String(args.uid))?.values() || [])].some(m => m.ts >= t1 - 3000 && want && nn(m.text).includes(want.slice(0, 40)));
-      const r = await directSend(sl.win.webContents, String(args.pageId), String(args.uid), text);
-      mark('gui-thang'); sendCore.how = 'thang: ' + r;
-      if (r === 'ok') {
-        for (let i = 0; i < 30 && !echoed(); i++) await sleep(100);
-        if (echoed()) { mark('xac-nhan-goc'); const lr = lsMessages(args.pageId, args.uid);
-          return { done: true, direct: true, ...(lsStore(args.pageId).loaded.has(String(args.uid)) && lr.length ? { messages: lr, source: 'ls' } : {}) }; }
-        const acked = lsStore(args.pageId).reqAck > t1;
-        sendCore.how = 'thang: ' + (acked ? 'Meta đã nhận gói nhưng chưa thấy tin' : 'Meta không trả lời gói');
-        // Meta đã nhận gói → tin có thể đang đi: chờ thêm 3 giây trước khi gửi lại bằng nút (tránh gửi 2 lần).
-        if (acked) for (let i = 0; i < 30 && !echoed(); i++) await sleep(100);
-        if (echoed()) { mark('xac-nhan-goc'); return { done: true, direct: true }; }
-      }
-    }
+    if (!image && sl.send && !args.directTried) { const d = await tryDirect(args, sl.win.webContents, mark); if (d) return d; }
     sendCore.how = sendCore.how || '';
     let ok = await openThreadHidden(String(args.pageId), String(args.uid), sl);
     mark('mo-hoi-thoai');
