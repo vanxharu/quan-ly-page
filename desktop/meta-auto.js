@@ -306,14 +306,15 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
           opened: sl.opened, busySec: sl.queue.runningSince ? Math.round((now - sl.queue.runningSince) / 1000) : 0, busyPrio: sl.queue.runningPrio, waiting: sl.queue.waiting?.() || 0,
           wsFrames: st.frames || 0, lsThreads: st.threads?.size || 0, lsContacts: st.contacts?.size || 0, lsLoaded: st.loaded?.size || 0, lsAgoSec: st.at ? Math.round((now - st.at) / 1000) : null,
           lsTop: st.threads ? [...st.threads.values()].sort((a, b) => b.at - a.at).slice(0, 3).map(t => (st.contacts.get(t.uid)?.name || '?').slice(0, 3) + '… ' + new Date(t.at).toISOString().slice(5, 16)) : [] };
-      }) };
+      }), send: [...sendSlots.values()].map(ss => ({ page: ss.pageId, opened: ss.opened, busySec: ss.queue.runningSince ? Math.round((now - ss.queue.runningSince) / 1000) : 0, waiting: ss.queue.waiting?.() || 0,
+        url: (() => { try { return ss.win.webContents.getURL().slice(0, 100); } catch { return 'đã đóng'; } })() })) };
       const dir = path.join(app.getPath('downloads'), 'GetHelps-debug'); fs.mkdirSync(dir, { recursive: true });
       fs.writeFileSync(path.join(dir, 'trang-thai.json'), JSON.stringify(data, null, 1));
     } catch {}
   }, 30e3);
   // Mẫu gói tin gửi (Downloads/GetHelps-debug/ls-gui-mau.json, 12 gói gần nhất): chỉ ghi trong ~20 giây quanh mỗi lần app gửi tin.
   const sentSamples = [];
-  const sentSample = (pageId, x) => { try { sentSamples.unshift({ page: String(pageId), ...x }); sentSamples.splice(12); const dir = path.join(app.getPath('downloads'), 'GetHelps-debug'); fs.mkdirSync(dir, { recursive: true });
+  const sentSample = (pageId, x) => { try { sentSamples.unshift({ page: String(pageId), ...x }); sentSamples.splice(20); const dir = path.join(app.getPath('downloads'), 'GetHelps-debug'); fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(path.join(dir, 'ls-gui-mau.json'), JSON.stringify(sentSamples, null, 1)); } catch {} };
   // Giữ tham chiếu tới WebSocket của trang (cài trước khi trang tạo kết nối, có hiệu lực từ lần tải trang sau) → bước sau gửi thẳng qua kết nối này.
   const WS_HOOK = `(() => { const W = window.WebSocket; if (!W || W.__ga) return;
@@ -321,24 +322,25 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
     G.prototype = W.prototype; Object.setPrototypeOf(G, W); G.__ga = true;
     for (const k of ['CONNECTING', 'OPEN', 'CLOSING', 'CLOSED']) try { Object.defineProperty(G, k, { value: W[k] }); } catch (e) {}
     window.WebSocket = G; })();`;
-  const lighten = async (wc, pageId) => {
+  const lighten = async (wc, pageId, quiet = false) => {
     if (!wc || wc.__gaLight) return; wc.__gaLight = true;
+    const got = quiet ? (pid, raw) => { lsIngest(pid, raw); } : lsGot; // khung gửi: chỉ ghi nhận dữ liệu gốc (để xác nhận đã gửi), không báo Hộp thư (khung đọc đã báo)
     const dbg = wc.debugger, pending = new Map();
     dbg.on('message', (_e, method, params) => {
       // Gói tin Business Suite gửi lên Meta (qua WebSocket) trong lúc app gửi tin → ghi mẫu để làm "gửi thẳng" (không bấm nút).
       if (method === 'Network.webSocketFrameSent' && Date.now() < (lsStore(pageId).capture || 0)) {
         const f = params.response || {}, raw = f.opcode === 2 ? Buffer.from(String(f.payloadData || ''), 'base64') : Buffer.from(String(f.payloadData || ''), 'utf8');
-        if (raw.length > 40) sentSample(pageId, { at: new Date().toISOString(), opcode: f.opcode, bytes: raw.length, text: raw.toString('utf8').replace(/[\x00-\x08\x0e-\x1f]/g, '·').slice(0, 20000), b64: raw.length < 60000 ? raw.toString('base64') : '' });
+        if (raw.length > 40 && raw.includes('/ls_req') && !raw.includes('"type":2')) sentSample(pageId, { at: new Date().toISOString(), opcode: f.opcode, bytes: raw.length, text: raw.toString('utf8').replace(/[\x00-\x08\x0e-\x1f]/g, '·').slice(0, 20000), b64: raw.length < 60000 ? raw.toString('base64') : '' });
       }
       // Ảnh đang tải lên Meta (để chỉ bấm Gửi khi ảnh đã lên xong).
       if (method === 'Network.requestWillBeSent' && /upload|rupload/i.test(params.request?.url || '') && /POST|PUT/i.test(params.request?.method || '')) { const up = lsStore(pageId).uploads ||= new Map(); up.set(params.requestId, Date.now()); }
       else if ((method === 'Network.loadingFinished' || method === 'Network.loadingFailed') && lsStore(pageId).uploads?.delete(params.requestId)) lsStore(pageId).uploadsDone = Date.now();
       if (method === 'Fetch.requestPaused') dbg.sendCommand('Fetch.failRequest', { requestId: params.requestId, errorReason: 'BlockedByClient' }).catch(() => {});
-      else if (method === 'Network.webSocketFrameReceived' && (lsStore(pageId).frames = (lsStore(pageId).frames || 0) + 1)) { const f = params.response || {}; const raw = f.opcode === 2 ? Buffer.from(String(f.payloadData || ''), 'base64').toString('utf8') : String(f.payloadData || ''); if (/ls_resp|upsertMessage|deleteThenInsert/.test(raw)) lsGot(pageId, raw); }
+      else if (method === 'Network.webSocketFrameReceived' && (lsStore(pageId).frames = (lsStore(pageId).frames || 0) + 1)) { const f = params.response || {}; const raw = f.opcode === 2 ? Buffer.from(String(f.payloadData || ''), 'base64').toString('utf8') : String(f.payloadData || ''); if (/ls_resp|upsertMessage|deleteThenInsert/.test(raw)) got(pageId, raw); }
       else if (method === 'Network.responseReceived' && /\/api\/graphql|lightspeed|ls_req/i.test(params.response?.url || '')) pending.set(params.requestId, params.response.url);
       else if (method === 'Network.loadingFinished' && pending.has(params.requestId)) {
         const url = pending.get(params.requestId); pending.delete(params.requestId);
-        dbg.sendCommand('Network.getResponseBody', { requestId: params.requestId }).then(b => { const raw = b?.base64Encoded ? Buffer.from(b.body, 'base64').toString('utf8') : String(b?.body || ''); if (/upsertMessage|deleteThenInsert/.test(raw)) for (const part of raw.split(/\r?\n(?=\{)/)) lsGot(pageId, part); }).catch(() => {});
+        dbg.sendCommand('Network.getResponseBody', { requestId: params.requestId }).then(b => { const raw = b?.base64Encoded ? Buffer.from(b.body, 'base64').toString('utf8') : String(b?.body || ''); if (/upsertMessage|deleteThenInsert/.test(raw)) for (const part of raw.split(/\r?\n(?=\{)/)) got(pageId, part); }).catch(() => {});
       }
     });
     await dbg.sendCommand('Fetch.enable', { patterns: BLOCK }).catch(() => {});
@@ -385,6 +387,27 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
     let last = sig(), t = 0;
     window.__gaListObs = new MutationObserver(() => { clearTimeout(t); t = setTimeout(() => { const now = sig(); if (now !== last) { last = now; console.log('__GA_LIST_CHANGED__'); } }, 400); });
     window.__gaListObs.observe(box, { childList: true, subtree: true, characterData: true }); return true; })()`).catch(() => false);
+  // ── Khung GỬI riêng cho mỗi Page: luôn mở sẵn Hộp thư, không chung hàng đợi với việc đọc nền (danh sách, đọc trước…) → bấm gửi là đi ngay.
+  // Bạn mở hội thoại nào trong app thì khung gửi mở sẵn hội thoại đó. Không tạo được khung mới (app cũ) thì dùng khung đọc như trước.
+  const sendSlots = new Map();
+  const sendSlot = pageId => {
+    pageId = String(pageId); if (!makeWorker) return slot(pageId);
+    let ss = sendSlots.get(pageId);
+    if (!ss) {
+      if (sendSlots.size >= 8) { const old = [...sendSlots.entries()].sort((a, b) => a[1].used - b[1].used)[0]; sendSlots.delete(old[0]); try { old[1].win.destroy(); } catch {} }
+      const win = makeWorker(); guard(win.webContents);
+      ss = { pageId, win, opened: '', used: Date.now(), queue: makePrioQueue(), send: true };
+      sendSlots.set(pageId, ss);
+    }
+    ss.used = Date.now();
+    return ss;
+  };
+  const sendQueue = (pageId, fn, prio = 1) => { const ss = sendSlot(pageId); return ss.queue(async () => { await ss.win.ready; await lighten(ss.win.webContents, ss.pageId, !!ss.send); return fn(ss); }, prio); };
+  // Mở sẵn: tải Hộp thư của Page vào khung gửi (lúc app đọc danh sách), mở sẵn hội thoại bạn đang xem.
+  const warmSend = pageId => { if (!makeWorker || !/^\d+$/.test(String(pageId))) return; const ss = sendSlot(pageId); if (ss.warmed) return; ss.warmed = true;
+    sendQueue(pageId, async s => { const wc = s.win.webContents; if (!wc.getURL().includes(`asset_id=${pageId}`)) await wc.loadURL(`https://business.facebook.com/latest/inbox/messenger?asset_id=${pageId}&mailbox_id=${pageId}`).catch(() => {}); }, 0).catch(() => {}); };
+  const preOpenSend = (pageId, uid) => { if (!makeWorker || !threadArgs({ pageId, uid })) return; const ss = sendSlot(pageId); if (ss.opened === `${pageId}:${uid}` || ss.queue.waiting()) return;
+    sendQueue(pageId, s => openThreadHidden(String(pageId), String(uid), s), 0).catch(() => {}); };
   const queue = (pageId, fn, prio = 0) => { const sl = slot(pageId); return sl.queue(async () => { await sl.win.ready; await lighten(sl.win.webContents, sl.pageId); return fn(); }, prio); };
 
   // Danh sách hội thoại Business Suite: mỗi dòng có data-maiba-contact-id (UID Facebook thật của khách), tên và ảnh.
@@ -443,7 +466,7 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
     for (const r of rows) if (!r.name) r.name = 'Khách Messenger';
     return rows;
   };
-  const listThreads = ({ pageId, max = 15, full = false }) => !/^\d+$/.test(String(pageId)) ? Promise.resolve({ error: 'Thiếu Page.' })
+  const listThreads = ({ pageId, max = 15, full = false }) => (warmSend(pageId), !/^\d+$/.test(String(pageId))) ? Promise.resolve({ error: 'Thiếu Page.' })
     : (!full && lsList(pageId, Math.min(Math.max(Number(max) || 15, 5), 80))) ? Promise.resolve({ rows: lsList(pageId, Math.min(Math.max(Number(max) || 15, 5), 80)), source: 'ls' })
     : queue(pageId, async () => {
     const sl = slot(pageId), wc = sl.win.webContents;
@@ -509,8 +532,8 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
     for (const type of ['mouseMoved', 'mousePressed', 'mouseReleased']) await wc.debugger.sendCommand('Input.dispatchMouseEvent', { type, x: r.x, y: r.y, button: 'left', clickCount: 1 });
     return true;
   };
-  const openThreadHidden = async (pageId, uid) => {
-    const sl = slot(pageId), wc = sl.win.webContents, id = `${pageId}:${uid}`;
+  const openThreadHidden = async (pageId, uid, sl = slot(pageId)) => {
+    const wc = sl.win.webContents, id = `${pageId}:${uid}`;
     if (sl.opened === id && wc.getURL().includes(`asset_id=${pageId}`)) return true;
     // Khung chi tiết đã đúng khách này (data-surface "<uid>:<tên>") và có tin → xong.
     const ready = async () => !!(await wc.executeJavaScript(`(() => { const col = document.querySelector('[data-surface$="lib:inbox:detail_column"]');
@@ -711,6 +734,7 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
   // Đọc cùng một hội thoại nhiều lần liền nhau (tin mới tới dồn dập, đọc định kỳ 20 giây) → dùng chung một lượt đọc đang chờ, không xếp hàng chồng lên làm tắc việc gửi tin.
   const reading = new Map();
   const readThread = args => { if (!threadArgs(args)) return Promise.resolve({ error: 'Thiếu Page hoặc khách.' });
+    if (!args.bg && !args.older) preOpenSend(args.pageId, args.uid); // bạn đang xem khách này → khung gửi mở sẵn hội thoại
     if (lsReady(args)) return Promise.resolve({ messages: lsMessages(args.pageId, args.uid), source: 'ls' });
     const k = `${args.pageId}:${args.uid}:${args.older ? 'o' : ''}`;
     if (reading.has(k)) return reading.get(k);
@@ -735,16 +759,16 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
   const sendThread = args => { const T = { at: new Date().toISOString(), anh: !!args.image, kb: args.image ? Math.round(String(args.image).length * 0.75 / 1024) : 0, chu: String(args.text || '').length, buoc: {} }, t0 = Date.now();
     const mark = k => { T.buoc[k] = (Date.now() - t0) / 1000; };
     if (!threadArgs(args)) return Promise.resolve({ error: 'Thiếu Page hoặc khách.' });
-    return queue(args.pageId, () => { mark('hang-doi'); return sendCore(args, mark); }, 1).then(r => { mark('xong'); T.ketqua = r?.error ? 'lỗi: ' + String(r.error).slice(0, 80) : 'ok'; T.cach = attachImage.last?.tried?.slice(-1)[0] || ''; writeSendLog(T); return r; },
+    return sendQueue(args.pageId, ss => { mark('hang-doi'); T.khung = ss.send ? 'gui' : 'doc'; return sendCore(args, mark, ss); }, 1).then(r => { mark('xong'); T.ketqua = r?.error ? 'lỗi: ' + String(r.error).slice(0, 80) : 'ok'; T.cach = attachImage.last?.tried?.slice(-1)[0] || ''; writeSendLog(T); return r; },
       e => { mark('xong'); T.ketqua = 'lỗi: ' + e.message; writeSendLog(T); throw e; });
   };
-  const sendCore = async (args, mark) => {
+  const sendCore = async (args, mark, sl) => {
     const text = String(args.text || '').trim(), image = args.image || '';
     if (!text && !image) return { error: 'Thiếu nội dung.' };
-    let ok = await openThreadHidden(String(args.pageId), String(args.uid));
+    let ok = await openThreadHidden(String(args.pageId), String(args.uid), sl);
     mark('mo-hoi-thoai');
     if (ok !== true) return { error: ok === 'login' ? 'login' : 'Không mở được hội thoại trong Business Suite.' };
-    const wc = slot(args.pageId).win.webContents, dbg = wc.debugger;
+    const wc = sl.win.webContents, dbg = wc.debugger;
     // Dọn ô nhập tại chỗ (gỡ ảnh sót, xoá chữ cũ). Không tải lại trang nữa: dấu hiệu "còn ảnh sót" hay nhận nhầm, tốn 20+ giây.
     if (await findComposer(wc, 4000)) await clearComposer(wc);
     mark('don-o-nhap');
