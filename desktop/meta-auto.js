@@ -69,7 +69,7 @@ function readRows(scroll) {
 // Chạy trong trang Business Suite: các hội thoại đang hiện, kèm tin cuối, giờ (chữ Meta ghi) và chưa đọc (tin cuối in đậm).
 function readThreads(scroll) {
   // Mốc giờ ở cuối mỗi dòng: "09:28", "Hôm qua", "T6"/"Thứ 6"/"Thứ Sáu", "13 Tháng 11", "13/11", "1 ngày", "Nov 13", "Fri"…
-  const isTime = s => s.length <= 24 && /^(vừa xong|now|just now|hôm qua|yesterday|\d+\s*(giây|phút|giờ|ngày|tuần|tháng|năm|[smhdwy])|\d{1,2}:\d{2}(\s*[ap]m)?|(th|thứ|t)\s?[2-7]|thứ\s+(hai|ba|tư|năm|sáu|bảy)|chủ nhật|cn|(mon|tue|wed|thu|fri|sat|sun)[a-z]*|\d{1,2}\s*(thg|tháng)\s*\d{1,2}(,?\s*\d{4})?|[a-z]{3}\s+\d{1,2}(,\s*\d{4})?|\d{1,2}\/\d{1,2}(\/\d{2,4})?)$/i.test(s);
+  const isTime = s => s.length <= 24 && /^(vừa xong|now|just now|hôm nay|today|hôm qua|yesterday|\d+\s*(giây|phút|giờ|ngày|tuần|tháng|năm|[smhdwy])|\d{1,2}:\d{2}(\s*[ap]m)?|(th|thứ|t)\s?[2-7]|thứ\s+(hai|ba|tư|năm|sáu|bảy)|chủ nhật|cn|(mon|tue|wed|thu|fri|sat|sun)[a-z]*|\d{1,2}\s*(thg|tháng)\s*\d{1,2}(,?\s*\d{4})?|[a-z]{3}\s+\d{1,2}(,\s*\d{4})?|\d{1,2}\/\d{1,2}(\/\d{2,4})?)$/i.test(s);
   // Mọi dòng có UID khách (trừ Instagram/WhatsApp): Meta có thể gắn loại khác "fb_user" cho một số hội thoại (vd đang do AI trả lời).
   const rows = [...document.querySelectorAll('[data-maiba-contact-id]')].filter(el => !/ig|instagram|whatsapp|wa_/i.test(el.getAttribute('data-maiba-contact-type') || '')).map(el => {
     const title = el.querySelector('[data-surface$="lib:thread_title"]'), name = (title?.innerText || '').trim();
@@ -80,7 +80,7 @@ function readThreads(scroll) {
     const time = lines.find(isTime) || tagged || '';
     // Bỏ nhãn của Business Suite trên dòng (vd "Đã chu…", "Khách …", "Nov 02", "AI đang phản hồi") khỏi tin cuối.
     // Nhãn của Business Suite trên dòng (giai đoạn khách, nhãn AI…), kể cả khi Meta cắt ngắn bằng "…" hoặc "..." (vd "Đã chu...").
-    const CHIPS = ['AI đang phản hồi', 'AI đã chuyển', 'Trao đổi thêm', 'Đã chuyển đổi', 'Khách hàng mới', 'Tiếp nhận', 'Đủ tiêu chuẩn', 'Không hoạt động', 'Ordered', 'Intake', 'Qualified', 'Converted'];
+    const CHIPS = ['Hôm nay', 'Hôm qua', 'Today', 'Yesterday', 'AI đang phản hồi', 'AI đã chuyển', 'Trao đổi thêm', 'Đã chuyển đổi', 'Khách hàng mới', 'Tiếp nhận', 'Đủ tiêu chuẩn', 'Không hoạt động', 'Ordered', 'Intake', 'Qualified', 'Converted'];
     const cut = s => s.replace(/\s*(…|\.{3})$/, '');
     const chip = s => (s.length <= 14 && /…$/.test(s)) || /^[A-Z][a-z]{2} \d{1,2}$/.test(s) || CHIPS.some(c => c.toLowerCase() === s.toLowerCase() || (/(…|\.{3})$/.test(s) && cut(s).length >= 2 && c.toLowerCase().startsWith(cut(s).toLowerCase()))) || /^\+\d+ nhãn/.test(s);
     const snippet = lines.filter(s => s !== time && !chip(s)).sort((a, b) => b.length - a.length)[0] || '';
@@ -319,7 +319,11 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
   // Giữ tham chiếu tới WebSocket của trang (cài trước khi trang tạo kết nối, có hiệu lực từ lần tải trang sau) → bước sau gửi thẳng qua kết nối này.
   const WS_HOOK = `(() => { const W = window.WebSocket; if (!W || W.__ga) return;
     const G = function (...a) { const ws = new W(...a); try { (window.__gaWS = window.__gaWS || []).push(ws); if (window.__gaWS.length > 8) window.__gaWS.shift();
-        const send = ws.send; ws.send = function (d) { try { if (!ws.__ls) { const u = d instanceof ArrayBuffer ? new Uint8Array(d) : ArrayBuffer.isView(d) ? new Uint8Array(d.buffer, d.byteOffset, d.byteLength) : null;
+        const send = ws.send; ws.send = function (d) {
+          // Khung ĐỌC ngầm: không báo "đã xem" lên Meta (gói chỉ có task label 21) — đọc trước tin không được làm khách thấy "Đã xem" khi bạn chưa đọc.
+          try { if (window.__gaNoRead) { const u0 = d instanceof ArrayBuffer ? new Uint8Array(d) : ArrayBuffer.isView(d) ? new Uint8Array(d.buffer, d.byteOffset, d.byteLength) : null;
+            if (u0 && u0.length < 8000) { const t = new TextDecoder().decode(u0); if (t.indexOf('/ls_req') >= 0 && t.indexOf('label\\\\":\\\\"21\\\\"') >= 0 && !/label\\\\":\\\\"(?!21\\\\")/.test(t)) return; } } } catch (e) {}
+          try { if (!ws.__ls) { const u = d instanceof ArrayBuffer ? new Uint8Array(d) : ArrayBuffer.isView(d) ? new Uint8Array(d.buffer, d.byteOffset, d.byteLength) : null;
           if (u && u.length > 12 && String.fromCharCode.apply(null, Array.from(u.subarray(0, 24))).indexOf('/ls_req') >= 0) ws.__ls = true; } } catch (e) {} return send.apply(this, arguments); }; // kết nối Lightspeed = kết nối trang gửi /ls_req
       } catch (e) {} return ws; };
     G.prototype = W.prototype; Object.setPrototypeOf(G, W); G.__ga = true;
@@ -355,7 +359,7 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
     await dbg.sendCommand('Fetch.enable', { patterns: BLOCK }).catch(() => {});
     await dbg.sendCommand('Network.enable', { maxResourceBufferSize: 4e6, maxTotalBufferSize: 2e7 }).catch(() => {});
     await dbg.sendCommand('Page.enable').catch(() => {});
-    await dbg.sendCommand('Page.addScriptToEvaluateOnNewDocument', { source: WS_HOOK }).catch(() => {});
+    await dbg.sendCommand('Page.addScriptToEvaluateOnNewDocument', { source: (quiet ? '' : 'window.__gaNoRead = 1;') + WS_HOOK }).catch(() => {});
   };
   const slot = pageId => {
     pageId = String(pageId);
