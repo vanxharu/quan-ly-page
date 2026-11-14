@@ -77,7 +77,7 @@ function readThreads(scroll) {
     const lines = leaves.map(x => (x.innerText || x.textContent || '').trim()).filter(s => s && s !== name && !/^[·•]$/.test(s));
     // Mốc giờ: dòng chữ giống giờ; không có thì lấy từ thẻ <abbr>/<time>/aria-label (Meta hay đổi cách hiện).
     const tagged = [...el.querySelectorAll('abbr, time, [aria-label]')].map(x => (x.getAttribute('aria-label') || x.getAttribute('title') || x.innerText || '').trim()).find(isTime);
-    const time = lines.find(isTime) || tagged || '';
+    const time = lines.find(s => isTime(s) && !/^(hôm nay|today)$/i.test(s)) || lines.find(isTime) || tagged || ''; // "Hôm nay" chỉ dùng khi không có giờ cụ thể
     // Bỏ nhãn của Business Suite trên dòng (vd "Đã chu…", "Khách …", "Nov 02", "AI đang phản hồi") khỏi tin cuối.
     // Nhãn của Business Suite trên dòng (giai đoạn khách, nhãn AI…), kể cả khi Meta cắt ngắn bằng "…" hoặc "..." (vd "Đã chu...").
     const CHIPS = ['Hôm nay', 'Hôm qua', 'Today', 'Yesterday', 'AI đang phản hồi', 'AI đã chuyển', 'Trao đổi thêm', 'Đã chuyển đổi', 'Khách hàng mới', 'Tiếp nhận', 'Đủ tiêu chuẩn', 'Không hoạt động', 'Ordered', 'Intake', 'Qualified', 'Converted'];
@@ -231,12 +231,23 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
   const lsStore = pageId => { pageId = String(pageId); let st = lsStores.get(pageId); if (!st) lsStores.set(pageId, st = { threads: new Map(), contacts: new Map(), msgs: new Map(), loaded: new Set(), at: 0 }); return st; };
   const lsVal = x => Array.isArray(x) ? (x[0] === 19 ? x[1] : x[0] === 9 ? null : x) : x;
   const lsMsg = (st, uid, mid) => { let m = st.msgs.get(uid); if (!m) st.msgs.set(uid, m = new Map()); let x = m.get(mid); if (!x) m.set(mid, x = { mid, ts: 0, text: '', mine: false, pic: '' }); return x; };
+  // Lấy các gói Lightspeed { step: [...] } từ bất kỳ dạng bọc nào: gói WebSocket {"payload":"…"}, phản hồi GraphQL
+  // {"data":{…{"payload":"…"}}}, hay trang HTML lúc mở Hộp thư (Meta gửi sẵn danh sách khách trong trang).
+  function lsPayloads(raw) {
+    const out = [], i = raw.indexOf('{"');
+    if (i >= 0 && raw.length < 3e6) try { const outer = JSON.parse(raw.slice(i)); if (typeof outer.payload === 'string') { const p = JSON.parse(outer.payload); if (p?.step) return [p]; } } catch {}
+    const re = /"payload":"((?:[^"\\]|\\.)*)"/g; let m, n = 0;
+    while ((m = re.exec(raw)) && n++ < 200) {
+      if (!m[1].includes('step')) continue;
+      try { const p = JSON.parse(JSON.parse('"' + m[1] + '"')); if (p?.step) out.push(p); } catch {}
+    }
+    return out;
+  }
   function lsIngest(pageId, raw) {
-    const i = raw.indexOf('{"'); if (i < 0 || !/payload/.test(raw)) return null;
-    let outer, p; try { outer = JSON.parse(raw.slice(i)); p = typeof outer.payload === 'string' ? JSON.parse(outer.payload) : null; } catch { return null; }
-    if (!p?.step) return null;
-    const st = lsStore(pageId), pid = String(pageId), threads = new Set(); let list = false;
-    (function walk(a) {
+    if (!/payload/.test(raw)) return null;
+    const ps = lsPayloads(raw); if (!ps.length) return null;
+    const st = lsStore(pageId), pid = String(pageId), threads = new Set(); let list = false, seen = 0;
+    for (const p of ps) (function walk(a) {
       if (!Array.isArray(a)) return;
       if (a[0] === 5 && typeof a[1] === 'string') {
         const v = a.slice(2).map(lsVal), n = a[1];
@@ -253,7 +264,7 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
             if (!blob && !x.text && v[58]) x.text = String(v[58]); threads.add(uid); }
         } else if (n === 'deleteThenInsertThread') {
           const uid = String(v[7] || ''); if (/^\d+$/.test(uid) && uid !== pid && (!v[18] || String(v[18]) === pid)) {
-            st.threads.set(uid, { uid, at: Number(v[0]) || 0, read: Number(v[1]) || 0, snippet: String(v[2] || ''), pic: /^https/.test(v[4] || '') ? v[4] : '', folder: String(v[10] || '') }); list = true; }
+            st.threads.set(uid, { uid, at: Number(v[0]) || 0, read: Number(v[1]) || 0, snippet: String(v[2] || ''), pic: /^https/.test(v[4] || '') ? v[4] : '', folder: String(v[10] || '') }); list = true; seen++; }
         } else if (n === 'deleteThenInsertContact') {
           const id = String(v[0] || ''); if (/^\d+$/.test(id) && v[9]) st.contacts.set(id, { name: String(v[9]), pic: /^https/.test(v[2] || '') ? v[2] : '' });
         } else if (n === 'insertNewMessageRange') {
@@ -263,6 +274,7 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
       }
       for (const x of a) if (Array.isArray(x)) walk(x);
     })(p.step);
+    if (seen >= 5) st.seeded = Date.now(); // vừa nhận nguyên danh sách hội thoại (lúc mở Hộp thư) → dữ liệu gốc đủ để dùng thay đọc màn hình
     // Tin mới của hội thoại: cập nhật luôn dòng hội thoại (giờ, tin cuối) để danh sách đúng ngay.
     for (const uid of threads) {
       const ms = [...(st.msgs.get(uid)?.values() || [])].sort((a, b) => b.ts - a.ts)[0], t = st.threads.get(uid);
@@ -350,10 +362,10 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
       if (method === 'Fetch.requestPaused') dbg.sendCommand('Fetch.failRequest', { requestId: params.requestId, errorReason: 'BlockedByClient' }).catch(() => {});
       else if (method === 'Network.webSocketFrameReceived' && (lsStore(pageId).frames = (lsStore(pageId).frames || 0) + 1)) { const f = params.response || {}; const raw = f.opcode === 2 ? Buffer.from(String(f.payloadData || ''), 'base64').toString('utf8') : String(f.payloadData || '');
         const wq = lsStore(pageId).waitReq; if (wq && raw.includes(`"request_id":${wq}`)) { lsStore(pageId).reqAck = Date.now(); sentSample(pageId, { at: new Date().toISOString(), kind: 'tra-loi', bytes: raw.length, text: raw.replace(/[\x00-\x08\x0e-\x1f]/g, '·').slice(0, 20000) }); } if (/ls_resp|upsertMessage|deleteThenInsert/.test(raw)) got(pageId, raw); }
-      else if (method === 'Network.responseReceived' && /\/api\/graphql|lightspeed|ls_req/i.test(params.response?.url || '')) pending.set(params.requestId, params.response.url);
+      else if (method === 'Network.responseReceived' && (/\/api\/graphql|lightspeed|ls_req/i.test(params.response?.url || '') || (params.type === 'Document' && /\/latest\/inbox/.test(params.response?.url || '')))) pending.set(params.requestId, params.response.url);
       else if (method === 'Network.loadingFinished' && pending.has(params.requestId)) {
         const url = pending.get(params.requestId); pending.delete(params.requestId);
-        dbg.sendCommand('Network.getResponseBody', { requestId: params.requestId }).then(b => { const raw = b?.base64Encoded ? Buffer.from(b.body, 'base64').toString('utf8') : String(b?.body || ''); if (/upsertMessage|deleteThenInsert/.test(raw)) for (const part of raw.split(/\r?\n(?=\{)/)) got(pageId, part); }).catch(() => {});
+        dbg.sendCommand('Network.getResponseBody', { requestId: params.requestId }).then(b => { const raw = b?.base64Encoded ? Buffer.from(b.body, 'base64').toString('utf8') : String(b?.body || ''); if (/upsertMessage|deleteThenInsert/.test(raw)) { if (/^\s*</.test(raw)) got(pageId, raw); else for (const part of raw.split(/\r?\n(?=\{)/)) got(pageId, part); } }).catch(() => {});
       }
     });
     await dbg.sendCommand('Fetch.enable', { patterns: BLOCK }).catch(() => {});
@@ -468,7 +480,8 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
   const lsList = (pageId, max) => {
     const st = lsStores.get(String(pageId)); if (!st || st.threads.size < 3) return null;
     // Chỉ tin dữ liệu gốc khi nó có đủ các khách đầu danh sách trên màn hình (lần đọc gần nhất); thiếu → đọc màn hình.
-    const top = domTop.get(String(pageId)); if (!top?.length || top.some(uid => !st.threads.has(uid) || !st.threads.get(uid).at)) return null;
+    const top = domTop.get(String(pageId));
+    if (top?.length ? top.some(uid => !st.threads.has(uid) || !st.threads.get(uid).at) : !st.seeded) return null;
     const names = pageRows.get(String(pageId))?.rows, nameOf = uid => { for (const [, l] of names || []) for (const r of l) if (r.uid === uid) return r.name; return ''; };
     const rows = [...st.threads.values()].filter(t => t.at && t.folder !== 'spam').sort((a, b) => b.at - a.at).slice(0, max).map(t => {
       const c = st.contacts.get(t.uid), name = c?.name || nameOf(t.uid);
