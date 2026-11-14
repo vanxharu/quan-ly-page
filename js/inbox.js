@@ -222,8 +222,15 @@
     return null;
   }
   // Dòng danh sách Business Suite → hội thoại trong app.
+  // Nhãn giai đoạn của Business Suite bị đọc nhầm thành tin cuối (vd "Đã chu..." = "Đã chuyển đổi"): bỏ, dùng tin cuối đã biết.
+  const BS_CHIPS = ['ai đang phản hồi', 'ai đã chuyển', 'trao đổi thêm', 'đã chuyển đổi', 'khách hàng mới', 'tiếp nhận', 'đủ tiêu chuẩn', 'không hoạt động', 'ordered', 'intake', 'qualified', 'converted'];
+  const bsChip = t => { const s = String(t || '').trim().toLowerCase(), cut = s.replace(/\s*(…|\.{3})$/, '');
+    return !!s && BS_CHIPS.some(c => c === s || (cut !== s && cut.length >= 2 && c.startsWith(cut))); };
+  const lastSaid = id => { const m = (bsMsgCache.get(id)?.messages || []).filter(x => !x.sep && (x.text || x.pic)).pop(); return m ? (m.mine ? 'Bạn: ' : '') + (m.text || 'Đã gửi một ảnh.') : ''; };
   function bsConvs(p, rows, base = Date.now()) {
     let prev = base + 1000;
+    for (const row of rows) if (bsChip(row.snippet)) { const id = `bs:${p.id}:${row.uid}`, old = S.convs.find(x => x.id === id)?.snippet;
+      row.snippet = old && !bsChip(old) ? old : lastSaid(id); }
     return rows.map((row, i) => {
       // Dùng đúng mốc giờ của từng dòng (dòng ghim / hội thoại Meta AI ở đầu có thể cũ hơn các dòng dưới, không được kéo cả danh sách lùi theo).
       // Dòng không có giờ: ngay sau dòng trước. Cùng mốc (vd cùng "Thứ Sáu") thì trừ vài mili giây để giữ thứ tự của Business Suite.

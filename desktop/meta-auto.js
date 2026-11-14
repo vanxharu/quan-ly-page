@@ -79,7 +79,10 @@ function readThreads(scroll) {
     const tagged = [...el.querySelectorAll('abbr, time, [aria-label]')].map(x => (x.getAttribute('aria-label') || x.getAttribute('title') || x.innerText || '').trim()).find(isTime);
     const time = lines.find(isTime) || tagged || '';
     // Bỏ nhãn của Business Suite trên dòng (vd "Đã chu…", "Khách …", "Nov 02", "AI đang phản hồi") khỏi tin cuối.
-    const chip = s => (s.length <= 14 && /…$/.test(s)) || /^[A-Z][a-z]{2} \d{1,2}$/.test(s) || /^(AI đang phản hồi|AI đã chuyển|Trao đổi thêm|Đã chuyển đổi|Khách hàng mới|Tiếp nhận|Ordered|Intake)$/i.test(s) || /^\+\d+ nhãn/.test(s);
+    // Nhãn của Business Suite trên dòng (giai đoạn khách, nhãn AI…), kể cả khi Meta cắt ngắn bằng "…" hoặc "..." (vd "Đã chu...").
+    const CHIPS = ['AI đang phản hồi', 'AI đã chuyển', 'Trao đổi thêm', 'Đã chuyển đổi', 'Khách hàng mới', 'Tiếp nhận', 'Đủ tiêu chuẩn', 'Không hoạt động', 'Ordered', 'Intake', 'Qualified', 'Converted'];
+    const cut = s => s.replace(/\s*(…|\.{3})$/, '');
+    const chip = s => (s.length <= 14 && /…$/.test(s)) || /^[A-Z][a-z]{2} \d{1,2}$/.test(s) || CHIPS.some(c => c.toLowerCase() === s.toLowerCase() || (/(…|\.{3})$/.test(s) && cut(s).length >= 2 && c.toLowerCase().startsWith(cut(s).toLowerCase()))) || /^\+\d+ nhãn/.test(s);
     const snippet = lines.filter(s => s !== time && !chip(s)).sort((a, b) => b.length - a.length)[0] || '';
     const leaf = snippet && leaves.find(x => (x.innerText || x.textContent || '').trim() === snippet);
     return {
