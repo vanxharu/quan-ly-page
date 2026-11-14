@@ -190,10 +190,23 @@
   // Giờ Business Suite ghi dạng chữ ("5 phút", "14:20", "Th 3", "12 thg 11") → mốc thời gian để xếp chung với Page khác.
   function bsTime(text, now = Date.now()) {
     const t = String(text || '').trim().toLowerCase();
-    if (/^(vừa xong|now)$/.test(t)) return now;
+    if (/^(vừa xong|now|just now)$/.test(t)) return now;
+    if (/^(hôm qua|yesterday)$/.test(t)) return now - 864e5;
+    { // thứ trong tuần: "Thứ 6", "Thứ Sáu", "Chủ nhật", "Fri"
+      const wd = { hai: 1, ba: 2, 'tư': 3, 'năm': 4, 'sáu': 5, 'bảy': 6, mon: 1, tue: 2, wed: 3, thu: 4, fri: 5, sat: 6, sun: 0 };
+      let want = null, w;
+      if ((w = t.match(/^(?:thứ|th|t)\s?([2-7])$/))) want = w[1] - 1;
+      else if ((w = t.match(/^thứ\s+(hai|ba|tư|năm|sáu|bảy)$/))) want = wd[w[1]];
+      else if (/^(chủ nhật|cn)$/.test(t)) want = 0;
+      else if ((w = t.match(/^(mon|tue|wed|thu|fri|sat|sun)[a-z]*$/))) want = wd[w[1]];
+      if (want != null) { const d = new Date(now); d.setHours(12, 0, 0, 0); d.setDate(d.getDate() - (((d.getDay() - want) + 7) % 7 || 7)); return d.getTime(); }
+    }
+    { const mon = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12 }, w = t.match(/^([a-z]{3})\s+(\d{1,2})(?:,\s*(\d{4}))?$/);
+      if (w && mon[w[1]]) { const d = new Date(now); let at = new Date(w[3] ? +w[3] : d.getFullYear(), mon[w[1]] - 1, +w[2], 12).getTime(); if (!w[3] && at > now) at = new Date(d.getFullYear() - 1, mon[w[1]] - 1, +w[2], 12).getTime(); return at; } }
     let m = t.match(/^(\d+)\s*(giây|phút|giờ|ngày|tuần|tháng|năm|[smhdwy])$/);
     if (m) return now - m[1] * ({ 'giây': 1, s: 1, 'phút': 60, m: 60, 'giờ': 3600, h: 3600, 'ngày': 86400, d: 86400, 'tuần': 604800, w: 604800, 'tháng': 2592000, 'năm': 31536000, y: 31536000 }[m[2]]) * 1000;
     const d = new Date(now);
+    if ((m = t.match(/^(\d{1,2}):(\d{2})\s*([ap]m)$/))) { const hh = (+m[1] % 12) + (m[3] === 'pm' ? 12 : 0); d.setHours(hh, +m[2], 0, 0); return d.getTime() > now ? d.getTime() - 864e5 : d.getTime(); }
     if ((m = t.match(/^(\d{1,2}):(\d{2})$/))) { d.setHours(+m[1], +m[2], 0, 0); return d.getTime() > now ? d.getTime() - 864e5 : d.getTime(); }
     if ((m = t.match(/^(?:th\s?([2-7])|(cn))$/))) { const want = m[2] ? 0 : m[1] - 1; d.setHours(12, 0, 0, 0); d.setDate(d.getDate() - (((d.getDay() - want) + 7) % 7 || 7)); return d.getTime(); }
     if ((m = t.match(/^(\d{1,2})(?:\s*(?:thg|tháng)\s*|\/)(\d{1,2})(?:(?:\/|,\s*)(\d{2,4}))?$/))) {

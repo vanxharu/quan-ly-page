@@ -68,16 +68,19 @@ function readRows(scroll) {
 
 // Chạy trong trang Business Suite: các hội thoại đang hiện, kèm tin cuối, giờ (chữ Meta ghi) và chưa đọc (tin cuối in đậm).
 function readThreads(scroll) {
-  const isTime = s => /^(vừa xong|now|\d+\s*(giây|phút|giờ|ngày|tuần|tháng|năm|[smhdwy])|\d{1,2}:\d{2}|th\s?[2-7]|cn|\d{1,2}\s*(thg|tháng)\s*\d{1,2}(,\s*\d{4})?|\d{1,2}\/\d{1,2}(\/\d{2,4})?)$/i.test(s);
+  // Mốc giờ ở cuối mỗi dòng: "09:28", "Hôm qua", "T6"/"Thứ 6"/"Thứ Sáu", "13 Tháng 11", "13/11", "1 ngày", "Nov 13", "Fri"…
+  const isTime = s => s.length <= 24 && /^(vừa xong|now|just now|hôm qua|yesterday|\d+\s*(giây|phút|giờ|ngày|tuần|tháng|năm|[smhdwy])|\d{1,2}:\d{2}(\s*[ap]m)?|(th|thứ|t)\s?[2-7]|thứ\s+(hai|ba|tư|năm|sáu|bảy)|chủ nhật|cn|(mon|tue|wed|thu|fri|sat|sun)[a-z]*|\d{1,2}\s*(thg|tháng)\s*\d{1,2}(,?\s*\d{4})?|[a-z]{3}\s+\d{1,2}(,\s*\d{4})?|\d{1,2}\/\d{1,2}(\/\d{2,4})?)$/i.test(s);
   const rows = [...document.querySelectorAll('[data-maiba-contact-id][data-maiba-contact-type="fb_user"]')].map(el => {
     const title = el.querySelector('[data-surface$="lib:thread_title"]'), name = (title?.innerText || '').trim();
     const leaves = [...el.querySelectorAll('span,div,abbr')].filter(x => x.childElementCount === 0 && !title?.contains(x));
     const lines = leaves.map(x => (x.innerText || x.textContent || '').trim()).filter(s => s && s !== name && !/^[·•]$/.test(s));
-    const time = lines.find(isTime) || '';
+    // Mốc giờ: dòng chữ giống giờ; không có thì lấy từ thẻ <abbr>/<time>/aria-label (Meta hay đổi cách hiện).
+    const tagged = [...el.querySelectorAll('abbr, time, [aria-label]')].map(x => (x.getAttribute('aria-label') || x.getAttribute('title') || x.innerText || '').trim()).find(isTime);
+    const time = lines.find(isTime) || tagged || '';
     const snippet = lines.filter(s => s !== time).sort((a, b) => b.length - a.length)[0] || '';
     const leaf = snippet && leaves.find(x => (x.innerText || x.textContent || '').trim() === snippet);
     return {
-      uid: el.getAttribute('data-maiba-contact-id'), name, snippet, time,
+      uid: el.getAttribute('data-maiba-contact-id'), name, snippet, time, raw: time ? undefined : lines.slice(0, 8),
       unread: !!leaf && Number(getComputedStyle(leaf).fontWeight) >= 600,
       pic: [...el.querySelectorAll('img')].map(i => i.currentSrc || i.src).find(u => /scontent|fbcdn\.net\/v\//.test(u) && !/static\.xx/.test(u)) || '',
     };
@@ -285,6 +288,13 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
       got = seen.size;
     }
     const rows = [...seen.values()].slice(0, max);
+    // Nhiều dòng không đọc được giờ: lưu mẫu chữ của các dòng đó để chỉnh cách đọc (Downloads/GetHelps-debug).
+    const noTime = rows.filter(r => !r.time);
+    if (noTime.length > rows.length / 3) try {
+      const dir = path.join(app.getPath('downloads'), 'GetHelps-debug'); fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, `gio-danh-sach-${pageId}.json`), JSON.stringify(noTime.slice(0, 15).map(r => ({ name: r.name.slice(0, 2) + '…', raw: r.raw })), null, 1));
+    } catch {}
+    for (const r of rows) delete r.raw;
     // Dùng luôn cho tra avatar (cùng Page, khỏi tải lại).
     const entry = { at: Date.now(), rows: new Map(), full: false };
     for (const r of rows) entry.rows.set(key(r.name), [...(entry.rows.get(key(r.name)) || []), r]);
