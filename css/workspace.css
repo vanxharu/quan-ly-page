@@ -369,3 +369,8 @@ td.num.neg{font-weight:700}
 .bg-status-row .st.fast,.bg-status-row .st.ready{color:#2da44e;background:#2da44e1f}
 .bg-status-row .st.loading{color:#d29922;background:#d299221f}
 .bg-status-pop .hint{margin:8px 0 0;font-size:11px}
+/* Sửa tay dòng dịch vụ khi tạo đơn */
+.svc-lines .svc-line{flex-wrap:wrap}
+.svc-line-edit{flex:1 0 100%;display:grid;gap:8px;margin:6px 0 2px;padding:10px;border-radius:10px;border:1px dashed var(--primary-border,var(--border));background:var(--bg-input)}
+.svc-line-edit .field{margin:0}
+.svc-line .btn.on{border-color:var(--primary);color:var(--primary)}
