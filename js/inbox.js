@@ -241,18 +241,35 @@
   }
   // Đọc trước tin của 5 khách mới nhất mỗi Page (chạy nền trong khung ẩn của Page đó): bấm vào khách là hiện tin ngay.
   // Chỉ đọc lại khách có tin cuối đổi. Xong thì mở lại hội thoại bạn đang xem (nếu cùng Page) để vẫn theo dõi trực tiếp.
-  const prefetching = new Set();
+  const prefetching = new Set(), pf = { todo: 0, done: 0, timer: 0 };
+  // Thanh nhỏ trên danh sách: "Đang đọc trước tin 3/12…" → "✓ Đã đọc trước tin 12 khách" (tự ẩn sau 4 giây).
+  function pfBar() {
+    const list = $('ibList'); if (!list) return;
+    let bar = $('ibPf');
+    if (!bar) { bar = h('div', { id: 'ibPf', className: 'hint', style: 'font-size:11.5px;padding:3px 10px;margin:0 0 4px;border-radius:999px;background:var(--surface-2,rgba(127,127,127,.12));width:max-content;max-width:100%;transition:opacity .4s' }); list.before(bar); }
+    clearTimeout(pf.timer);
+    if (pf.done < pf.todo) { bar.style.opacity = '1'; bar.hidden = false; bar.textContent = `⏳ Đang đọc trước tin ${pf.done}/${pf.todo} khách…`; return; }
+    if (!pf.todo) { bar.hidden = true; return; }
+    bar.style.opacity = '1'; bar.hidden = false; bar.textContent = `✓ Đã đọc trước tin ${pf.done} khách mới nhất`;
+    pf.timer = setTimeout(() => { bar.style.opacity = '0'; pf.timer = setTimeout(() => { bar.hidden = true; pf.todo = pf.done = 0; }, 400); }, 4000);
+  }
   async function bsPrefetch(p, list) {
     if (prefetching.has(p.id) || !window.metaDesktop?.readThread) return;
     prefetching.add(p.id);
     try {
       const top = [...list].sort((a, b) => new Date(b.updated_time) - new Date(a.updated_time)).slice(0, 5);
       let moved = false;
+      const need = [];
       for (const c of top) {
         if (S.conv?.id === c.id) continue; // đang xem: tự cập nhật trực tiếp rồi
         const old = bsMsgCache.get(c.id) || await DB.get('bsMsg:' + c.id, null).catch(() => null);
-        if (old?.snippet === c.snippet && old.messages?.length) continue;
+        if (!(old?.snippet === c.snippet && old.messages?.length)) need.push(c);
+      }
+      if (!need.length) return;
+      pf.todo += need.length; pfBar();
+      for (const c of need) {
         const r = await window.metaDesktop.readThread({ pageId: String(p.id), uid: c.uid, bg: true }).catch(() => null);
+        pf.done++; pfBar();
         if (!r?.messages?.length) continue;
         moved = true;
         const keep = { snippet: c.snippet, messages: r.messages.filter(m => !/^blob:/.test(m.pic || '')).slice(-60) };
