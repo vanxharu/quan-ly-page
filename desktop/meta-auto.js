@@ -172,7 +172,7 @@ async function putImage(dbg, objectId, image, base) {
   return r?.result?.value === 1;
 }
 
-function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMeta = () => () => {}, metaShown = () => true, notify = () => {}, progress = () => {}, threadChanged = () => {} }) {
+function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMeta = () => () => {}, metaShown = () => true, notify = () => {}, progress = () => {}, threadChanged = () => {}, listChanged = () => {} }) {
   // Hội thoại đang mở trong khung ẩn có tin mới/đổi → báo ngay cho Hộp thư (không phải chờ chu kỳ đọc lại).
   // Trang ẩn theo dõi khung tin bằng MutationObserver và in một dấu hiệu ra console; ở đây bắt dấu hiệu đó.
   const watchThread = wc => wc.executeJavaScript(`(() => { try { window.__gaObs?.disconnect(); } catch {}
@@ -214,6 +214,12 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
       sl = { pageId, win, opened: '', used: Date.now(), queue: shared?.queue || makePrioQueue(), lastPing: 0 };
       if (!shared) sl.win.webContents.on('console-message', (e, level, message) => {
         const msg = typeof e?.message === 'string' ? e.message : String(message || '');
+        // Danh sách hội thoại của Page đổi (khách nhắn mới…) → báo Hộp thư đọc lại danh sách ngay.
+        if (msg === '__GA_LIST_CHANGED__') {
+          if (Date.now() - (sl.lastList || 0) < 2500) return; sl.lastList = Date.now();
+          for (const x of slots.values()) if (x.win === sl.win && wcPage(x)) try { listChanged(x.pageId); } catch {}
+          return;
+        }
         if (msg !== '__GA_THREAD_CHANGED__' || Date.now() - sl.lastPing < 1500) return;
         // Khung gửi dấu hiệu → báo hội thoại đang mở của (các) Page dùng khung này.
         for (const x of slots.values()) if (x.win === sl.win && x.opened) { sl.lastPing = Date.now(); try { threadChanged(x.opened); } catch {} }
@@ -223,6 +229,15 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
     sl.used = Date.now();
     return sl;
   };
+  const wcPage = x => x.win.webContents.getURL().includes(`asset_id=${x.pageId}`);
+  // Theo dõi danh sách hội thoại trong khung ẩn: dòng mới / tin mới / đổi thứ tự → báo ngay (chỉ những thay đổi đáng kể: tên, tin cuối, thứ tự).
+  const watchList = wc => wc.executeJavaScript(`(() => { try { window.__gaListObs?.disconnect(); } catch {}
+    let box = document.querySelector('[data-maiba-contact-id]'); if (!box) return false;
+    while (box.parentElement && box !== document.body && !(box.scrollHeight > box.clientHeight + 5 && /auto|scroll/.test(getComputedStyle(box).overflowY))) box = box.parentElement;
+    const sig = () => [...document.querySelectorAll('[data-maiba-contact-id]')].slice(0, 8).map(r => r.getAttribute('data-maiba-contact-id') + '|' + (r.innerText || '').replace(/\\s+/g, ' ').slice(0, 160)).join('#');
+    let last = sig(), t = 0;
+    window.__gaListObs = new MutationObserver(() => { clearTimeout(t); t = setTimeout(() => { const now = sig(); if (now !== last) { last = now; console.log('__GA_LIST_CHANGED__'); } }, 400); });
+    window.__gaListObs.observe(box, { childList: true, subtree: true, characterData: true }); return true; })()`).catch(() => false);
   const queue = (pageId, fn, prio = 0) => { const sl = slot(pageId); return sl.queue(async () => { await sl.win.ready; return fn(); }, prio); };
 
   // Danh sách hội thoại Business Suite: mỗi dòng có data-maiba-contact-id (UID Facebook thật của khách), tên và ảnh.
@@ -298,6 +313,7 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
       while (box && !(box.scrollHeight > box.clientHeight + 5 && /auto|scroll/.test(getComputedStyle(box).overflowY))) box = box.parentElement;
       if (box) box.scrollTop = 0; })()`).catch(() => {});
     if (!quick && seen.size) sl.listedAt = Date.now();
+    await watchList(wc);
     const rows = [...seen.values()].slice(0, max);
     // Nhiều dòng không đọc được giờ: lưu mẫu chữ của các dòng đó để chỉnh cách đọc (Downloads/GetHelps-debug).
     // Mẫu cấu trúc danh sách (loại dòng, thứ tự) để đối chiếu với Business Suite khi thiếu hội thoại.
@@ -338,7 +354,7 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
     if (wc.getURL().includes(`asset_id=${pageId}`)) {
       for (let i = 0; i < 2; i++) {
         if (await mouse(wc, { selector: `[data-maiba-contact-id="${uid}"]` })) {
-          for (let k = 0; k < 20; k++) { await sleep(300); if (await ready()) { sl.opened = id; await watchThread(wc); return true; } }
+          for (let k = 0; k < 20; k++) { await sleep(300); if (await ready()) { sl.opened = id; await watchThread(wc); await watchList(wc); return true; } }
           break;
         }
         await wc.executeJavaScript(`(() => { let box = document.querySelector('[data-maiba-contact-id]');
@@ -357,11 +373,11 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
     }
     for (let i = 0; i < 30; i++) {
       await sleep(400);
-      if (await ready()) { sl.opened = id; await watchThread(wc); return true; }
+      if (await ready()) { sl.opened = id; await watchThread(wc); await watchList(wc); return true; }
     }
     // Không nhận ra được khách trong khung chi tiết (Meta đổi giao diện): vẫn nhận nếu đã có tin.
     const r = await wc.executeJavaScript(`(${readMessages})(false)`).catch(() => null);
-    if (r?.messages?.length) { sl.opened = id; await watchThread(wc); return true; }
+    if (r?.messages?.length) { sl.opened = id; await watchThread(wc); await watchList(wc); return true; }
     return false;
   };
   // Đưa ảnh vào khung trả lời của Business Suite, thử lần lượt 3 cách (giao diện Meta hay đổi):

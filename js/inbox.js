@@ -858,6 +858,23 @@
   };
   setInterval(() => { tick().catch(() => {}); }, 15e3);
   let bsLive = false, bsAgain = false;
+  // App Windows báo danh sách hội thoại của một Page vừa đổi (khách nhắn mới) → đọc lại danh sách Page đó ngay, vẽ lại, báo tin.
+  let bsListBusy = new Set(), bsListAgain = new Set();
+  App.inbox.bsListChanged = async pageId => {
+    if (!bsFirst()) return;
+    const p = App.selected().find(x => String(x.id) === String(pageId)); if (!p) return;
+    if (bsListBusy.has(p.id)) { bsListAgain.add(p.id); return; }
+    bsListBusy.add(p.id);
+    try {
+      const list = await bsThreads(p, { force: true }).catch(() => null);
+      if (list?.length) {
+        S.convs = [...new Map([...S.convs.filter(c => c.page.id !== p.id), ...list].map(c => [c.id, c])).values()].sort((a, b) => new Date(b.updated_time) - new Date(a.updated_time));
+        if (App.current() === 'inbox') await drawList();
+        const fresh = S.conv && list.find(c => c.id === S.conv.id);
+        if (fresh && fresh.snippet !== S.conv.snippet && !S.sending) { fresh.unread_count = 0; openBs(fresh, { silent: true }).catch(() => {}); }
+      }
+    } finally { bsListBusy.delete(p.id); if (bsListAgain.delete(p.id)) App.inbox.bsListChanged(p.id); }
+  };
   // App Windows báo hội thoại đang mở trong khung ẩn vừa đổi (tin mới, đã gửi…) → đọc lại ngay.
   App.inbox.bsChanged = id => {
     const c = S.conv;
