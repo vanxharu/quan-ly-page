@@ -399,9 +399,37 @@
   }
   // Chỉ vẽ 10 tin mới nhất; cuộn lên đầu khung chat thì hiện thêm 10 tin (đã đọc sẵn), hết thì tải tin cũ hơn từ Business Suite.
   const BS_STEP = 10;
+  // ── Ảnh trong tin: lưu ảnh đã xem trên máy (link ảnh của Facebook hết hạn sau vài ngày, mở lại không phải tải lại), bấm để xem lớn ──
+  const picMem = new Map(), picBusy = new Set();
+  // Khách có thể vừa chuyển khoản: gửi ảnh, hoặc nhắn "đã ck / đã chuyển / bill…" / gửi mã thanh toán DVxxxx → gợi ý Đã nhận tiền trên thanh đơn.
+  const PAY_SAID = /(đã|da|mình|em|chị|anh)\s*(ck|chuyển|chuyen|gửi tiền|thanh toán|tt)\b|\bbill\b|\bck\s*(rồi|r|xong)\b|\bDV[A-Z0-9]{6}\b/i;
+  S.payHint = new Map();
+  const notePay = (key, why) => { if (!key) return; const had = S.payHint.get(key); S.payHint.set(key, { at: Date.now(), why }); if (!had || had.why !== why) drawOrder().catch(() => {}); };
+  const picKey = u => 'pic:' + String(u || '').replace(/[?#].*$/, '').split('/').pop().slice(-90);
+  const picSrc = u => picMem.get(picKey(u)) || u;
+  async function cachePic(u) {
+    if (!/^https:\/\//.test(u || '')) return null;
+    const k = picKey(u); if (picMem.get(k)) return picMem.get(k); if (picBusy.has(k)) return null; picBusy.add(k);
+    try {
+      let d = await DB.get(k, null).catch(() => null);
+      if (!d && window.metaDesktop?.svcImage) { const r = await window.metaDesktop.svcImage(u).catch(() => null); d = r?.dataUrl || null;
+        if (d) { await DB.set(k, d).catch(() => {}); const idx = (await DB.get('picIndexV1', []).catch(() => [])).filter(x => x !== k); idx.push(k);
+          for (const old of idx.splice(0, Math.max(0, idx.length - 200))) DB.del(old).catch(() => {}); DB.set('picIndexV1', idx).catch(() => {}); } }
+      if (d) picMem.set(k, d);
+      return d;
+    } finally { picBusy.delete(k); }
+  }
+  const viewPic = src => { const box = h('div', { className: 'pic-view', onclick: () => box.remove() }, h('img', { src, alt: '' }), h('a', { href: src, download: 'anh.jpg', className: 'btn btn-ghost btn-sm', textContent: '⬇ Tải ảnh', onclick: e => e.stopPropagation() }));
+    document.body.append(box); };
+  const picEl = u => { const img = h('img', { src: picSrc(u), alt: '', loading: 'lazy', className: 'msg-pic', title: 'Bấm để xem lớn', onclick: () => viewPic(img.src),
+      onerror: async () => { if (img.dataset.retry) return; img.dataset.retry = '1'; const d = await cachePic(u); if (d) img.src = d; } });
+    if (!picMem.get(picKey(u))) cachePic(u).then(d => { if (d && img.src !== d) img.src = d; }).catch(() => {});
+    return img; };
   function drawBs(c, r, { silent = false, older = false, keepTop = false } = {}) {
     const thread = $('ibThread'), atBottom = thread.scrollHeight - thread.clientHeight - thread.scrollTop < 70;
     const all = r.messages || [];
+    { const tail = []; for (let i = all.length - 1; i >= 0 && tail.length < 8; i--) { const m = all[i]; if (m.sep) continue; if (m.mine) break; tail.push(m); }
+      if (tail.some(m => m.pic)) notePay(c.key, 'pic'); else if (tail.some(m => PAY_SAID.test(m.text || ''))) notePay(c.key, 'text'); else if (S.payHint.has(c.key) && all.some(m => m.mine)) { S.payHint.delete(c.key); drawOrder().catch(() => {}); } }
     c.bsLast = r;
     if (!silent && !older && !keepTop) c.bsShow = BS_STEP;
     let start = Math.max(0, all.length - (c.bsShow || BS_STEP));
@@ -415,7 +443,7 @@
           msgs[i + 1] && !msgs[i + 1].sep && msgs[i + 1].mine === m.mine ? h('span', { style: 'width:24px;flex:none' })
             : m.mine ? App.avatar(c.page.name, App.pageAvatarUrl(c.page), 24) : messageAvatar(c),
           h('div', { className: 'msg' + (m.mine ? ' me' : '') }, m.text || null,
-            m.pic ? h('img', { src: m.pic, alt: '', loading: 'lazy', style: 'display:block;max-width:220px;border-radius:10px;margin-top:4px' }) : null))),
+            m.pic ? picEl(m.pic) : null))),
       msgs.length ? null : empty('Chưa đọc được tin nào.'));
     // Hiện thêm tin cũ: giữ nguyên chỗ đang đọc (không nhảy).
     thread.scrollTop = keepTop ? thread.scrollHeight - prevH + prevTop : !silent || atBottom ? thread.scrollHeight : thread.scrollTop;
@@ -438,7 +466,7 @@
     if (!App.services?.orderStates) return;
     S.orderMap = await App.services.orderStates().catch(() => S.orderMap);
     const box = $('ibOrder'); if (!box) return;
-    const bar = S.conv ? App.services.orderBar(S.orderMap?.get(S.conv.key)) : null;
+    const bar = S.conv ? App.services.orderBar(S.orderMap?.get(S.conv.key), S.payHint?.get(S.conv.key)) : null;
     box.hidden = !bar; box.replaceChildren(...(bar ? [bar] : []));
     if (App.current() === 'inbox') drawList();
   }
@@ -462,11 +490,13 @@
   async function sendBs(c, text) {
     const image = S.image, tpl = S.tpl;
     S.sending = true; updateSendState();
-    // Tin chỉ có chữ: xoá ô nhập + hiện tin "Đang gửi…" ngay, không chờ Business Suite xác nhận; lỗi thì trả chữ lại ô nhập.
+    // Xoá ô nhập + hiện tin (chữ, ảnh) "Đang gửi…" ngay, không chờ Business Suite xác nhận; lỗi thì trả chữ / ảnh lại ô nhập.
     let pending = null;
-    if (!image && text && S.conv === c) {
-      $('ibText').value = ''; S.tpl = null; saveDraft();
-      pending = h('div', { className: 'msgrow me ib-pending' }, h('div', { className: 'msg me', textContent: text }), h('span', { className: 'hint', textContent: 'Đang gửi…' }));
+    if ((text || image) && S.conv === c) {
+      $('ibText').value = ''; S.tpl = null; S.image = ''; drawAttach(); saveDraft();
+      pending = h('div', { className: 'msgrow me ib-pending' }, h('div', { className: 'msg me' }, text || null,
+        image ? h('img', { src: image, alt: '', style: 'display:block;max-width:220px;border-radius:10px;margin-top:4px' }) : null),
+        h('span', { className: 'hint', textContent: image ? 'Đang gửi ảnh…' : 'Đang gửi…' }));
       $('ibThread').append(pending); $('ibThread').scrollTop = $('ibThread').scrollHeight;
     }
     try {
@@ -474,6 +504,7 @@
       const r = await window.metaDesktop.sendThread({ pageId: String(c.page.id), uid: c.uid, text, image: data });
       // Chữ đã đi, chỉ thiếu ảnh: xoá chữ khỏi ô nhập (giữ ảnh) để bấm gửi lại không lặp tin.
       if (r.error && /^Chữ đã gửi/.test(r.error) && S.conv === c && $('ibText').value.trim() === text) { $('ibText').value = ''; await saveDraft(); updateSendState(); }
+      if (r.error && /^Chữ đã gửi/.test(r.error) && pending) { pending.remove(); pending = null; if (S.conv === c && !S.image) { S.image = image; drawAttach(); saveDraft(); } }
       if (r.error) throw new Error(r.error === 'login' ? 'Chưa đăng nhập Business Suite trong app.' : r.error);
       if (tpl) await App.recordTemplateUse(tpl, c.key);
       c.fromCustomer = false;
@@ -482,7 +513,7 @@
       bsCache.delete(c.page.id);
     } catch (e) {
       S.sendError = e.message;
-      if (pending) { pending.remove(); if (S.conv === c && !$('ibText').value.trim() && !/^Đã bấm gửi/.test(e.message)) { $('ibText').value = text; S.tpl = tpl; saveDraft(); } }
+      if (pending) { pending.remove(); if (S.conv === c && !$('ibText').value.trim() && !S.image && !/^Đã bấm gửi/.test(e.message)) { $('ibText').value = text; S.tpl = tpl; S.image = image; drawAttach(); saveDraft(); } }
       // Có khi tin đã đi mà app chưa nhận ra: đọc lại hội thoại để bạn thấy ngay, rồi mới hiện lỗi.
       if (S.conv === c) { c.bsSig = ''; await openBs(c, { silent: true }).catch(() => {}); }
       if (S.conv === c) $('ibThread').append(h('div', { className: 'status err' }, e.message));
@@ -910,7 +941,8 @@
     S.sendError = '';
     await send();
     // send() tự bắt lỗi và chỉ xoá ô nhập khi gửi thành công → còn chữ/ảnh nghĩa là chưa gửi được.
-    if (S.conv === c && !$('ibText').value.trim() && !S.image) return true;
+    // Ô nhập giờ trống ngay khi bấm gửi → xét lỗi gửi trước, ô nhập trống chỉ là dấu hiệu phụ.
+    if (!S.sendError && S.conv === c && !$('ibText').value.trim() && !S.image) return true;
     return S.sendError || 'Chưa gửi được (nội dung vẫn nằm trong ô nhập của Hộp thư).';
   };
   App.inbox.openKey = () => S.conv?.key || '';
@@ -1044,6 +1076,7 @@
         row.snippet = (info.mine ? 'Bạn: ' : '') + info.text; row.fromCustomer = !info.mine;
         row.updated_time = new Date(info.ts).toISOString(); row.lastAt = info.ts; row.timeText = '';
         const viewing = S.conv?.id === row.id && App.current() === 'inbox' && !document.hidden;
+        if (!info.mine && fresh && (info.pic || /^Đã gửi một ảnh/.test(info.text) || PAY_SAID.test(info.text || ''))) notePay(row.key, info.pic || /^Đã gửi một ảnh/.test(info.text) ? 'pic' : 'text');
         if (info.mine) row.unread_count = 0; // Page đã trả lời → hết chờ
         else if (!viewing && fresh) {
           // Đếm số câu khách đã nhắn (chưa đọc): cộng dồn từng tin mới, không thấp hơn số câu liên tiếp đọc từ dữ liệu gốc.

@@ -275,7 +275,7 @@ app.whenReady().then(async () => {
   });
   // Ảnh cho hoá đơn dịch vụ (QR VietQR, ảnh Page): trang không đọc được ảnh khác nguồn để vẽ lên canvas,
   // nên tải ở tiến trình chính. Chỉ nhận đúng các nguồn này, tối đa 3 MB, trả data URL.
-  const IMG_HOSTS = /^(img\.vietqr\.io|[\w-]+\.fbcdn\.net|graph\.facebook\.com|platform-lookaside\.fbsbx\.com)$/i;
+  const IMG_HOSTS = /^(img\.vietqr\.io|([\w-]+\.)+fbcdn\.net|graph\.facebook\.com|([\w-]+\.)?fbsbx\.com)$/i; // ảnh trong tin: scontent.xx.fna.fbcdn.net
   ipcMain.handle('svc-image', async (e, url) => {
     if (!fromPage(e)) return { error: 'denied' };
     let u; try { u = new URL(url); } catch { return { error: 'URL ảnh không hợp lệ.' }; }

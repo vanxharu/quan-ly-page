@@ -340,3 +340,11 @@ td.num.neg{font-weight:700}
 [data-panel=inbox] #ibLabel{max-width:76px;text-overflow:ellipsis}
 [data-panel=inbox] #ibLabel.on{border-color:var(--primary);color:var(--primary);background:var(--primary-soft);font-weight:700}
 [data-panel=inbox] .ib-pending{opacity:.6}[data-panel=inbox] .ib-pending .hint{font-size:10px;align-self:flex-end}
+.msg-pic{display:block;max-width:200px;max-height:260px;border-radius:10px;margin-top:4px;cursor:zoom-in;object-fit:cover;background:var(--bg-hover)}
+.pic-view{position:fixed;inset:0;z-index:200;background:#000c;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;cursor:zoom-out}
+.pic-view img{max-width:92vw;max-height:84vh;border-radius:10px;box-shadow:0 10px 40px #000a}
+.pic-view .btn{background:#fff2;color:#fff}
+.ord-hint{margin-left:6px;font-size:11px;font-weight:700;color:var(--ok-text,#2da44e)}
+.ord-bar.hinted{border-color:var(--ok-text,#2da44e);background:color-mix(in srgb,var(--ok-text,#2da44e) 12%,transparent)}
+@keyframes ordPulse{0%,100%{box-shadow:0 0 0 0 #2da44e66}50%{box-shadow:0 0 0 5px #2da44e00}}
+.ord-pulse{animation:ordPulse 1.6s ease-in-out infinite}

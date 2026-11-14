@@ -293,7 +293,7 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
     const st = lsStore(pageId);
     for (const uid of r.threads) {
       const m = [...(st.msgs.get(uid)?.values() || [])].filter(x => x.ts && (x.text || x.pic)).sort((a, b) => b.ts - a.ts)[0];
-      const info = m ? { ts: m.ts, mid: m.mid, streak: lsStreak(st, uid), mine: m.mine, text: m.text || (m.pic ? 'Đã gửi một ảnh.' : ''), name: st.contacts.get(uid)?.name || '' } : null;
+      const info = m ? { ts: m.ts, mid: m.mid, streak: lsStreak(st, uid), mine: m.mine, pic: m.pic || '', text: m.text || (m.pic ? 'Đã gửi một ảnh.' : ''), name: st.contacts.get(uid)?.name || '' } : null;
       try { threadChanged(`${pageId}:${uid}`, info); } catch {}
     }
   };
@@ -598,15 +598,42 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
     attachImage.locked = false;
     const before = await pics();
     const waitPreview = async () => { for (let i = 0; i < 10; i++) { await sleep(500); if (await pics() > before) return true; } return false; };
-    // 1) ô chọn file có sẵn
-    let id = await fileInput();
-    tried.push(id ? 'ô file: có' : 'ô file: không');
-    if (id && await putImage(dbg, id, image, 'anh') && await waitPreview()) return true;
-    // 2–3) giả dán / kéo-thả ngay trên ô nhập
-    const edId = (await dbg.sendCommand('Runtime.evaluate', { expression: `document.querySelector('[data-ga-editor]')` }).catch(() => null))?.result?.objectId || '';
     const m = String(image).match(/^data:(image\/(\w+));base64,(.+)$/);
-    for (const kind of ['paste', 'drop']) {
-      if (!edId || !m) break;
+    // Các cách đưa ảnh vào ô nhập. Cách nào thành công thì nhớ lại (attach-method.txt) và lần sau thử cách đó trước → không mất thời gian cho cách hỏng.
+    const ways = {
+      file: async () => { const id = await fileInput(); tried.push(id ? 'ô file: có' : 'ô file: không'); return !!id && await putImage(dbg, id, image, 'anh') && await waitPreview(); },
+      paste: () => synth('paste'), drop: () => synth('drop'),
+      button: async () => {
+        try {
+          await dbg.sendCommand('Page.enable');
+          await dbg.sendCommand('Page.setInterceptFileChooserDialog', { enabled: true });
+          const chooser = new Promise(resolve => { const on = (_e, method, params) => { if (method === 'Page.fileChooserOpened') { dbg.removeListener('message', on); resolve(params); } };
+            dbg.on('message', on); setTimeout(() => { dbg.removeListener('message', on); resolve(null); }, 5000); });
+          const clicked = await mouse(wc, { selector: '[data-ga-composer] [role="button"], [data-ga-composer] button, [data-ga-composer] [aria-label]', text: /đính kèm|ảnh|photo|image|attach|tệp|file/i.source });
+          const params = clicked ? await chooser : null;
+          let id = params?.backendNodeId ? (await dbg.sendCommand('DOM.resolveNode', { backendNodeId: params.backendNodeId }).catch(() => null))?.object?.objectId : '';
+          if (!id && clicked) id = await fileInput();
+          tried.push(clicked ? (params ? 'nút đính kèm: mở hộp chọn' : 'nút đính kèm: không mở hộp chọn') : 'nút đính kèm: không thấy');
+          return !!id && await putImage(dbg, id, image, 'anh') && await waitPreview();
+        } catch (e) { tried.push('nút đính kèm lỗi: ' + e.message); return false; } finally { await dbg.sendCommand('Page.setInterceptFileChooserDialog', { enabled: false }).catch(() => {}); }
+      },
+      clip: async () => { // dán ảnh thật từ clipboard (trả lại chữ cũ trong clipboard sau đó)
+        let oldText = ''; try { oldText = String(clipboard.readText() || ''); } catch {}
+        try {
+          const img = nativeImage.createFromDataURL(image); if (img.isEmpty()) { tried.push('ảnh hỏng'); return false; }
+          if (!await mouse(wc, { selector: '[data-ga-editor]' })) { tried.push('dán: không bấm được ô nhập'); return false; }
+          if (typeof clipboard.writeImage !== 'function') { tried.push('dán: không dùng được clipboard'); return false; }
+          await sleep(200); clipboard.writeImage(img); wc.paste();
+          if (await waitPreview()) return true;
+          tried.push('dán: không thấy ảnh'); return false;
+        } catch (e) { tried.push('dán lỗi: ' + e.message); return false; }
+        finally { setTimeout(() => { try { if (oldText) clipboard.writeText(oldText); } catch {} }, 1500); }
+      }
+    };
+    // Giả dán / kéo-thả ngay trên ô nhập.
+    async function synth(kind) {
+      const edId = (await dbg.sendCommand('Runtime.evaluate', { expression: `document.querySelector('[data-ga-editor]')` }).catch(() => null))?.result?.objectId || '';
+      if (!edId || !m) { tried.push(kind + ': bỏ qua'); return false; }
       const r = await dbg.sendCommand('Runtime.callFunctionOn', { objectId: edId, returnByValue: true, arguments: [{ value: m[3] }, { value: m[1] }, { value: 'anh.' + (m[2] === 'jpeg' ? 'jpg' : m[2]) }, { value: kind }],
         functionDeclaration: `function (b64, type, name, kind) {
           const bin = atob(b64), bytes = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
@@ -615,37 +642,44 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
           let ok = false; for (const t of ['dragenter', 'dragover', 'drop']) { const ev = new DragEvent(t, { dataTransfer: dt, bubbles: true, cancelable: true }); this.dispatchEvent(ev); ok = ok || ev.defaultPrevented; }
           return ok; }` }).catch(e => ({ error: e.message }));
       if (await waitPreview()) return true;
-      // Trang đã nhận (chặn xử lý mặc định) = Messenger đã lấy ảnh, chỉ là app chưa nhận ra khung xem trước.
-      // Coi như xong (sau khi gửi, app vẫn kiểm tra ảnh có trong hội thoại); lưu ảnh chụp để chỉnh cách nhận diện.
-      if (r?.result?.value) { await dumpPage(wc, 'sau-' + kind); return true; }
+      // Trang đã nhận (chặn xử lý mặc định) = Messenger đã lấy ảnh, chỉ là app chưa nhận ra khung xem trước → coi như xong (sau khi gửi app vẫn kiểm tra).
+      if (r?.result?.value) return true;
       tried.push(`${kind}: ${r?.error ? 'lỗi ' + r.error : 'không nhận'}`);
-    }
-    // 4) bấm nút đính kèm, bắt hộp chọn file
-    try {
-      await dbg.sendCommand('Page.enable');
-      await dbg.sendCommand('Page.setInterceptFileChooserDialog', { enabled: true });
-      const chooser = new Promise(resolve => { const on = (_e, method, params) => { if (method === 'Page.fileChooserOpened') { dbg.removeListener('message', on); resolve(params); } };
-        dbg.on('message', on); setTimeout(() => { dbg.removeListener('message', on); resolve(null); }, 5000); });
-      const clicked = await mouse(wc, { selector: '[data-ga-composer] [role="button"], [data-ga-composer] button, [data-ga-composer] [aria-label]', text: /đính kèm|ảnh|photo|image|attach|tệp|file/i.source });
-      const params = clicked ? await chooser : null;
-      id = params?.backendNodeId ? (await dbg.sendCommand('DOM.resolveNode', { backendNodeId: params.backendNodeId }).catch(() => null))?.object?.objectId : '';
-      if (!id && clicked) id = await fileInput();
-      tried.push(clicked ? (params ? 'nút đính kèm: mở hộp chọn' : 'nút đính kèm: không mở hộp chọn') : 'nút đính kèm: không thấy');
-      if (id && await putImage(dbg, id, image, 'anh') && await waitPreview()) return true;
-    } catch (e) { tried.push('nút đính kèm lỗi: ' + e.message); } finally { await dbg.sendCommand('Page.setInterceptFileChooserDialog', { enabled: false }).catch(() => {}); }
-    // 5) dán ảnh thật từ clipboard (trả lại chữ cũ trong clipboard sau đó)
-    let oldText = ''; try { oldText = String(clipboard.readText() || ''); } catch {}
-    try {
-      const img = nativeImage.createFromDataURL(image); if (img.isEmpty()) { tried.push('ảnh hỏng'); return false; }
-      if (!await mouse(wc, { selector: '[data-ga-editor]' })) { tried.push('dán: không bấm được ô nhập'); return false; }
-      if (typeof clipboard.writeImage !== 'function') { tried.push('dán: không dùng được clipboard'); return false; }
-      await sleep(200); clipboard.writeImage(img); wc.paste();
-      if (await waitPreview()) return true;
-      tried.push('dán: không thấy ảnh');
       return false;
-    } catch (e) { tried.push('dán lỗi: ' + e.message); return false; }
-    finally { setTimeout(() => { try { if (oldText) clipboard.writeText(oldText); } catch {} }, 1500); }
+    }
+    const order = ['file', 'paste', 'drop', 'button', 'clip'], best = attachBest();
+    for (const k of best ? [best, ...order.filter(x => x !== best)] : order) {
+      if (await ways[k]()) { if (k !== best) attachBest(k); tried.push('ok: ' + k); return true; }
+    }
+    return false;
   };
+  // Cách đính ảnh thành công gần nhất (nhớ qua các lần mở app).
+  const attachFile = () => path.join(app.getPath('userData'), 'attach-method.txt');
+  let attachMem = null;
+  function attachBest(set) {
+    if (set) { attachMem = set; try { fs.writeFileSync(attachFile(), set); } catch {} return set; }
+    if (attachMem == null) { try { attachMem = fs.readFileSync(attachFile(), 'utf8').trim(); } catch { attachMem = ''; } }
+    return attachMem;
+  }
+  // Dọn ô nhập ngay tại chỗ (chữ + ảnh đính kèm còn sót từ lần trước) thay vì tải lại cả trang Business Suite (tiết kiệm 5–10 giây).
+  // Trả về false nếu vẫn còn ảnh sót (khi đó mới tải lại trang).
+  async function clearComposer(wc) {
+    for (let i = 0; i < 6; i++) {
+      const n = await wc.executeJavaScript(`(() => { const b = [...document.querySelectorAll('[data-surface*="attachment-preview-button-close"], [aria-label*="Gỡ tệp" i], [aria-label*="Xóa tệp" i], [aria-label*="Xoá tệp" i], [aria-label*="Remove attachment" i]')];
+        b.forEach(x => x.click()); return b.length; })()`).catch(() => 0);
+      if (!n) break; await sleep(250);
+    }
+    const hasText = await wc.executeJavaScript(`!!(document.querySelector('[data-ga-editor]')?.innerText || '').trim()`).catch(() => false);
+    if (hasText && await mouse(wc, { selector: '[data-ga-editor]' })) {
+      const dbg = wc.debugger, mod = process.platform === 'darwin' ? 4 : 2;
+      await dbg.sendCommand('Input.dispatchKeyEvent', { type: 'rawKeyDown', key: 'a', code: 'KeyA', windowsVirtualKeyCode: 65, modifiers: mod }).catch(() => {});
+      await dbg.sendCommand('Input.dispatchKeyEvent', { type: 'keyUp', key: 'a', code: 'KeyA', windowsVirtualKeyCode: 65, modifiers: mod }).catch(() => {});
+      await dbg.sendCommand('Input.dispatchKeyEvent', { type: 'rawKeyDown', key: 'Backspace', code: 'Backspace', windowsVirtualKeyCode: 8 }).catch(() => {});
+      await dbg.sendCommand('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Backspace', code: 'Backspace', windowsVirtualKeyCode: 8 }).catch(() => {});
+      await sleep(100);
+    }
+    return !(await wc.executeJavaScript(`[...document.querySelectorAll('[data-surface*="attachment-preview-button-close"], [aria-label*="Gỡ tệp" i], [aria-label*="Remove attachment" i]')].length`).catch(() => 0));
+  }
   const threadArgs = ({ pageId, uid }) => /^\d+$/.test(String(pageId)) && /^\d+$/.test(String(uid));
   // Hội thoại đã có dữ liệu gốc (đã tải một đoạn tin, tin mới tự đổ về): trả ngay, không phải mở trong khung ẩn.
   const lsReady = args => !args.older && lsStores.get(String(args.pageId))?.loaded.has(String(args.uid)) && lsMessages(args.pageId, args.uid).some(m => !m.sep);
@@ -666,10 +700,14 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
   const sendThread = args => !threadArgs(args) ? Promise.resolve({ error: 'Thiếu Page hoặc khách.' }) : queue(args.pageId, async () => {
     const text = String(args.text || '').trim(), image = args.image || '';
     if (!text && !image) return { error: 'Thiếu nội dung.' };
-    if (image) slot(args.pageId).opened = ''; // tải lại hội thoại: bỏ ảnh đính kèm còn sót từ lần thử trước
-    const ok = await openThreadHidden(String(args.pageId), String(args.uid));
+    let ok = await openThreadHidden(String(args.pageId), String(args.uid));
     if (ok !== true) return { error: ok === 'login' ? 'login' : 'Không mở được hội thoại trong Business Suite.' };
     const wc = slot(args.pageId).win.webContents, dbg = wc.debugger;
+    // Dọn ô nhập tại chỗ; chỉ khi không gỡ được ảnh sót mới tải lại hội thoại (cách cũ, chậm).
+    if (await findComposer(wc, 4000) && !await clearComposer(wc)) {
+      slot(args.pageId).opened = ''; ok = await openThreadHidden(String(args.pageId), String(args.uid));
+      if (ok !== true) return { error: ok === 'login' ? 'login' : 'Không mở được hội thoại trong Business Suite.' };
+    }
     const read = () => wc.executeJavaScript(`(${readMessages})(false)`).catch(() => null);
     const myPics = r => (r?.messages || []).filter(m => m.mine && m.pic).length;
     const picsBefore = myPics(await read());

@@ -1008,10 +1008,16 @@
     return map;
   }
   // Thanh ghim trên ô nhập tin: đơn hiện tại của khách + đúng 1 nút cho bước tiếp theo.
-  function orderBar(st) {
+  function orderBar(st, hint) {
     if (!st) return null;
     const btn = (t, fn, cls = 'btn-primary') => h('button', { type: 'button', className: 'btn btn-sm ' + cls, textContent: t, onclick: fn });
     if (st.q) { const q = st.q, [label] = quoteState(q);
+      // Khách vừa gửi ảnh / báo đã chuyển khoản → nút Đã nhận tiền nổi bật (bạn vẫn tự kiểm tra tài khoản rồi mới xác nhận).
+      const payHint = hint && q.state === 'quote' && !expired(q);
+      if (payHint) { const b = btn('✅ Đã nhận tiền', () => paymentDialog(q)); b.classList.add('ord-pulse');
+        return h('div', { className: 'ord-bar pay hinted' }, h('span', { className: 'ord-main' }, h('strong', { textContent: '#' + q.payCode }), ` · ${money(amountDue(q) || q.sell)} `,
+          h('span', { className: 'ord-hint', textContent: hint.why === 'pic' ? '📷 Khách vừa gửi ảnh, có thể là chuyển khoản: kiểm tra tài khoản' : '💬 Khách báo đã chuyển khoản: kiểm tra tài khoản' })),
+          !q.sentAt ? btn('📤', () => invoiceDialog(q, 'quote'), 'btn-ghost') : null, b); }
       const act = q.state === 'paid' ? btn('🚀 Tạo đơn', () => confirmCreate(q))
         : expired(q) ? btn('⏱ Gia hạn 24h', async () => { q.expiresAt = Date.now() + QUOTE_TTL; await saveQuote(q); App.tabs.services?.refresh?.(); }, 'btn-soft')
         : !q.sentAt ? btn('📤 Gửi báo giá', () => invoiceDialog(q, 'quote'))
