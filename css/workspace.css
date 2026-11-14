@@ -329,3 +329,13 @@ td.num.neg{font-weight:700}
 .svc-pa-row.up .svc-pa-pct{color:var(--err-text,#f85149)}
 .svc-pa-row.down .svc-pa-pct{color:var(--ok-text,#2da44e)}
 .svc-pa-row>.grow{flex:1;min-width:0}
+/* Dòng khách: tin cuối + nhãn cùng hàng */
+[data-panel=inbox] .item .snip-row{display:flex;align-items:center;gap:6px;margin-top:3px;min-width:0}
+[data-panel=inbox] .item .snip-row .snippet{flex:1;min-width:0;margin:0;display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+[data-panel=inbox] .item .snip-row .tags{flex:none;display:flex;gap:3px;margin:0;flex-wrap:nowrap;max-width:62%;overflow:hidden}
+[data-panel=inbox] .item .tags>span{font-size:9.5px;line-height:16px;height:16px;padding:0 6px;border-radius:999px;white-space:nowrap;max-width:110px;overflow:hidden;text-overflow:ellipsis;font-weight:600}
+[data-panel=inbox] .item .lbl{color:#c77d1a;background:#f0a63a22}
+[data-panel=inbox] .item .lbl.more{color:var(--text-muted);background:var(--bg-hover)}
+[data-panel=inbox] .list>.item{padding:9px 10px}
+[data-panel=inbox] #ibLabel{max-width:76px;text-overflow:ellipsis}
+[data-panel=inbox] #ibLabel.on{border-color:var(--primary);color:var(--primary);background:var(--primary-soft);font-weight:700}

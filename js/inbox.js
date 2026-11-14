@@ -258,6 +258,24 @@
     bar.style.opacity = '1'; bar.hidden = false; say(`✓ Đã đọc trước ${pf.done} khách`, 100);
     pf.timer = setTimeout(() => { bar.style.opacity = '0'; pf.timer = setTimeout(() => { bar.hidden = true; pf.todo = pf.done = 0; }, 400); }, 4000);
   }
+  // Khớp lại nhãn tự gắn ("Hỏi giá"…) từ tin đã đọc của khách (tin Business Suite: mine = của shop).
+  async function relabelFrom(c, messages) {
+    const said = (messages || []).filter(m => !m.sep).map(m => ({ isCustomer: !m.mine, text: m.text || '' })), st = await settings();
+    if (!st.autoTag || !said.some(m => m.isCustomer && m.text)) return false;
+    await App.crm.syncAutoLabels(c.key, InboxRules.detectAutoLabels(said, st.rules), { pageId: c.page.id, pageName: c.page.name, name: c.other.name }, st.rules.map(x => x.label)).catch(() => {});
+    return true;
+  }
+  // Mở Hộp thư: khớp lại nhãn cho các khách đã có tin lưu sẵn (gỡ nhãn gắn nhầm trước đây), không cần đọc lại.
+  const relabeled = new Set();
+  async function relabelCached(list) {
+    let n = 0;
+    for (const c of list.slice(0, 60)) {
+      if (relabeled.has(c.id)) continue; relabeled.add(c.id);
+      const old = bsMsgCache.get(c.id) || await DB.get('bsMsg:' + c.id, null).catch(() => null);
+      if (old?.messages?.length && await relabelFrom(c, old.messages)) n++;
+    }
+    if (n) { S.crm = await App.crm.all(); if (App.current() === 'inbox') drawList(); }
+  }
   async function bsPrefetch(p, list) {
     if (prefetching.has(p.id) || !window.metaDesktop?.readThread) return;
     prefetching.add(p.id);
@@ -271,7 +289,7 @@
         if (!(old?.snippet === c.snippet && old.messages?.length)) need.push(c);
       }
       if (!need.length) return;
-      pf.todo += need.length; pfBar();
+      pf.todo += need.length; pfBar(); let relabel = false;
       for (const c of need) {
         const r = await window.metaDesktop.readThread({ pageId: String(p.id), uid: c.uid, bg: true }).catch(() => null);
         pf.done++; pfBar();
@@ -279,7 +297,9 @@
         moved = true;
         const keep = { snippet: c.snippet, messages: r.messages.filter(m => !/^blob:/.test(m.pic || '')).slice(-60) };
         bsMsgCache.set(c.id, keep); DB.set('bsMsg:' + c.id, keep).catch(() => {});
+        if (await relabelFrom(c, r.messages)) relabel = true; // đọc trước cũng khớp lại nhãn tự gắn
       }
+      if (relabel) { S.crm = await App.crm.all(); if (App.current() === 'inbox') drawList(); }
       const cur = S.conv;
       if (moved && cur?.bs && cur.page.id === p.id) window.metaDesktop.readThread({ pageId: String(p.id), uid: cur.uid, bg: true }).catch(() => {});
     } finally { prefetching.delete(p.id); }
@@ -310,7 +330,7 @@
     }
     bsNotified.set(p.id, true);
     bsCache.set(p.id, { at: Date.now(), list });
-    setTimeout(() => bsPrefetch(p, list).catch(() => {}), 500);
+    setTimeout(() => { relabelCached(list).catch(() => {}); bsPrefetch(p, list).catch(() => {}); }, 500);
     return list;
   }
   // Hội thoại từ Business Suite: app đọc tin trong khung ẩn và hiện ngay trong khung chat; gửi tin cũng qua khung ẩn
@@ -421,10 +441,9 @@
     const st = await settings();
     if (S.conv !== c) return;
     const psid = c.bs ? S.crm?.[c.key]?.psid || '' : c.other.id;
-    if (st.autoTag) {
-      const auto = InboxRules.detectAutoLabels(S.messages, st.rules);
-      if (auto.length) await App.crm.addLabels(c.key, auto, { pageId: c.page.id, pageName: c.page.name, name: c.other.name, psid });
-    }
+    // Chỉ khớp lại khi đọc được tin của khách (đọc lỗi / chưa có tin khách thì giữ nguyên nhãn).
+    if (st.autoTag && S.messages.some(m => m.isCustomer && m.text))
+      await App.crm.syncAutoLabels(c.key, InboxRules.detectAutoLabels(S.messages, st.rules), { pageId: c.page.id, pageName: c.page.name, name: c.other.name, psid }, st.rules.map(r => r.label));
     S.crm = await App.crm.all();
     if (S.conv !== c) return;
     $('ibCrm').hidden = false;
@@ -499,9 +518,7 @@
     lists.forEach((list, i) => { if (!S.more.has(pages[i].id) && typeof list.after === 'string') S.more.set(pages[i].id, { page: pages[i], after: list.after }); });
     S.convs = [...new Map([...S.extra.values(), ...lists.flat()].map(c => [c.id, c])).values()].sort((a, b) => new Date(b.updated_time) - new Date(a.updated_time));
     S.crm = await App.crm.all();
-    const labels = await App.crm.allLabels();
-    const cur = $('ibLabel').value;
-    $('ibLabel').replaceChildren(h('option', { value: '', textContent: 'Nhãn' }), ...labels.map(l => h('option', { value: l, textContent: l, selected: l === cur })));
+
     S.errorPages = errorPages; S.errors = errors;
     // Hội thoại đang mở có tin mới → đọc lại luôn.
     const fresh = S.conv && S.convs.find(c => c.id === S.conv.id);
@@ -643,8 +660,24 @@
       h('button',{type:'button',className:'btn btn-ghost btn-sm',title:'Nhập UID Facebook của khách để hiện ảnh đại diện',textContent:S.manual?.[pictureKey(c)]?.uid?'Đổi UID':'Gắn UID',onclick:()=>setCustomerUid(c)}),
       App.metaLink(App.businessInboxUrl(c.page.id, c.other.id), 'Hộp thư Meta ↗')));
   }
+  // Ô lọc nhãn: chỉ nhãn đang có trong danh sách, kèm số khách; vẽ lại mỗi lần danh sách đổi (nhãn mới / nhãn gỡ hiện ngay).
+  function drawLabelFilter() {
+    const sel = $('ibLabel'); if (!sel) return;
+    const cur = sel.value, count = new Map(), seen = new Set();
+    for (const c of S.convs) { if (seen.has(c.key)) continue; seen.add(c.key); for (const l of S.crm?.[c.key]?.labels || []) count.set(l, (count.get(l) || 0) + 1); }
+    const labels = [...count.keys()].sort((a, b) => count.get(b) - count.get(a) || a.localeCompare(b, 'vi'));
+    const sig = JSON.stringify([cur, ...labels.map(l => [l, count.get(l)])]);
+    if (sel.dataset.sig !== sig) {
+      sel.replaceChildren(h('option', { value: '', textContent: labels.length ? 'Nhãn' : 'Chưa có nhãn' }),
+        ...labels.map(l => h('option', { value: l, textContent: `${l} (${count.get(l)})`, selected: l === cur })));
+      if (cur && !count.has(cur)) sel.value = ''; // nhãn đang lọc không còn khách nào
+      sel.dataset.sig = JSON.stringify([sel.value, ...labels.map(l => [l, count.get(l)])]);
+    }
+    sel.classList.toggle('on', !!sel.value); sel.title = sel.value ? `Đang lọc nhãn: ${sel.value} (chọn "Nhãn" để bỏ lọc)` : 'Lọc theo nhãn';
+  }
   async function drawList() {
     const st = await settings();
+    drawLabelFilter();
     const q = norm($('ibSearch').value), lab = $('ibLabel').value, today = new Date().toDateString();
     [...$('ibFilter').children].forEach(c => c.setAttribute('aria-pressed', String(c.dataset.f === S.filter)));
     const list = S.convs.filter(c =>
@@ -672,11 +705,15 @@
             h('div', { className: 'top' }, h('span', { className: 'name', textContent: c.other.name || 'Khách' }),
               c.unread_count ? h('span', { className: 'badge', title: `Khách đã nhắn ${c.unread_count} tin chưa đọc`, textContent: c.unread_count > 99 ? '99+' : c.unread_count }) : null,
               h('span', { className: 'time', textContent: c.timeText || (new Date(c.updated_time).toDateString() === today ? new Date(c.updated_time).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }) : fmtShort(c.updated_time)) })),
-            h('div', { className: 'snippet', textContent: c.snippet || '' }),
-            ((wait != null && wait < 7 * 1440) || labels.length || S.orderMap?.has(c.key)) ? h('div', { className: 'tags' },
-              S.orderMap?.has(c.key) ? h('span', { className: 'ord-chip ' + S.orderMap.get(c.key).kind, title: 'Đơn dịch vụ của khách', textContent: S.orderMap.get(c.key).chip }) : null,
-              wait != null && wait < 7 * 1440 ? h('span', { className: 'wait' + (wait > st.waitMinutes ? ' late' : ''), title: 'Khách đang chờ trả lời', textContent: '⏳ ' + InboxRules.formatWait(wait) }) : null,
-              ...labels.slice(0, 3).map(l => tag(l))) : null));
+            // Tin cuối + nhãn cùng một hàng (dòng nào cũng cao bằng nhau): tối đa 2 nhãn, còn lại gộp "+n".
+            (() => {
+              const chips = [S.orderMap?.has(c.key) ? h('span', { className: 'ord-chip ' + S.orderMap.get(c.key).kind, title: 'Đơn dịch vụ của khách', textContent: S.orderMap.get(c.key).chip }) : null,
+                wait != null && wait < 7 * 1440 ? h('span', { className: 'wait' + (wait > st.waitMinutes ? ' late' : ''), title: 'Khách đang chờ trả lời', textContent: '⏳ ' + InboxRules.formatWait(wait) }) : null,
+                ...labels.map(l => h('span', { className: 'lbl', title: 'Nhãn: ' + l, textContent: l }))].filter(Boolean);
+              const more = chips.splice(2);
+              return h('div', { className: 'snip-row' }, h('div', { className: 'snippet', textContent: c.snippet || '' }),
+                chips.length ? h('div', { className: 'tags' }, ...chips, more.length ? h('span', { className: 'lbl more', title: more.map(x => x.textContent).join(' · '), textContent: '+' + more.length }) : null) : null);
+            })()));
       }) : [empty(S.convs.length ? 'Không có hội thoại khớp bộ lọc.' : 'Chưa có tin nhắn.')]));
   }
   function resetThread() {

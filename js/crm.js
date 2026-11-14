@@ -28,6 +28,17 @@
       if (next.length !== (cur.labels || []).length || !cur.name) await crm.update(key, { ...base, labels: next });
       return next;
     },
+    // Nhãn tự gắn theo lời khách (vd "Hỏi giá"): khớp lại mỗi lần đọc tin. Nhãn tự gắn trước đây mà lời khách không còn khớp
+    // (gắn nhầm vì tin của shop) thì gỡ; nhãn bạn gắn tay không bao giờ bị gỡ; nhãn bạn đã bỏ thì không tự gắn lại.
+    async syncAutoLabels(key, auto, base, ruleLabels) {
+      const cur = await crm.get(key), labels = cur.labels || [], manual = cur.manualLabels || [];
+      auto = auto.filter(l => !(cur.noAuto || []).includes(l));
+      const prevAuto = cur.autoLabels ?? labels.filter(l => ruleLabels.includes(l) && !manual.includes(l));
+      const drop = prevAuto.filter(l => !auto.includes(l) && !manual.includes(l));
+      const next = [...new Set([...labels.filter(l => !drop.includes(l)), ...auto])];
+      if (JSON.stringify(next) !== JSON.stringify(labels) || JSON.stringify(cur.autoLabels) !== JSON.stringify(auto)) await crm.update(key, { ...base, labels: next, autoLabels: auto });
+      return next;
+    },
     async allLabels() { return [...new Set(Object.values(await crm.all()).flatMap(c => c.labels || []))].sort(); }
   };
 
@@ -49,7 +60,7 @@
     const sel = (field, options, label) => h('select', { title: label, 'aria-label': label, onchange: e => save({ [field]: e.target.value }) },
       h('option', { value: '', textContent: label + '…' }), ...[...new Set([c[field], ...options].filter(Boolean))].map(o => h('option', { value: o, textContent: o, selected: o === c[field] })));
     const labelInput = h('input', { type: 'text', placeholder: '+ nhãn', list: 'crmLabelList',
-      onkeydown: e => { if (e.key === 'Enter' && e.target.value.trim()) { e.preventDefault(); save({ labels: [...new Set([...(c.labels || []), e.target.value.trim()])] }); } } });
+      onkeydown: e => { if (e.key === 'Enter' && e.target.value.trim()) { e.preventDefault(); const l = e.target.value.trim(); save({ labels: [...new Set([...(c.labels || []), l])], manualLabels: [...new Set([...(c.manualLabels || []), l])], noAuto: (c.noAuto || []).filter(x => x !== l) }); } } });
     const datalist = h('datalist', { id: 'crmLabelList' }, ...(await crm.allLabels()).map(l => h('option', { value: l })));
     const btn = (k, text, title) => h('button', { type: 'button', className: 'btn btn-sm ' + (form === k ? 'btn-soft' : 'btn-ghost'), textContent: text, title,
       onclick: () => { form = form === k ? '' : k; rerender(); } });
@@ -59,8 +70,10 @@
     box.replaceChildren(
       h('div', { className: 'crm-row' },
         sel('stage', STAGES, 'Giai đoạn'), sel('orderStatus', ORDER_STATUSES, 'Đơn'),
-        ...(c.labels || []).map(l => tag(l, () => save({ labels: c.labels.filter(x => x !== l) }))),
-        ...suggested.map(l => h('button', { type: 'button', className: 'tag', textContent: '+ ' + l, title: 'Gợi ý theo lời khách', onclick: () => save({ labels: [...(c.labels || []), l] }) })),
+        // Bỏ nhãn tay: nhãn tự gắn thì nhớ để không tự gắn lại cho khách này.
+        ...(c.labels || []).map(l => tag(l, () => save({ labels: c.labels.filter(x => x !== l), manualLabels: (c.manualLabels || []).filter(x => x !== l),
+          ...(settings.rules.some(r => r.label === l) ? { noAuto: [...new Set([...(c.noAuto || []), l])] } : {}) }))),
+        ...suggested.map(l => h('button', { type: 'button', className: 'tag', textContent: '+ ' + l, title: 'Gợi ý theo lời khách', onclick: () => save({ labels: [...(c.labels || []), l], manualLabels: [...new Set([...(c.manualLabels || []), l])], noAuto: (c.noAuto || []).filter(x => x !== l) }) })),
         labelInput, datalist,
         h('span', { style: 'margin-left:auto;display:flex;gap:4px;flex-wrap:wrap' }, App.services ? h('button', { type: 'button', className: 'btn btn-sm btn-primary crm-order-btn', textContent: '🧾 Tạo đơn', title: 'Tạo đơn dịch vụ cho khách này (mở khung bên phải, vẫn xem được tin nhắn)',
             onclick: () => App.services.createDialog({ page: ctx.page, key, name: ctx.name, messages: ctx.messages, dock: true }) }) : null, btn('note', '📝', 'Ghi chú'), btn('remind', '⏰', 'Nhắc hẹn'),
