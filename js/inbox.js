@@ -337,6 +337,18 @@
     if (!older) { c.bsSig = sig; const keep = { snippet: c.snippet, messages: (r.messages || []).filter(m => !/^blob:/.test(m.pic || '')).slice(-60) }; bsMsgCache.set(c.id, keep); DB.set('bsMsg:' + c.id, keep).catch(() => {}); }
     drawBs(c, r, older ? { silent: true, keepTop: true } : { silent, older });
     S.messages = (r.messages || []).filter(m => !m.sep).map(m => ({ isCustomer: !m.mine, text: m.text || '' }));
+    // Tin cuối trong hội thoại khác dòng trên danh sách (danh sách chưa kịp cập nhật): sửa luôn dòng đó + đưa lên đầu nếu mới hơn.
+    const lastMsg = (r.messages || []).filter(m => !m.sep && (m.text || m.pic)).pop();
+    if (lastMsg && !older) {
+      const snip = (lastMsg.mine ? 'Bạn: ' : '') + (lastMsg.text || 'Đã gửi một ảnh.');
+      const row = S.convs.find(x => x.id === c.id);
+      if (row && row.snippet !== snip) {
+        row.snippet = c.snippet = snip; row.fromCustomer = c.fromCustomer = !lastMsg.mine;
+        const at = lastMsg.ts || Date.now();
+        if (at > new Date(row.updated_time).getTime()) { row.updated_time = c.updated_time = new Date(at).toISOString(); row.lastAt = c.lastAt = at; row.timeText = c.timeText = ''; }
+        S.convs.sort((a, b) => new Date(b.updated_time) - new Date(a.updated_time)); drawList();
+      }
+    }
     clearIfSent(c, r.messages || []);
     if (!older) await tagAndCrm(c, { render: !silent });
   }
