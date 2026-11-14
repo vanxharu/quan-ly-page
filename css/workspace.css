@@ -390,3 +390,8 @@ td.num.neg{font-weight:700}
 [data-panel=inbox] .ib-order-btn{color:var(--primary);font-weight:700;gap:4px;display:inline-flex;align-items:center}
 [data-panel=inbox] .ib-order-btn[disabled]{opacity:.45;cursor:default}
 [data-panel=inbox] .crm .svc-inbox:has(> .svc-inbox-quotes:empty){display:none}
+/* Nút tạo đơn ngay dưới link khách gửi */
+.msg-links{display:flex;flex-direction:column;gap:4px;margin-top:6px}
+.msg-link-btn{all:unset;cursor:pointer;display:inline-flex;align-items:center;gap:2px;width:fit-content;max-width:100%;font-size:11px;font-weight:700;color:var(--primary);background:var(--primary-soft);border:1px solid var(--primary-border,transparent);padding:3px 9px;border-radius:999px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.msg-link-btn span{font-weight:500;color:var(--text-secondary);overflow:hidden;text-overflow:ellipsis}
+.msg-link-btn:hover{filter:brightness(1.15)}

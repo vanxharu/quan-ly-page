@@ -462,6 +462,14 @@
     t.addEventListener('load', () => { if (Date.now() < (S.stickUntil || 0) || S.atBottom) t.scrollTop = t.scrollHeight; }, true); // ảnh tải xong
     t.addEventListener('scroll', () => { S.atBottom = nearBottom(t); if (S.atBottom && $('ibNewMsg')) $('ibNewMsg').hidden = true; }, { passive: true });
   }
+  // Ngay dưới link trong tin của khách: nút tạo đơn với đúng link đó (mở khung tạo đơn bên trái, link điền sẵn).
+  function linkActions(c, text) {
+    const links = App.services?.linksIn ? App.services.linksIn([{ isCustomer: true, text: text || '' }]).reverse() : [];
+    if (!links.length) return null;
+    return h('div', { className: 'msg-links' }, ...links.map(l => h('button', { type: 'button', className: 'msg-link-btn', title: 'Tạo đơn với link: ' + l,
+      onclick: () => App.services.createDialog({ page: c.page, key: c.key, name: c.other.name || '', messages: S.messages, dock: true }, l) },
+      '🧾 Tạo đơn', h('span', { textContent: ' · ' + l.replace(/^https?:\/\/(www\.|m\.)?/, '').slice(0, 32) + (l.length > 44 ? '…' : '') }))));
+  }
   function drawBs(c, r, { silent = false, older = false, keepTop = false } = {}) {
     watchThreadScroll();
     const prevCount = c.bsShownCount || 0;
@@ -481,7 +489,7 @@
         : h('div', { className: 'msgrow' + (m.mine ? ' me' : '') },
           msgs[i + 1] && !msgs[i + 1].sep && msgs[i + 1].mine === m.mine ? h('span', { style: 'width:24px;flex:none' })
             : m.mine ? App.avatar(c.page.name, App.pageAvatarUrl(c.page), 24) : messageAvatar(c),
-          h('div', { className: 'msg' + (m.mine ? ' me' : '') }, m.text || null,
+          h('div', { className: 'msg' + (m.mine ? ' me' : '') }, m.text || null, m.mine ? null : linkActions(c, m.text),
             m.pic ? picEl(m.pic) : null))),
       msgs.length ? null : empty('Chưa đọc được tin nào.'));
     // Hiện thêm tin cũ: giữ nguyên chỗ đang đọc (không nhảy).
@@ -890,7 +898,7 @@
         msgs[i + 1] && me(msgs[i + 1]) === me(m) ? h('span', { style: 'width:24px;flex:none' })
           : me(m) ? App.avatar(c.page.name, App.pageAvatarUrl(c.page), 24) : messageAvatar(c),
         h('div', { className: 'msg' + (me(m) ? ' me' : ''), title: fmtTime(m.created_time) },
-        m.message || null,
+        m.message || null, me(m) ? null : linkActions(c, m.message),
         ...(m.attachments?.data || []).map(a => a.image_data?.url ? picEl(a.image_data.url)
           : h('a', { href: a.file_url || '#', target: '_blank', rel: 'noopener', textContent: `📎 ${a.name || 'Tệp đính kèm'}` })),
         !m.message && !m.attachments?.data?.length ? '(nhãn dán / tin đặc biệt)' : null))));
