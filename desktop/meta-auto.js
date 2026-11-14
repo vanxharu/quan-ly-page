@@ -230,7 +230,7 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
     const dbg = wc.debugger, pending = new Map();
     dbg.on('message', (_e, method, params) => {
       if (method === 'Fetch.requestPaused') dbg.sendCommand('Fetch.failRequest', { requestId: params.requestId, errorReason: 'BlockedByClient' }).catch(() => {});
-      else if (method === 'Network.webSocketFrameReceived' && captured < 16) keepSample(pageId, 'ws', 'websocket', String(params.response?.payloadData || ''));
+      else if (method === 'Network.webSocketFrameReceived' && captured < 16) { const f = params.response || {}; keepSample(pageId, 'ws', 'websocket', f.opcode === 2 ? Buffer.from(String(f.payloadData || ''), 'base64').toString('utf8') : String(f.payloadData || '')); }
       else if (method === 'Network.responseReceived' && captured < 16 && /\/api\/graphql|lightspeed|ls_req|messaging/i.test(params.response?.url || '')) pending.set(params.requestId, params.response.url);
       else if (method === 'Network.loadingFinished' && pending.has(params.requestId)) {
         const url = pending.get(params.requestId); pending.delete(params.requestId);
