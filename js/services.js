@@ -1036,8 +1036,8 @@
     const links = linksIn(ctx.messages), qBox = h('div', { className: 'svc-inbox-quotes' });
     if (ctx.key) Promise.all([quotes(), DB.get(ORDERS, [])]).then(([qs, orders]) => { const mine = qs.filter(q => q.customerKey === ctx.key);
       const vips = orders.filter(o => o.customerKey === ctx.key && vipSoon(o));
-      qBox.replaceChildren(...mine.map(q => { const [st, cls] = quoteState(q); return h('div', { className: 'row', style: 'gap:6px;flex-wrap:wrap;align-items:center' },
-        h('strong', { textContent: q.payCode }), h('span', { textContent: `${q.displayName} · ${money(q.sell)}` }), h('span', { className: 'status svc-pill ' + cls, textContent: st }), quoteActions(q)); }),
+      // Báo giá / đơn đang chạy đã hiện ở thanh đơn ngay trên ô nhập tin → ở đây chỉ còn dịch vụ sắp hết hạn (gia hạn).
+      qBox.replaceChildren(
         ...vips.map(o => h('div', { className: 'row', style: 'gap:6px;flex-wrap:wrap;align-items:center' }, h('strong', { textContent: '🔔 ' + (o.displayName || o.serviceName) }),
           h('span', { className: 'status svc-pill ' + (daysLeft(o) <= 1 ? 'err' : 'pending'), textContent: leftText(o) }), vipActions(o, qs)))); });
     // Nút tạo đơn + link khách gửi đã chuyển vào nút "🧾 Tạo đơn" (khung bên phải); ở đây chỉ còn báo giá / dịch vụ sắp hết hạn của khách.

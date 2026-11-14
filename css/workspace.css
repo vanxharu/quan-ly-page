@@ -374,3 +374,19 @@ td.num.neg{font-weight:700}
 .svc-line-edit{flex:1 0 100%;display:grid;gap:8px;margin:6px 0 2px;padding:10px;border-radius:10px;border:1px dashed var(--primary-border,var(--border));background:var(--bg-input)}
 .svc-line-edit .field{margin:0}
 .svc-line .btn.on{border-color:var(--primary);color:var(--primary)}
+/* Khung hội thoại (11/2026): khung chat chiếm hết chỗ trống, khung nhãn một hàng gọn, nút Tạo đơn trong hàng soạn tin */
+[data-panel=inbox] .split>.card:last-child{display:flex;flex-direction:column;min-height:0}
+[data-panel=inbox] .thread-wrap{position:relative;flex:1 1 auto;min-height:260px;display:flex;flex-direction:column}
+[data-panel=inbox] .thread-wrap>.thread{flex:1 1 auto;min-height:0;max-height:none;overflow-y:auto}
+[data-panel=inbox] .ib-newmsg{position:absolute;left:50%;bottom:12px;transform:translateX(-50%);z-index:5;border:0;cursor:pointer;padding:6px 14px;border-radius:999px;font-size:12px;font-weight:700;color:#fff;background:var(--primary);box-shadow:0 4px 14px #0005}
+[data-panel=inbox] .crm{flex:none;max-height:none;overflow:visible;margin-top:8px;padding:6px 8px;border-radius:10px}
+[data-panel=inbox] .crm .crm-row{gap:6px;align-items:center;flex-wrap:wrap}
+[data-panel=inbox] .crm .crm-row select{height:30px;min-height:0;padding:2px 8px;font-size:11.5px;width:auto;max-width:150px}
+[data-panel=inbox] .crm .crm-row input[type=text]{height:30px;min-height:0;padding:2px 10px;font-size:11.5px;width:110px}
+[data-panel=inbox] .crm .crm-row .btn-sm{height:30px;min-height:0;padding:0 9px}
+[data-panel=inbox] .crm .svc-inbox:empty,[data-panel=inbox] .crm .svc-inbox-quotes:empty{display:none}
+[data-panel=inbox] .composer{margin-top:8px}
+[data-panel=inbox] #ibOrder{margin-bottom:6px}
+[data-panel=inbox] .ib-order-btn{color:var(--primary);font-weight:700;gap:4px;display:inline-flex;align-items:center}
+[data-panel=inbox] .ib-order-btn[disabled]{opacity:.45;cursor:default}
+[data-panel=inbox] .crm .svc-inbox:has(> .svc-inbox-quotes:empty){display:none}

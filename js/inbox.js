@@ -161,7 +161,8 @@
         h('div', { className: 'card' },
           h('div', { className: 'card-head' }, h('h3', { className: 'card-title', id: 'ibTitle', textContent: 'Chưa chọn hội thoại' }),
             h('button', { className: 'btn btn-ghost', id: 'ibReload', hidden: true, textContent: '↻ Đọc lại', title: 'Đọc lại tin của hội thoại', onclick: () => S.conv && (S.conv.bs ? openBs(S.conv, { silent: true }) : openConv(S.conv)) })),
-          h('div', { className: 'thread', id: 'ibThread' }, empty('Chọn một hội thoại bên trái để xem tin nhắn.')),
+          h('div', { className: 'thread-wrap' }, h('div', { className: 'thread', id: 'ibThread' }, empty('Chọn một hội thoại bên trái để xem tin nhắn.')),
+            h('button', { type: 'button', className: 'ib-newmsg', id: 'ibNewMsg', hidden: true, textContent: '↓ Tin mới', onclick: () => toBottom(true) })),
           h('div', { id: 'ibCrm', className: 'crm', hidden: true }),
           h('div', { className: 'composer' },
             h('div', { id: 'ibOrder', hidden: true }),
@@ -175,6 +176,8 @@
                 if (f) { const image = await fileToDataUrl(f); if (draftKey(S.conv) === draftKey(c)) { S.image = image; drawAttach(); saveDraft(); } }
                 e.target.value = '';
               } })),
+              App.services ? h('button', { type: 'button', className: 'tpl-btn ib-order-btn', id: 'ibOrderBtn', title: 'Tạo đơn dịch vụ cho khách này (mở khung bên trái, vẫn xem được tin nhắn)', disabled: true,
+                onclick: () => { const c = S.conv; if (c) App.services.createDialog({ page: c.page, key: c.key, name: c.other.name || '', messages: S.messages, dock: true }); } }, '🧾', h('span', { textContent: 'Tạo đơn' })) : null,
               h('textarea', { id: 'ibText', 'aria-label': 'Nội dung trả lời', placeholder: 'Nhập tin trả lời… (gõ / để chọn mẫu)', title: 'Enter gửi · Shift+Enter xuống dòng · / chọn mẫu · quá 24 giờ: tự gửi kèm thẻ Nhân viên trả lời (tới 7 ngày)', rows: 1, disabled: true, oninput: onType, onkeydown: onKey }),
               h('button', { className: 'send-btn', id: 'ibSend', disabled: true, 'aria-label': 'Gửi', onclick: send }, icon('i-send')))))));
       // Menu ⋯: bấm ra ngoài hoặc chọn một mục thì đóng.
@@ -450,7 +453,18 @@
     if (/^https:/.test(u) && !picMem.get(picKey(u))) cachePic(u).then(d => { if (d && img.src !== d) img.src = d; }).catch(() => {});
     // Ảnh nhỏ gọn trong khung chat; bấm để xem lớn.
     return h('button', { type: 'button', className: 'msg-pic', title: 'Bấm để xem ảnh lớn', onclick: () => viewPic(img.src) }, img, h('span', { className: 'msg-pic-zoom', textContent: '🔍' })); };
+  // Tin mới nhất luôn ở cuối và luôn thấy được: mở hội thoại / gửi tin → cuộn xuống đáy; ảnh tải xong làm khung dài ra thì giữ ở đáy.
+  // Đang kéo lên xem tin cũ mà có tin mới → hiện nút "↓ Tin mới" thay vì kéo bạn xuống.
+  const nearBottom = t => t.scrollHeight - t.clientHeight - t.scrollTop < 80;
+  function toBottom(force) { const t = $('ibThread'); if (!t) return; t.scrollTop = t.scrollHeight; if (force) S.stickUntil = Date.now() + 2500; const b = $('ibNewMsg'); if (b) b.hidden = true; }
+  function watchThreadScroll() {
+    const t = $('ibThread'); if (!t || t.__ga) return; t.__ga = true;
+    t.addEventListener('load', () => { if (Date.now() < (S.stickUntil || 0) || S.atBottom) t.scrollTop = t.scrollHeight; }, true); // ảnh tải xong
+    t.addEventListener('scroll', () => { S.atBottom = nearBottom(t); if (S.atBottom && $('ibNewMsg')) $('ibNewMsg').hidden = true; }, { passive: true });
+  }
   function drawBs(c, r, { silent = false, older = false, keepTop = false } = {}) {
+    watchThreadScroll();
+    const prevCount = c.bsShownCount || 0;
     const thread = $('ibThread'), atBottom = thread.scrollHeight - thread.clientHeight - thread.scrollTop < 70;
     const all = r.messages || [];
     { const tail = []; for (let i = all.length - 1; i >= 0 && tail.length < 8; i--) { const m = all[i]; if (m.sep) continue; if (m.mine) break; tail.push(m); }
@@ -472,6 +486,9 @@
       msgs.length ? null : empty('Chưa đọc được tin nào.'));
     // Hiện thêm tin cũ: giữ nguyên chỗ đang đọc (không nhảy).
     thread.scrollTop = keepTop ? thread.scrollHeight - prevH + prevTop : !silent || atBottom ? thread.scrollHeight : thread.scrollTop;
+    if (!keepTop && (!silent || atBottom)) { S.stickUntil = Date.now() + (silent ? 1200 : 2500); S.atBottom = true; }
+    const cnt = all.filter(m => !m.sep).length; c.bsShownCount = cnt;
+    if (silent && !atBottom && !keepTop && cnt > prevCount && prevCount) { const b = $('ibNewMsg'); if (b) b.hidden = false; }
     thread.onscroll = () => { if (thread.scrollTop < 40 && S.conv === c && !c.bsOlderBusy && thread.scrollHeight > thread.clientHeight + 40) bsOlder(c, true); };
   }
   async function bsOlder(c, auto = false) {
@@ -522,7 +539,7 @@
       pending = h('div', { className: 'msgrow me ib-pending' }, h('div', { className: 'msg me' }, text || null,
         image ? picEl(image) : null),
         h('span', { className: 'hint', textContent: image ? 'Đang gửi ảnh…' : 'Đang gửi…' }));
-      $('ibThread').append(pending); $('ibThread').scrollTop = $('ibThread').scrollHeight;
+      $('ibThread').append(pending); toBottom(true);
     }
     try {
       const data = image ? await asDataUrl(image).catch(() => { throw new Error('Không đọc được ảnh đính kèm.'); }) : '';
@@ -720,6 +737,7 @@
     return h('span', { className: 'avwrap' }, App.avatar(c.other.name, S.pics.get(pictureKey(c)), size, () => retryPicture(c, S.pics.get(pictureKey(c)))), pg);
   };
   function drawHead(c) {
+    if ($('ibOrderBtn')) $('ibOrderBtn').disabled = !c;
     if (c.bs) return $('ibTitle').replaceChildren(h('span', { className: 'thread-head' }, custAvatar(c, 32),
       h('span', { className: 'th-text' }, h('div', { className: 'card-title', textContent: c.other.name }),
         h('div', { className: 'th-meta' }, h('span', { className: 'th-page', title: c.page.name, textContent: c.page.name }), h('span', { className: 'th-dot', textContent: '·' }),
@@ -795,6 +813,7 @@
     if(!$('ibText'))return; // Đổi Page trước khi mở Hộp thư vẫn hợp lệ.
     $('ibText').value = ''; $('ibText').disabled = true; drawAttach();
     if ($('ibOrder')) $('ibOrder').hidden = true;
+    if ($('ibOrderBtn')) $('ibOrderBtn').disabled = true;
     $('ibTitle').replaceChildren('Chưa chọn hội thoại'); $('ibReload').hidden = true; $('ibSend').disabled = true; $('ibCrm').hidden = true;
     $('ibThread').replaceChildren(empty('Chọn một hội thoại bên trái để xem tin nhắn.'));
   }
