@@ -192,7 +192,9 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
       try { t.ok(await t.fn()); } catch (e) { t.bad(e); } finally { running = false; next(); }
     };
     let n = 0;
-    return (fn, prio = 0) => new Promise((ok, bad) => { tasks.push({ fn, prio, ok, bad, n: n++ }); next(); });
+    const q = (fn, prio = 0) => new Promise((ok, bad) => { tasks.push({ fn, prio, ok, bad, n: n++ }); next(); });
+    q.urgent = () => tasks.some(t => t.prio > 0); // có việc bạn đang chờ (mở hội thoại, gửi tin) → việc nền nên dừng sớm
+    return q;
   };
   const composeQueue = makeQueue();
   // Mỗi Page một khung ẩn riêng (chạy song song): đọc danh sách Page này không làm mất hội thoại đang mở của Page khác,
@@ -275,13 +277,16 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
       await sleep(1200);
     }
     const seen = new Map(), started = Date.now();
+    // Đã đọc đủ danh sách gần đây: lần làm mới chỉ đọc phần đầu (hội thoại mới luôn nổi lên trên), không cuộn → 1–2 giây thay vì 10 giây.
+    const quick = here && sl.listedAt && Date.now() - sl.listedAt < 10 * 60e3;
     // Business Suite trong khung ẩn có khi tải 15–20 giây: còn vòng xoay (progressbar / aria-busy) và chưa có dòng nào thì chờ tiếp, tối đa 30 giây.
     // Chờ tới khi danh sách có dòng đầu tiên (tối đa 60 giây: nhiều Page tải cùng lúc thì mỗi trang chậm hơn), không chỉ lúc còn vòng xoay.
     const hasRows = () => wc.executeJavaScript(`!!document.querySelector('[data-maiba-contact-id]')`).catch(() => false);
     while (Date.now() - started < 60000 && !await hasRows()) { await sleep(700); if (isLogin(wc.getURL())) return { error: 'login' }; }
     if (!await hasRows()) { const dir = await dumpPage(wc, 'khong-co-danh-sach'); return { error: `Business Suite chưa hiện danh sách hội thoại sau 60 giây (${wc.getURL().slice(0, 80)})${dir ? ' · đã lưu ảnh chụp vào ' + dir : ''}` }; }
-    for (let i = 0, got = 0; i < 12; i++) {
-      await sleep(i ? 700 : 1500);
+    for (let i = 0, got = 0; i < (quick ? 1 : 12); i++) {
+      await sleep(i ? 700 : quick ? 300 : 1500);
+      if (i && sl.queue.urgent()) break; // bạn vừa bấm mở hội thoại: nhường khung ngay
       if (isLogin(wc.getURL())) return { error: 'login' };
       const part = await wc.executeJavaScript(`(${readThreads})(${JSON.stringify(seen.size > 0)})`).catch(() => []);
       for (const r of part) if (!seen.has(r.uid)) seen.set(r.uid, r);
@@ -292,6 +297,7 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
     await wc.executeJavaScript(`(() => { let box = document.querySelector('[data-maiba-contact-id]');
       while (box && !(box.scrollHeight > box.clientHeight + 5 && /auto|scroll/.test(getComputedStyle(box).overflowY))) box = box.parentElement;
       if (box) box.scrollTop = 0; })()`).catch(() => {});
+    if (!quick && seen.size) sl.listedAt = Date.now();
     const rows = [...seen.values()].slice(0, max);
     // Nhiều dòng không đọc được giờ: lưu mẫu chữ của các dòng đó để chỉnh cách đọc (Downloads/GetHelps-debug).
     // Mẫu cấu trúc danh sách (loại dòng, thứ tự) để đối chiếu với Business Suite khi thiếu hội thoại.

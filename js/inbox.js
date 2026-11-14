@@ -247,8 +247,12 @@
     if (r?.error === 'login') { if (bsLoginWarned) return null; bsLoginWarned = true; toast('Đăng nhập Business Suite trong cột Meta (menu "Hộp thư Meta") để app đọc tin khi API lỗi.', 8000); return null; }
     if (r?.error) throw new Error(r.error); // báo lý do lên đầu danh sách thay vì lặng lẽ dùng danh sách API cũ
     if (!r?.rows?.length) return null;
-    DB.set('bsList:' + p.id, { at: Date.now(), rows: r.rows }).catch(() => {});
-    const list = bsConvs(p, r.rows);
+    // Lần làm mới nhanh chỉ đọc phần đầu danh sách: ghép thêm các hội thoại cũ đã biết (không có trong phần vừa đọc).
+    const old = await DB.get('bsList:' + p.id, null).catch(() => null), got = new Set(r.rows.map(x => x.uid));
+    const keepOld = old?.rows?.length && Date.now() - old.at < 3 * 864e5 ? old.rows.filter(x => !got.has(x.uid)) : [];
+    const now = Date.now(), fresh = bsConvs(p, r.rows, now);
+    DB.set('bsList:' + p.id, { at: now, rows: [...r.rows, ...keepOld].slice(0, 80) }).catch(() => {});
+    const list = [...fresh, ...bsConvs(p, keepOld, old?.at || now)];
     // Báo tin mới (khách nhắn, chưa đọc) — lần đọc đầu tiên của Page chỉ ghi nhận, không báo.
     const st = await settings();
     const known = bsNotified.has(p.id);
