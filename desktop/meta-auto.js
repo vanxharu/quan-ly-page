@@ -211,6 +211,31 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
     wc.debugger.sendCommand = (...a) => Promise.race([send(...a), new Promise((_, bad) => setTimeout(() => bad(new Error('DevTools không trả lời')), 20e3))]);
   };
   guard(worker.webContents);
+  // Khung ẩn chỉ cần chữ: chặn video, font và ảnh giao diện (sprite/biểu tượng của Meta) → trang tải nhanh, nhẹ máy.
+  // Ảnh trong tin (scontent) và ảnh đại diện vẫn tải để app lấy được. Chỉ áp dụng cho khung ẩn, cột Meta bạn xem vẫn đầy đủ.
+  // Kèm theo: ghi lại vài gói dữ liệu tin nhắn gốc Business Suite tải về (để chuyển sang đọc dữ liệu gốc, nhanh hơn đọc màn hình).
+  const BLOCK = [{ resourceType: 'Media' }, { resourceType: 'Font' }, { urlPattern: '*static.xx.fbcdn.net*', resourceType: 'Image' }, { urlPattern: '*/rsrc.php/*', resourceType: 'Image' }];
+  let captured = 0;
+  const lighten = async (wc, pageId) => {
+    if (!wc || wc.__gaLight) return; wc.__gaLight = true;
+    const dbg = wc.debugger, pending = new Map();
+    dbg.on('message', (_e, method, params) => {
+      if (method === 'Fetch.requestPaused') dbg.sendCommand('Fetch.failRequest', { requestId: params.requestId, errorReason: 'BlockedByClient' }).catch(() => {});
+      else if (method === 'Network.responseReceived' && captured < 12 && /\/api\/graphql|\/ajax\/mercury|messaging/i.test(params.response?.url || '')) pending.set(params.requestId, params.response.url);
+      else if (method === 'Network.loadingFinished' && pending.has(params.requestId)) {
+        const url = pending.get(params.requestId); pending.delete(params.requestId);
+        dbg.sendCommand('Network.getResponseBody', { requestId: params.requestId }).then(b => {
+          const body = String(b?.body || '');
+          if (captured >= 12 || !/"message|"snippet|message_id|messages"/i.test(body)) return;
+          captured++;
+          const dir = path.join(app.getPath('downloads'), 'GetHelps-debug'); fs.mkdirSync(dir, { recursive: true });
+          fs.writeFileSync(path.join(dir, `du-lieu-goc-${pageId || 'x'}-${captured}.json`), JSON.stringify({ url: url.replace(/[?&](fb_dtsg|jazoest|lsd|__\w+)=[^&]*/g, ''), size: body.length, body: body.slice(0, 60000) }, null, 1));
+        }).catch(() => {});
+      }
+    });
+    await dbg.sendCommand('Fetch.enable', { patterns: BLOCK }).catch(() => {});
+    await dbg.sendCommand('Network.enable', { maxResourceBufferSize: 4e6, maxTotalBufferSize: 2e7 }).catch(() => {});
+  };
   const slot = pageId => {
     pageId = String(pageId);
     let sl = slots.get(pageId);
@@ -250,7 +275,7 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
     let last = sig(), t = 0;
     window.__gaListObs = new MutationObserver(() => { clearTimeout(t); t = setTimeout(() => { const now = sig(); if (now !== last) { last = now; console.log('__GA_LIST_CHANGED__'); } }, 400); });
     window.__gaListObs.observe(box, { childList: true, subtree: true, characterData: true }); return true; })()`).catch(() => false);
-  const queue = (pageId, fn, prio = 0) => { const sl = slot(pageId); return sl.queue(async () => { await sl.win.ready; return fn(); }, prio); };
+  const queue = (pageId, fn, prio = 0) => { const sl = slot(pageId); return sl.queue(async () => { await sl.win.ready; await lighten(sl.win.webContents, sl.pageId); return fn(); }, prio); };
 
   // Danh sách hội thoại Business Suite: mỗi dòng có data-maiba-contact-id (UID Facebook thật của khách), tên và ảnh.
   // Đọc cả danh sách của một Page một lần (lưu 10 phút), rồi so tên với khách trong app.

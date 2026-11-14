@@ -962,4 +962,9 @@
   }, 20e3);
   document.addEventListener('visibilitychange', () => { if (!document.hidden) tick().catch(() => {}); });
   App.onLogin.push(async () => { lastPoll = Date.now(); await poll().catch(() => {}); });
+  // App Windows: vừa mở app là các khung ẩn tải Business Suite + đọc danh sách + đọc trước tin luôn (không đợi bạn vào Hộp thư).
+  App.onLogin.push(() => setTimeout(() => {
+    if (!bsFirst()) return;
+    for (const p of App.selected()) bsThreads(p).catch(() => {});
+  }, 2500));
 })();
