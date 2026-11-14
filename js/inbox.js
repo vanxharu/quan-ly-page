@@ -243,7 +243,7 @@
     if (!window.metaDesktop?.listThreads) return null;
     const hit = bsCache.get(p.id);
     if (hit && !force && Date.now() - hit.at < 60e3) return hit.list;
-    const r = await window.metaDesktop.listThreads({ pageId: String(p.id) });
+    const r = await window.metaDesktop.listThreads({ pageId: String(p.id), max: S.bsMax || 15, full: force && (S.bsMax || 15) > 15 });
     if (r?.error === 'login') { if (bsLoginWarned) return null; bsLoginWarned = true; toast('Đăng nhập Business Suite trong cột Meta (menu "Hộp thư Meta") để app đọc tin khi API lỗi.', 8000); return null; }
     if (r?.error) throw new Error(r.error); // báo lý do lên đầu danh sách thay vì lặng lẽ dùng danh sách API cũ
     if (!r?.rows?.length) return null;
@@ -293,7 +293,7 @@
     const sig = JSON.stringify(r.messages || []);
     if (silent && !older && c.bsSig === sig) return;
     if (!older) { c.bsSig = sig; const keep = { messages: (r.messages || []).filter(m => !/^blob:/.test(m.pic || '')).slice(-60) }; bsMsgCache.set(c.id, keep); DB.set('bsMsg:' + c.id, keep).catch(() => {}); }
-    drawBs(c, r, { silent, older });
+    drawBs(c, r, older ? { silent: true, keepTop: true } : { silent, older });
     S.messages = (r.messages || []).filter(m => !m.sep).map(m => ({ isCustomer: !m.mine, text: m.text || '' }));
     clearIfSent(c, r.messages || []);
     if (!older) await tagAndCrm(c, { render: !silent });
@@ -310,19 +310,38 @@
     $('ibText').value = ''; S.image = ''; S.tpl = null; drawAttach(); saveDraft(); updateSendState();
     toast('Tin này đã có trong hội thoại: đã dọn ô nhập để tránh gửi lặp.', 5000);
   }
-  function drawBs(c, r, { silent = false, older = false } = {}) {
+  // Chỉ vẽ 10 tin mới nhất; cuộn lên đầu khung chat thì hiện thêm 10 tin (đã đọc sẵn), hết thì tải tin cũ hơn từ Business Suite.
+  const BS_STEP = 10;
+  function drawBs(c, r, { silent = false, older = false, keepTop = false } = {}) {
     const thread = $('ibThread'), atBottom = thread.scrollHeight - thread.clientHeight - thread.scrollTop < 70;
-    const msgs = r.messages || [];
+    const all = r.messages || [];
+    c.bsLast = r;
+    if (!silent && !older && !keepTop) c.bsShow = BS_STEP;
+    let start = Math.max(0, all.length - (c.bsShow || BS_STEP));
+    if (start > 0 && all[start - 1]?.sep) start--; // giữ mốc giờ đi kèm tin đầu
+    const msgs = all.slice(start), hiddenOld = start;
+    const prevH = thread.scrollHeight, prevTop = thread.scrollTop;
     thread.replaceChildren(
-      h('div', { style: 'text-align:center;margin:4px 0' }, h('button', { type: 'button', className: 'btn btn-ghost btn-sm', textContent: 'Tải tin cũ hơn', onclick: () => openBs(c, { silent: true, older: true }) })),
+      h('div', { style: 'text-align:center;margin:4px 0' }, h('button', { type: 'button', className: 'btn btn-ghost btn-sm', textContent: hiddenOld ? `Xem tin cũ hơn (${hiddenOld})` : 'Tải tin cũ hơn', onclick: () => bsOlder(c) })),
       ...msgs.map((m, i) => m.sep ? h('div', { className: 'hint', style: 'text-align:center;margin:8px 0', textContent: m.sep })
         : h('div', { className: 'msgrow' + (m.mine ? ' me' : '') },
           msgs[i + 1] && !msgs[i + 1].sep && msgs[i + 1].mine === m.mine ? h('span', { style: 'width:24px;flex:none' })
             : m.mine ? App.avatar(c.page.name, App.pageAvatarUrl(c.page), 24) : messageAvatar(c),
           h('div', { className: 'msg' + (m.mine ? ' me' : '') }, m.text || null,
-            m.pic ? h('img', { src: m.pic, alt: '', style: 'display:block;max-width:220px;border-radius:10px;margin-top:4px' }) : null))),
+            m.pic ? h('img', { src: m.pic, alt: '', loading: 'lazy', style: 'display:block;max-width:220px;border-radius:10px;margin-top:4px' }) : null))),
       msgs.length ? null : empty('Chưa đọc được tin nào.'));
-    thread.scrollTop = older ? 0 : !silent || atBottom ? thread.scrollHeight : thread.scrollTop;
+    // Hiện thêm tin cũ: giữ nguyên chỗ đang đọc (không nhảy).
+    thread.scrollTop = keepTop ? thread.scrollHeight - prevH + prevTop : !silent || atBottom ? thread.scrollHeight : thread.scrollTop;
+    thread.onscroll = () => { if (thread.scrollTop < 40 && S.conv === c && !c.bsOlderBusy && thread.scrollHeight > thread.clientHeight + 40) bsOlder(c, true); };
+  }
+  async function bsOlder(c, auto = false) {
+    const r = c.bsLast; if (!r || S.conv !== c) return;
+    const shown = c.bsShow || BS_STEP, total = (r.messages || []).length;
+    if (shown < total) { c.bsShow = shown + BS_STEP; drawBs(c, r, { silent: true, keepTop: true }); return; }
+    if (auto && c.bsNoOlderAt && Date.now() - c.bsNoOlderAt < 15e3) return; // vừa tải mà không có thêm: đừng tải liên tục khi cuộn
+    c.bsOlderBusy = true;
+    try { c.bsShow = shown + BS_STEP; await openBs(c, { silent: true, older: true }); if ((c.bsLast?.messages || []).length <= total) c.bsNoOlderAt = Date.now(); }
+    finally { c.bsOlderBusy = false; }
   }
   // Ảnh mẫu tin có thể là link: đổi sang data URL để đưa vào Business Suite từ bộ nhớ.
   const asDataUrl = async src => src.startsWith('data:') ? src : fetch(src).then(r => r.blob()).then(b => new Promise((ok, no) => { const f = new FileReader(); f.onload = () => ok(f.result); f.onerror = no; f.readAsDataURL(b); }));
@@ -422,6 +441,14 @@
   }
   async function loadMore() {
     if (S.moreBusy) return;
+    // Còn khách đã tải nhưng đang ẩn: hiện thêm 15. Hết thì đọc thêm 15 khách mỗi Page từ Business Suite.
+    if (S.hiddenMore > 0) { S.showN = (S.showN || 15) + 15; return drawList(); }
+    if (bsFirst()) {
+      S.moreBusy = true; $('ibMore').disabled = true; $('ibMore').textContent = 'Đang tải…';
+      try { S.bsMax = (S.bsMax || 15) + 15; S.showN = (S.showN || 15) + 15; await load(true, { force: true }); }
+      finally { S.moreBusy = false; $('ibMore').disabled = false; $('ibMore').textContent = 'Tải thêm hội thoại'; }
+      return;
+    }
     const scope = App.selected().map(p => p.id).join();
     S.moreBusy = true; $('ibMore').disabled = true; $('ibMore').textContent = 'Đang tải…';
     try {
@@ -553,7 +580,11 @@
       (!lab || (S.crm?.[c.key]?.labels || []).includes(lab)) &&
       (!q || norm(`${c.other.name} ${c.snippet} ${(S.crm?.[c.key]?.labels || []).join(' ')}`).includes(q)));
     const multi = App.selected().length > 1;
-    $('ibMore').hidden = ![...S.more.values()].some(x => x.after);
+    // Mở Hộp thư chỉ hiện 15 khách mới nhất (tìm kiếm thì hiện hết kết quả); bấm "Tải thêm hội thoại" để hiện thêm 15.
+    const total = list.length;
+    if (!q) list.splice(S.showN || 15);
+    S.hiddenMore = total - list.length;
+    $('ibMore').hidden = !S.hiddenMore && ![...S.more.values()].some(x => x.after) && !bsFirst();
     const errors = S.errors?.length ? [h('details', { className: 'status err' },
       h('summary', { textContent: `${S.errors.length} Page chưa tải được tin mới.${S.convs.length ? ' Đang giữ danh sách đã tải.' : ''} Bấm xem chi tiết.` }),
       ...S.errors.map(e => h('div', { style: 'margin-top:8px', textContent: e })),

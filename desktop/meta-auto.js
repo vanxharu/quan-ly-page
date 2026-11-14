@@ -292,7 +292,7 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
   });
 
   // Hộp thư dự phòng khi Graph API lỗi: đọc danh sách hội thoại mới nhất của Page trong khung ẩn.
-  const listThreads = ({ pageId, max = 40 }) => !/^\d+$/.test(String(pageId)) ? Promise.resolve({ error: 'Thiếu Page.' }) : queue(pageId, async () => {
+  const listThreads = ({ pageId, max = 15, full = false }) => !/^\d+$/.test(String(pageId)) ? Promise.resolve({ error: 'Thiếu Page.' }) : queue(pageId, async () => {
     const sl = slot(pageId), wc = sl.win.webContents;
     // Đang ở hộp thư của đúng Page (vd vừa mở hội thoại): đọc danh sách tại chỗ, không tải lại trang → hội thoại đang theo dõi vẫn giữ.
     const here = wc.getURL().includes(`asset_id=${pageId}`) && await wc.executeJavaScript(`!!document.querySelector('[data-maiba-contact-id]')`).catch(() => false);
@@ -305,7 +305,8 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
     }
     const seen = new Map(), started = Date.now();
     // Đã đọc đủ danh sách gần đây: lần làm mới chỉ đọc phần đầu (hội thoại mới luôn nổi lên trên), không cuộn → 1–2 giây thay vì 10 giây.
-    const quick = here && sl.listedAt && Date.now() - sl.listedAt < 10 * 60e3;
+    const quick = !full && here && sl.listedAt && Date.now() - sl.listedAt < 10 * 60e3;
+    max = Math.min(Math.max(Number(max) || 15, 5), 80);
     // Business Suite trong khung ẩn có khi tải 15–20 giây: còn vòng xoay (progressbar / aria-busy) và chưa có dòng nào thì chờ tiếp, tối đa 30 giây.
     // Chờ tới khi danh sách có dòng đầu tiên (tối đa 60 giây: nhiều Page tải cùng lúc thì mỗi trang chậm hơn), không chỉ lúc còn vòng xoay.
     const hasRows = () => wc.executeJavaScript(`!!document.querySelector('[data-maiba-contact-id]')`).catch(() => false);
