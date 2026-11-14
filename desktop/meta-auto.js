@@ -1072,6 +1072,17 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
     return { done: leftComposer(wc), filled: done };
   });
 
-  return { lookupProfile, listThreads, readThread, sendThread, composePost };
+  // Trạng thái khung ngầm cho thanh trên cùng: khung đọc đã vào Hộp thư chưa, khung gửi đã mở sẵn chưa, đã gửi thẳng được chưa.
+  const hiddenStatus = async () => {
+    const one = async (sl, ws) => { if (!sl) return 'none'; try { const wc = sl.win.webContents; if (wc.isDestroyed()) return 'none';
+      if (wc.isLoading() || !wc.getURL().includes(`asset_id=${sl.pageId}`)) return 'loading';
+      if (!ws) return 'ready';
+      const live = await Promise.race([wc.executeJavaScript(`(window.__gaWS || []).some(w => w.readyState === 1)`).catch(() => false), sleep(800).then(() => false)]);
+      const cfg = lsStore(sl.pageId).lsCfg; return live && cfg?.app && cfg?.ver ? 'fast' : 'ready'; } catch { return 'none'; } };
+    const ids = [...new Set([...slots.keys(), ...sendSlots.keys()])];
+    return Promise.all(ids.map(async id => ({ page: id, read: await one(slots.get(id), false), send: makeWorker ? await one(sendSlots.get(id), true) : 'none',
+      busy: !!slots.get(id)?.queue.runningSince, frames: lsStore(id).frames || 0 })));
+  };
+  return { lookupProfile, listThreads, readThread, sendThread, composePost, hiddenStatus };
 }
 module.exports = { readThreads, createMetaAuto, extractProfile, findTarget };

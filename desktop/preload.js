@@ -5,6 +5,7 @@ contextBridge.exposeInMainWorld('metaDesktop', {
   tabChanged: group => ipcRenderer.send('tab-changed', String(group)),
   lookupProfile: args => ipcRenderer.invoke('meta-lookup', args),
   listThreads: args => ipcRenderer.invoke('meta-threads', args),
+  hiddenStatus: () => ipcRenderer.invoke('meta-hidden-status'),
   readThread: args => ipcRenderer.invoke('meta-thread-read', args),
   sendThread: args => ipcRenderer.invoke('meta-thread-send', args),
   openZalo: () => ipcRenderer.send('open-zalo'),

@@ -348,6 +348,7 @@ app.whenReady().then(async () => {
   ipcMain.handle('meta-thread-read', (e, args) => fromPage(e) ? auto.readThread(args || {}) : { error: 'denied' });
   ipcMain.handle('meta-thread-send', (e, args) => fromPage(e) ? auto.sendThread(args || {}) : { error: 'denied' });
   ipcMain.handle('meta-threads', (e, args) => fromPage(e) ? auto.listThreads(args || {}) : { error: 'denied' });
+  ipcMain.handle('meta-hidden-status', e => fromPage(e) ? auto.hiddenStatus() : []);
   // Mở đúng hội thoại trong cột Meta: tải hộp thư của Page rồi bấm vào dòng của khách (UID).
   ipcMain.handle('meta-open-thread', async (e, { pageId, uid } = {}) => {
     if (!fromPage(e) || !/^\d+$/.test(String(pageId)) || !/^\d+$/.test(String(uid))) return false;
