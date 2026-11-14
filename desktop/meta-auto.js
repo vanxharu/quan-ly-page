@@ -669,12 +669,10 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
   }
   // Dọn ô nhập ngay tại chỗ (chữ + ảnh đính kèm còn sót từ lần trước) thay vì tải lại cả trang Business Suite (tiết kiệm 5–10 giây).
   // Trả về false nếu vẫn còn ảnh sót (khi đó mới tải lại trang).
+  // Nút "×" gỡ ảnh đính kèm của ô soạn tin (cột tin nhắn). Cột thông tin khách bên phải cũng có nút cùng tên → phải lọc đúng vùng.
+  const ATT_CLOSE = '[data-surface*="messenger_detail_view/lib:message-thread-attachment-preview-button-close"]';
   async function clearComposer(wc) {
-    for (let i = 0; i < 6; i++) {
-      const n = await wc.executeJavaScript(`(() => { const b = [...document.querySelectorAll('[data-surface*="attachment-preview-button-close"], [aria-label*="Gỡ tệp" i], [aria-label*="Xóa tệp" i], [aria-label*="Xoá tệp" i], [aria-label*="Remove attachment" i]')];
-        b.forEach(x => x.click()); return b.length; })()`).catch(() => 0);
-      if (!n) break; await sleep(250);
-    }
+    for (let i = 0; i < 6; i++) { if (!await mouse(wc, { selector: ATT_CLOSE })) break; await sleep(300); }
     const hasText = await wc.executeJavaScript(`!!(document.querySelector('[data-ga-editor]')?.innerText || '').trim()`).catch(() => false);
     if (hasText && await mouse(wc, { selector: '[data-ga-editor]' })) {
       const dbg = wc.debugger, mod = process.platform === 'darwin' ? 4 : 2;
@@ -684,7 +682,7 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
       await dbg.sendCommand('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Backspace', code: 'Backspace', windowsVirtualKeyCode: 8 }).catch(() => {});
       await sleep(100);
     }
-    return !(await wc.executeJavaScript(`[...document.querySelectorAll('[data-surface*="attachment-preview-button-close"], [aria-label*="Gỡ tệp" i], [aria-label*="Remove attachment" i]')].length`).catch(() => 0));
+    return !(await wc.executeJavaScript(`document.querySelectorAll('${ATT_CLOSE}').length`).catch(() => 0));
   }
   const threadArgs = ({ pageId, uid }) => /^\d+$/.test(String(pageId)) && /^\d+$/.test(String(uid));
   // Hội thoại đã có dữ liệu gốc (đã tải một đoạn tin, tin mới tự đổ về): trả ngay, không phải mở trong khung ẩn.
@@ -726,7 +724,7 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
     const read = () => wc.executeJavaScript(`(${readMessages})(false)`).catch(() => null);
     const myPics = r => (r?.messages || []).filter(m => m.mine && m.pic).length;
     const allPics = r => (r?.messages || []).filter(m => m.pic).length;
-    const r0 = image ? await read() : null, picsBefore = myPics(r0), allBefore = allPics(r0);
+    const r0 = await read(), picsBefore = myPics(r0), allBefore = allPics(r0);
     const attached = image ? await attachImage(wc, image) : true;
     if (image) mark('dinh-anh');
     if (!attached) {
@@ -748,13 +746,21 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
     }
     await sleep(image ? 300 : 100);
     mark('go-chu'); const t0 = Date.now();
-    await dbg.sendCommand('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Enter', windowsVirtualKeyCode: 13, text: '\r', unmodifiedText: '\r' });
-    await dbg.sendCommand('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Enter', windowsVirtualKeyCode: 13 });
+    // Bấm nút "Gửi" của Business Suite (Enter có khi không gửi khi đang có ảnh đính kèm); không thấy nút thì bấm Enter.
+    const pressEnter = async () => { await mouse(wc, { selector: '[data-ga-editor]' });
+      await dbg.sendCommand('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Enter', windowsVirtualKeyCode: 13, text: '\r', unmodifiedText: '\r' });
+      await dbg.sendCommand('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Enter', windowsVirtualKeyCode: 13 }); };
+    const sendBtn = { selector: 'button, [role="button"]', text: '^(Gửi|Send)$', enabled: true };
+    if (!await mouse(wc, sendBtn)) await pressEnter();
     // So khớp bỏ khoảng trắng: Business Suite gộp/bỏ dấu cách đầu dòng (vd dòng thụt lề "   Nội dung CK") nên so nguyên văn sẽ trượt.
     // So khớp chỉ theo chữ + số: Messenger hiện emoji (📌 💳…) thành hình nên chữ đọc trên màn hình không có emoji; tin dài có khi bị rút gọn "Xem thêm".
     const norm = t => String(t || '').normalize('NFC').replace(/[^\p{L}\p{N}]/gu, '').toLowerCase();
     const all = norm(text), head = all.slice(0, 30), tail = all.slice(-30);
     const hit = t => { const n = norm(t); return !!n && (n.includes(tail) || n.includes(head)); };
+    // Hội thoại có thể đã có tin giống hệt (gửi lại cùng mẫu) → chỉ tính tin MỚI: đếm số tin khớp trước khi gửi.
+    const hits = r => (r?.messages || []).filter(m => m.text && hit(m.text)).length, hitsBefore = hits(r0);
+    const stillTyped = () => wc.executeJavaScript(`(document.querySelector('[data-ga-editor]')?.innerText || '')`).then(t => !!all && norm(t).includes(head)).catch(() => false);
+    let backup = false;
     let textOk = !all, picOk = !image;
     // Xác nhận nhanh: dữ liệu gốc của Meta (WebSocket) báo tin của Page vừa gửi trong hội thoại này → xong ngay (thường < 1 giây).
     // Đọc màn hình chỉ là dự phòng (mỗi ~0,9 giây). Tối đa ~16 giây chữ / ~32 giây có ảnh.
@@ -768,8 +774,9 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
       if (textOk && picOk) { mark('xac-nhan-goc'); return done(); }
       if (i % 6 === 5) {
         const r = await read();
-        const mine = (r?.messages || []).filter(m => m.text).slice(-4); // phía nào cũng được: chỉ cần thấy đúng nội dung vừa gửi
-        textOk ||= mine.some(m => hit(m.text)); picOk ||= myPics(r) > picsBefore || allPics(r) > allBefore;
+        textOk ||= hits(r) > hitsBefore; picOk ||= myPics(r) > picsBefore || allPics(r) > allBefore;
+        // Sau ~2 giây chữ vẫn nằm trong ô nhập = chưa gửi → bấm Enter thêm một lần (dự phòng).
+        if (!backup && !textOk && i >= 11 && await stillTyped()) { backup = true; await pressEnter(); }
         if (textOk && picOk) { mark('xac-nhan-man-hinh'); return { done: true, ...r }; }
       }
     }
