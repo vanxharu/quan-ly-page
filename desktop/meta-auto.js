@@ -190,14 +190,15 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
       if (running || !tasks.length) return;
       running = true;
       tasks.sort((a, b) => b.prio - a.prio || a.n - b.n);
-      const t = tasks.shift();
+      const t = tasks.shift(); q.runningSince = Date.now(); q.runningPrio = t.prio;
       // Một việc treo (trang đang chuyển, lệnh không trả lời) không được chặn cả hàng: quá 2,5 phút thì bỏ, làm việc sau.
       let timer; const limit = new Promise((_, bad) => { timer = setTimeout(() => bad(new Error('Khung Business Suite không phản hồi (quá 150 giây). Thử lại.')), 150e3); });
-      try { t.ok(await Promise.race([t.fn(), limit])); } catch (e) { t.bad(e); } finally { clearTimeout(timer); running = false; next(); }
+      try { t.ok(await Promise.race([t.fn(), limit])); } catch (e) { t.bad(e); } finally { clearTimeout(timer); running = false; q.runningSince = 0; next(); }
     };
     let n = 0;
     const q = (fn, prio = 0) => new Promise((ok, bad) => { tasks.push({ fn, prio, ok, bad, n: n++ }); next(); });
-    q.urgent = () => tasks.some(t => t.prio > 0); // có việc bạn đang chờ (mở hội thoại, gửi tin) → việc nền nên dừng sớm
+    q.urgent = () => tasks.some(t => t.prio > 0);
+    q.waiting = () => tasks.length; // có việc bạn đang chờ (mở hội thoại, gửi tin) → việc nền nên dừng sớm
     return q;
   };
   const composeQueue = makeQueue();
@@ -283,12 +284,26 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
     if (r.list || r.threads.size) { if (Date.now() - (sl?.lastList || 0) > 800) { if (sl) sl.lastList = Date.now(); try { listChanged(String(pageId)); } catch {} } }
     for (const uid of r.threads) try { threadChanged(`${pageId}:${uid}`); } catch {}
   };
+  // Trạng thái các khung ẩn → Downloads/GetHelps-debug/trang-thai.json (30 giây/lần) để chẩn đoán khi chậm/kẹt.
+  setInterval(() => {
+    try {
+      const now = Date.now(), data = { at: new Date().toISOString(), slots: [...slots.values()].map(sl => {
+        const st = lsStores.get(sl.pageId) || {};
+        return { page: sl.pageId, url: (() => { try { return sl.win.webContents.getURL().replace(/[?&](business_id|ir_qe_exposed)=[^&]*/g, '').slice(0, 120); } catch { return 'đã đóng'; } })(),
+          opened: sl.opened, busySec: sl.queue.runningSince ? Math.round((now - sl.queue.runningSince) / 1000) : 0, busyPrio: sl.queue.runningPrio, waiting: sl.queue.waiting?.() || 0,
+          wsFrames: st.frames || 0, lsThreads: st.threads?.size || 0, lsContacts: st.contacts?.size || 0, lsLoaded: st.loaded?.size || 0, lsAgoSec: st.at ? Math.round((now - st.at) / 1000) : null,
+          lsTop: st.threads ? [...st.threads.values()].sort((a, b) => b.at - a.at).slice(0, 3).map(t => (st.contacts.get(t.uid)?.name || '?').slice(0, 3) + '… ' + new Date(t.at).toISOString().slice(5, 16)) : [] };
+      }) };
+      const dir = path.join(app.getPath('downloads'), 'GetHelps-debug'); fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, 'trang-thai.json'), JSON.stringify(data, null, 1));
+    } catch {}
+  }, 30e3);
   const lighten = async (wc, pageId) => {
     if (!wc || wc.__gaLight) return; wc.__gaLight = true;
     const dbg = wc.debugger, pending = new Map();
     dbg.on('message', (_e, method, params) => {
       if (method === 'Fetch.requestPaused') dbg.sendCommand('Fetch.failRequest', { requestId: params.requestId, errorReason: 'BlockedByClient' }).catch(() => {});
-      else if (method === 'Network.webSocketFrameReceived') { const f = params.response || {}; const raw = f.opcode === 2 ? Buffer.from(String(f.payloadData || ''), 'base64').toString('utf8') : String(f.payloadData || ''); if (/ls_resp|upsertMessage|deleteThenInsert/.test(raw)) lsGot(pageId, raw); }
+      else if (method === 'Network.webSocketFrameReceived' && (lsStore(pageId).frames = (lsStore(pageId).frames || 0) + 1)) { const f = params.response || {}; const raw = f.opcode === 2 ? Buffer.from(String(f.payloadData || ''), 'base64').toString('utf8') : String(f.payloadData || ''); if (/ls_resp|upsertMessage|deleteThenInsert/.test(raw)) lsGot(pageId, raw); }
       else if (method === 'Network.responseReceived' && /\/api\/graphql|lightspeed|ls_req/i.test(params.response?.url || '')) pending.set(params.requestId, params.response.url);
       else if (method === 'Network.loadingFinished' && pending.has(params.requestId)) {
         const url = pending.get(params.requestId); pending.delete(params.requestId);
