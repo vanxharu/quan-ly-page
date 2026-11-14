@@ -215,22 +215,26 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
   // Ảnh trong tin (scontent) và ảnh đại diện vẫn tải để app lấy được. Chỉ áp dụng cho khung ẩn, cột Meta bạn xem vẫn đầy đủ.
   // Kèm theo: ghi lại vài gói dữ liệu tin nhắn gốc Business Suite tải về (để chuyển sang đọc dữ liệu gốc, nhanh hơn đọc màn hình).
   const BLOCK = [{ resourceType: 'Media' }, { resourceType: 'Font' }, { urlPattern: '*static.xx.fbcdn.net*', resourceType: 'Image' }, { urlPattern: '*/rsrc.php/*', resourceType: 'Image' }];
+  // Tin nhắn Business Suite đi qua giao thức "Lightspeed" (bước insertMessage…), qua HTTP lẫn WebSocket. Ghi lại vài mẫu để làm bộ đọc dữ liệu gốc.
   let captured = 0;
+  const keepSample = (pageId, kind, url, body) => {
+    if (captured >= 16 || !/insertMessage|upsertMessage|lightspeed|LSPlatform|deleteThenInsertThread|verifyContactRowExists/i.test(body)) return;
+    captured++;
+    try {
+      const dir = path.join(app.getPath('downloads'), 'GetHelps-debug'); fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, `ls-${pageId || 'x'}-${captured}.json`), JSON.stringify({ kind, url: String(url || '').replace(/[?&](fb_dtsg|jazoest|lsd|__\w+)=[^&]*/g, '').slice(0, 200), size: body.length, body: body.slice(0, 120000) }, null, 1));
+    } catch {}
+  };
   const lighten = async (wc, pageId) => {
     if (!wc || wc.__gaLight) return; wc.__gaLight = true;
     const dbg = wc.debugger, pending = new Map();
     dbg.on('message', (_e, method, params) => {
       if (method === 'Fetch.requestPaused') dbg.sendCommand('Fetch.failRequest', { requestId: params.requestId, errorReason: 'BlockedByClient' }).catch(() => {});
-      else if (method === 'Network.responseReceived' && captured < 12 && /\/api\/graphql|\/ajax\/mercury|messaging/i.test(params.response?.url || '')) pending.set(params.requestId, params.response.url);
+      else if (method === 'Network.webSocketFrameReceived' && captured < 16) keepSample(pageId, 'ws', 'websocket', String(params.response?.payloadData || ''));
+      else if (method === 'Network.responseReceived' && captured < 16 && /\/api\/graphql|lightspeed|ls_req|messaging/i.test(params.response?.url || '')) pending.set(params.requestId, params.response.url);
       else if (method === 'Network.loadingFinished' && pending.has(params.requestId)) {
         const url = pending.get(params.requestId); pending.delete(params.requestId);
-        dbg.sendCommand('Network.getResponseBody', { requestId: params.requestId }).then(b => {
-          const body = String(b?.body || '');
-          if (captured >= 12 || !/"message|"snippet|message_id|messages"/i.test(body)) return;
-          captured++;
-          const dir = path.join(app.getPath('downloads'), 'GetHelps-debug'); fs.mkdirSync(dir, { recursive: true });
-          fs.writeFileSync(path.join(dir, `du-lieu-goc-${pageId || 'x'}-${captured}.json`), JSON.stringify({ url: url.replace(/[?&](fb_dtsg|jazoest|lsd|__\w+)=[^&]*/g, ''), size: body.length, body: body.slice(0, 60000) }, null, 1));
-        }).catch(() => {});
+        dbg.sendCommand('Network.getResponseBody', { requestId: params.requestId }).then(b => keepSample(pageId, 'http', url, b?.base64Encoded ? Buffer.from(b.body, 'base64').toString('utf8') : String(b?.body || ''))).catch(() => {});
       }
     });
     await dbg.sendCommand('Fetch.enable', { patterns: BLOCK }).catch(() => {});
