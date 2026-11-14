@@ -279,6 +279,8 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
     }
     return out;
   };
+  // Số câu khách nhắn liên tiếp ở cuối hội thoại (từ sau tin trả lời gần nhất của Page).
+  const lsStreak = (st, uid) => { let n = 0; for (const m of [...(st.msgs.get(String(uid))?.values() || [])].filter(x => x.ts && (x.text || x.pic)).sort((a, b) => b.ts - a.ts)) { if (m.mine) break; n++; } return n; };
   // Có dữ liệu gốc mới: báo Hộp thư ngay (danh sách đổi / hội thoại đang mở có tin mới), không chờ đọc màn hình.
   const lsGot = (pageId, raw) => {
     const r = lsIngest(pageId, raw); if (!r) return;
@@ -288,7 +290,7 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
     const st = lsStore(pageId);
     for (const uid of r.threads) {
       const m = [...(st.msgs.get(uid)?.values() || [])].filter(x => x.ts && (x.text || x.pic)).sort((a, b) => b.ts - a.ts)[0];
-      const info = m ? { ts: m.ts, mine: m.mine, text: m.text || (m.pic ? 'Đã gửi một ảnh.' : ''), name: st.contacts.get(uid)?.name || '' } : null;
+      const info = m ? { ts: m.ts, mid: m.mid, streak: lsStreak(st, uid), mine: m.mine, text: m.text || (m.pic ? 'Đã gửi một ảnh.' : ''), name: st.contacts.get(uid)?.name || '' } : null;
       try { threadChanged(`${pageId}:${uid}`, info); } catch {}
     }
   };
@@ -411,7 +413,7 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
     const names = pageRows.get(String(pageId))?.rows, nameOf = uid => { for (const [, l] of names || []) for (const r of l) if (r.uid === uid) return r.name; return ''; };
     const rows = [...st.threads.values()].filter(t => t.at && t.folder !== 'spam').sort((a, b) => b.at - a.at).slice(0, max).map(t => {
       const c = st.contacts.get(t.uid), name = c?.name || nameOf(t.uid);
-      return { uid: t.uid, name: name || '', snippet: t.snippet, time: '', at: t.at, unread: t.read > 0 && t.read < t.at && !/^Bạn:/.test(t.snippet), pic: c?.pic || t.pic };
+      return { uid: t.uid, name: name || '', snippet: t.snippet, time: '', at: t.at, unread: t.read > 0 && t.read < t.at && !/^Bạn:/.test(t.snippet) ? Math.max(1, lsStreak(st, t.uid)) : 0, pic: c?.pic || t.pic };
     });
     // Thiếu tên vài khách (dữ liệu liên hệ chưa về): vẫn dùng nếu đa số có tên; khách thiếu tên tạm ghi "Khách Messenger".
     if (rows.filter(r => r.name).length < Math.ceil(rows.length * 0.7)) return null;

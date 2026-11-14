@@ -229,7 +229,7 @@
       const t = row.at ? Number(row.at) : bsTime(row.time, base); // dữ liệu gốc có giờ chính xác
       const at = t != null ? t - i : prev - 1000; prev = at;
       const c = { id: `bs:${p.id}:${row.uid}`, bs: true, uid: row.uid, page: p, other: { id: 'bs' + row.uid, name: row.name },
-        snippet: row.snippet, timeText: row.time, updated_time: new Date(at).toISOString(), unread_count: row.unread ? 1 : 0,
+        snippet: row.snippet, timeText: row.time, updated_time: new Date(at).toISOString(), unread_count: row.unread ? Math.max(1, Number(row.unread) || 1) : 0,
         // Nhãn CRM ghép theo Page + tên khách (giống hội thoại đọc qua API); tin cuối "Bạn: …" là Page đã trả lời.
         key: App.crmKey(p.id, row.name), lastAt: at, fromCustomer: !/^(bạn|you)\s*:/i.test(row.snippet) };
       if (row.pic) S.pics.set(pictureKey(c), row.pic);
@@ -656,7 +656,7 @@
           custAvatar(c),
           h('div', { className: 'body' },
             h('div', { className: 'top' }, h('span', { className: 'name', textContent: c.other.name || 'Khách' }),
-              c.unread_count ? h('span', { className: 'badge', textContent: c.unread_count }) : null,
+              c.unread_count ? h('span', { className: 'badge', title: `Khách đã nhắn ${c.unread_count} tin chưa đọc`, textContent: c.unread_count > 99 ? '99+' : c.unread_count }) : null,
               h('span', { className: 'time', textContent: c.timeText || (new Date(c.updated_time).toDateString() === today ? new Date(c.updated_time).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }) : fmtShort(c.updated_time)) })),
             h('div', { className: 'snippet', textContent: c.snippet || '' }),
             ((wait != null && wait < 7 * 1440) || labels.length) ? h('div', { className: 'tags' },
@@ -955,6 +955,7 @@
     try {
       const list = await bsThreads(p, { force: true }).catch(() => null);
       if (list?.length) {
+        for (const c of list) { const o = S.convs.find(x => x.id === c.id); if (o && c.unread_count && o.unread_count > c.unread_count) { c.unread_count = o.unread_count; c.lastMid = o.lastMid; } }
         S.convs = [...new Map([...S.convs.filter(c => c.page.id !== p.id), ...list].map(c => [c.id, c])).values()].sort((a, b) => new Date(b.updated_time) - new Date(a.updated_time));
         if (App.current() === 'inbox') await drawList();
         const fresh = S.conv && list.find(c => c.id === S.conv.id);
@@ -967,12 +968,17 @@
     // Tin mới từ dữ liệu gốc: sửa ngay dòng khách trong danh sách (tin cuối, giờ, chưa đọc, đưa lên đầu) và báo tin.
     if (info?.ts && bsFirst()) {
       const row = S.convs.find(x => x.id === 'bs:' + id), pageId = id.split(':')[0];
-      if (row && info.ts > (row.lastAt || 0) + 1000) {
+      // Tin vừa đến (2 phút gần đây) mới được đếm/báo; tin cũ (đọc lại lịch sử) chỉ sửa dòng nếu mới hơn.
+      const fresh = Date.now() - info.ts < 120e3;
+      if (row && (info.mid == null || info.mid !== row.lastMid) && (fresh ? info.ts >= (row.lastAt || 0) - 1000 : info.ts > (row.lastAt || 0) + 60e3)) {
+        row.lastMid = info.mid;
         row.snippet = (info.mine ? 'Bạn: ' : '') + info.text; row.fromCustomer = !info.mine;
         row.updated_time = new Date(info.ts).toISOString(); row.lastAt = info.ts; row.timeText = '';
         const viewing = S.conv?.id === row.id && App.current() === 'inbox' && !document.hidden;
-        if (!info.mine && !viewing) {
-          row.unread_count = 1;
+        if (info.mine) row.unread_count = 0; // Page đã trả lời → hết chờ
+        else if (!viewing && fresh) {
+          // Đếm số câu khách đã nhắn (chưa đọc): cộng dồn từng tin mới, không thấp hơn số câu liên tiếp đọc từ dữ liệu gốc.
+          row.unread_count = Math.max((row.unread_count || 0) + 1, info.streak || 1);
           settings().then(st => { if (st.webNotify && !st.mutedPages?.includes(row.page.id) && InboxRules.notifyAllowed(st, row.page.id)) App.notify(`💬 ${row.other.name} · ${row.page.name}`, info.text || 'Tin nhắn mới'); }).catch(() => {});
         }
         bsNotified.set(row.id, `${row.snippet}|${row.timeText}`);
