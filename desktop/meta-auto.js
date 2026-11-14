@@ -495,12 +495,15 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
     // Khung chi tiết đã đúng khách này (data-surface "<uid>:<tên>") và có tin → xong.
     const ready = async () => !!(await wc.executeJavaScript(`(() => { const col = document.querySelector('[data-surface$="lib:inbox:detail_column"]');
       // Thẻ "<uid>:<tên>" có thể nằm ở cột thông tin khách (ngoài detail_column) → tìm trên toàn trang; cột tin phải có tin.
-      return !!(col && document.querySelector('[data-surface^="${uid}:"], [data-surface*="/${uid}:"]') && col.querySelector('[data-message-id]')); })()`).catch(() => false));
+      // Hoặc địa chỉ trang đã chọn đúng khách (selected_item_id=<uid>) và cột tin đã có tin.
+      return !!(col && (document.querySelector('[data-surface^="${uid}:"], [data-surface*="/${uid}:"]') || /[?&]selected_item_id=${uid}(&|$)/.test(location.search)) && col.querySelector('[data-message-id]')); })()`).catch(() => false));
     // Nhanh: đang ở hộp thư của đúng Page → bấm thẳng vào dòng của khách (cuộn danh sách về đầu nếu cần), không tải lại trang (tiết kiệm 10–30 giây).
     if (wc.getURL().includes(`asset_id=${pageId}`)) {
       for (let i = 0; i < 2; i++) {
         if (await mouse(wc, { selector: `[data-maiba-contact-id="${uid}"]` })) {
           for (let k = 0; k < 20; k++) { await sleep(300); if (await ready()) { sl.opened = id; await watchThread(wc); await watchList(wc); return true; } }
+          // Không nhận ra dấu hiệu nhưng trang đã chọn đúng khách và có tin → dùng luôn, không tải lại cả trang (tiết kiệm 15–25 giây).
+          if (wc.getURL().includes(`selected_item_id=${uid}`) && (await wc.executeJavaScript(`(${readMessages})(false)`).catch(() => null))?.messages?.length) { sl.opened = id; await watchThread(wc); await watchList(wc); return true; }
           break;
         }
         await wc.executeJavaScript(`(() => { let box = document.querySelector('[data-maiba-contact-id]');
@@ -717,16 +720,13 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
     mark('mo-hoi-thoai');
     if (ok !== true) return { error: ok === 'login' ? 'login' : 'Không mở được hội thoại trong Business Suite.' };
     const wc = slot(args.pageId).win.webContents, dbg = wc.debugger;
-    // Dọn ô nhập tại chỗ; chỉ khi không gỡ được ảnh sót mới tải lại hội thoại (cách cũ, chậm).
-    if (await findComposer(wc, 4000) && !await clearComposer(wc)) {
-      slot(args.pageId).opened = ''; ok = await openThreadHidden(String(args.pageId), String(args.uid));
-      if (ok !== true) return { error: ok === 'login' ? 'login' : 'Không mở được hội thoại trong Business Suite.' };
-      mark('tai-lai-trang');
-    }
+    // Dọn ô nhập tại chỗ (gỡ ảnh sót, xoá chữ cũ). Không tải lại trang nữa: dấu hiệu "còn ảnh sót" hay nhận nhầm, tốn 20+ giây.
+    if (await findComposer(wc, 4000)) await clearComposer(wc);
     mark('don-o-nhap');
     const read = () => wc.executeJavaScript(`(${readMessages})(false)`).catch(() => null);
     const myPics = r => (r?.messages || []).filter(m => m.mine && m.pic).length;
-    const picsBefore = image ? myPics(await read()) : 0;
+    const allPics = r => (r?.messages || []).filter(m => m.pic).length;
+    const r0 = image ? await read() : null, picsBefore = myPics(r0), allBefore = allPics(r0);
     const attached = image ? await attachImage(wc, image) : true;
     if (image) mark('dinh-anh');
     if (!attached) {
@@ -751,22 +751,25 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
     await dbg.sendCommand('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Enter', windowsVirtualKeyCode: 13, text: '\r', unmodifiedText: '\r' });
     await dbg.sendCommand('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Enter', windowsVirtualKeyCode: 13 });
     // So khớp bỏ khoảng trắng: Business Suite gộp/bỏ dấu cách đầu dòng (vd dòng thụt lề "   Nội dung CK") nên so nguyên văn sẽ trượt.
-    const norm = t => String(t || '').replace(/\s+/g, '').toLowerCase();
-    const tail = norm(lines.filter(l => l.trim()).pop()).slice(-40);
-    let textOk = !tail, picOk = !image;
+    // So khớp chỉ theo chữ + số: Messenger hiện emoji (📌 💳…) thành hình nên chữ đọc trên màn hình không có emoji; tin dài có khi bị rút gọn "Xem thêm".
+    const norm = t => String(t || '').normalize('NFC').replace(/[^\p{L}\p{N}]/gu, '').toLowerCase();
+    const all = norm(text), head = all.slice(0, 30), tail = all.slice(-30);
+    const hit = t => { const n = norm(t); return !!n && (n.includes(tail) || n.includes(head)); };
+    let textOk = !all, picOk = !image;
     // Xác nhận nhanh: dữ liệu gốc của Meta (WebSocket) báo tin của Page vừa gửi trong hội thoại này → xong ngay (thường < 1 giây).
     // Đọc màn hình chỉ là dự phòng (mỗi ~0,9 giây). Tối đa ~16 giây chữ / ~32 giây có ảnh.
-    const lsSent = () => [...(lsStore(args.pageId).msgs.get(String(args.uid))?.values() || [])].some(m => m.mine && m.ts >= t0 - 5000 && (tail ? norm(m.text).includes(tail) : !!m.pic));
-    const lsPic = () => [...(lsStore(args.pageId).msgs.get(String(args.uid))?.values() || [])].some(m => m.mine && m.pic && m.ts >= t0 - 5000);
+    const lsSent = () => [...(lsStore(args.pageId).msgs.get(String(args.uid))?.values() || [])].some(m => m.ts >= t0 - 5000 && hit(m.text));
+    // Ảnh: dữ liệu gốc không luôn ghi người gửi cho tệp đính kèm → ảnh mới xuất hiện trong hội thoại ngay sau khi bấm gửi là ảnh vừa gửi.
+    const lsPic = () => [...(lsStore(args.pageId).msgs.get(String(args.uid))?.values() || [])].some(m => m.pic && m.ts >= t0 - 3000 && !(m.mine === false && m.text && !hit(m.text) && m.ts < t0));
     const done = async () => { const lr = lsMessages(args.pageId, args.uid); if (lsStore(args.pageId).loaded.has(String(args.uid)) && lr.length) return { done: true, messages: lr, source: 'ls' }; return { done: true, ...(await read()) }; };
     for (let i = 0; i < (image ? 210 : 105); i++) {
       await sleep(150);
-      if (tail) textOk ||= lsSent(); if (image) picOk ||= lsPic();
+      if (all) textOk ||= lsSent(); if (image) picOk ||= lsPic();
       if (textOk && picOk) { mark('xac-nhan-goc'); return done(); }
       if (i % 6 === 5) {
         const r = await read();
-        const mine = (r?.messages || []).filter(m => m.mine && m.text).slice(-3);
-        textOk ||= mine.some(m => norm(m.text).includes(tail)); picOk ||= myPics(r) > picsBefore;
+        const mine = (r?.messages || []).filter(m => m.text).slice(-4); // phía nào cũng được: chỉ cần thấy đúng nội dung vừa gửi
+        textOk ||= mine.some(m => hit(m.text)); picOk ||= myPics(r) > picsBefore || allPics(r) > allBefore;
         if (textOk && picOk) { mark('xac-nhan-man-hinh'); return { done: true, ...r }; }
       }
     }
