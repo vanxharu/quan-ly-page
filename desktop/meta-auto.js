@@ -70,7 +70,8 @@ function readRows(scroll) {
 function readThreads(scroll) {
   // Mốc giờ ở cuối mỗi dòng: "09:28", "Hôm qua", "T6"/"Thứ 6"/"Thứ Sáu", "13 Tháng 11", "13/11", "1 ngày", "Nov 13", "Fri"…
   const isTime = s => s.length <= 24 && /^(vừa xong|now|just now|hôm qua|yesterday|\d+\s*(giây|phút|giờ|ngày|tuần|tháng|năm|[smhdwy])|\d{1,2}:\d{2}(\s*[ap]m)?|(th|thứ|t)\s?[2-7]|thứ\s+(hai|ba|tư|năm|sáu|bảy)|chủ nhật|cn|(mon|tue|wed|thu|fri|sat|sun)[a-z]*|\d{1,2}\s*(thg|tháng)\s*\d{1,2}(,?\s*\d{4})?|[a-z]{3}\s+\d{1,2}(,\s*\d{4})?|\d{1,2}\/\d{1,2}(\/\d{2,4})?)$/i.test(s);
-  const rows = [...document.querySelectorAll('[data-maiba-contact-id][data-maiba-contact-type="fb_user"]')].map(el => {
+  // Mọi dòng có UID khách (trừ Instagram/WhatsApp): Meta có thể gắn loại khác "fb_user" cho một số hội thoại (vd đang do AI trả lời).
+  const rows = [...document.querySelectorAll('[data-maiba-contact-id]')].filter(el => !/ig|instagram|whatsapp|wa_/i.test(el.getAttribute('data-maiba-contact-type') || '')).map(el => {
     const title = el.querySelector('[data-surface$="lib:thread_title"]'), name = (title?.innerText || '').trim();
     const leaves = [...el.querySelectorAll('span,div,abbr')].filter(x => x.childElementCount === 0 && !title?.contains(x));
     const lines = leaves.map(x => (x.innerText || x.textContent || '').trim()).filter(s => s && s !== name && !/^[·•]$/.test(s));
@@ -289,6 +290,14 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
     }
     const rows = [...seen.values()].slice(0, max);
     // Nhiều dòng không đọc được giờ: lưu mẫu chữ của các dòng đó để chỉnh cách đọc (Downloads/GetHelps-debug).
+    // Mẫu cấu trúc danh sách (loại dòng, thứ tự) để đối chiếu với Business Suite khi thiếu hội thoại.
+    try {
+      const dir = path.join(app.getPath('downloads'), 'GetHelps-debug'); fs.mkdirSync(dir, { recursive: true });
+      const shape = await wc.executeJavaScript(`[...document.querySelectorAll('[data-maiba-contact-id]')].slice(0, 30).map(el => ({ type: el.getAttribute('data-maiba-contact-type'),
+        uid: (el.getAttribute('data-maiba-contact-id') || '').slice(-4), name: ((el.querySelector('[data-surface$="lib:thread_title"]') || el).innerText || '').split('\\n')[0].slice(0, 3) + '…',
+        top: Math.round(el.getBoundingClientRect().top) }))`).catch(e => 'lỗi ' + e.message);
+      fs.writeFileSync(path.join(dir, `danh-sach-${pageId}.json`), JSON.stringify({ at: new Date().toISOString(), url: wc.getURL(), read: rows.map(r => r.name.slice(0, 3) + '… ' + r.time), shape }, null, 1));
+    } catch {}
     const noTime = rows.filter(r => !r.time);
     if (noTime.length > rows.length / 3) try {
       const dir = path.join(app.getPath('downloads'), 'GetHelps-debug'); fs.mkdirSync(dir, { recursive: true });
