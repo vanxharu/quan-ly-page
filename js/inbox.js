@@ -233,11 +233,6 @@
     if (!r?.rows?.length) return null;
     DB.set('bsList:' + p.id, { at: Date.now(), rows: r.rows }).catch(() => {});
     const list = bsConvs(p, r.rows);
-      const at = Math.min(bsTime(row.time) ?? prev, prev - 1000); prev = at; // giữ đúng thứ tự Business Suite
-      const c = { id: `bs:${p.id}:${row.uid}`, bs: true, uid: row.uid, page: p, other: { id: 'bs' + row.uid, name: row.name },
-        snippet: row.snippet, timeText: row.time, updated_time: new Date(at).toISOString(), unread_count: row.unread ? 1 : 0,
-        // Nhãn CRM ghép theo Page + tên khách (giống hội thoại đọc qua API); tin cuối "Bạn: …" là Page đã trả lời.
-        key: App.crmKey(p.id, row.name), lastAt: at, fromCustomer: !/^(bạn|you)\s*:/i.test(row.snippet) };
     // Báo tin mới (khách nhắn, chưa đọc) — lần đọc đầu tiên của Page chỉ ghi nhận, không báo.
     const st = await settings();
     const known = bsNotified.has(p.id);
