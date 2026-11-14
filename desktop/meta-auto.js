@@ -240,6 +240,8 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
         if (n === 'upsertMessage' || n === 'insertMessage') {
           const uid = String(v[3] || ''); if (/^\d+$/.test(uid) && v[8]) {
             const x = lsMsg(st, uid, String(v[8])); x.ts = Number(v[5]) || x.ts; x.text = v[0] && v[0] !== 'null' ? String(v[0]) : x.text; x.mine = String(v[10]) !== uid; threads.add(uid);
+            // Khách chưa có trong dữ liệu gốc (danh sách đầu Meta tải sẵn trước khi app nghe): tạo dòng từ tin này.
+            if (uid !== pid && !st.threads.has(uid)) st.threads.set(uid, { uid, at: 0, read: 0, snippet: '', pic: '', folder: '' });
           }
         } else if (n === 'insertBlobAttachment' || n === 'insertXmaAttachment') {
           const blob = n === 'insertBlobAttachment', uid = String(v[blob ? 27 : 25] || ''), mid = v[blob ? 32 : 30];
@@ -261,7 +263,7 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
     // Tin mới của hội thoại: cập nhật luôn dòng hội thoại (giờ, tin cuối) để danh sách đúng ngay.
     for (const uid of threads) {
       const ms = [...(st.msgs.get(uid)?.values() || [])].sort((a, b) => b.ts - a.ts)[0], t = st.threads.get(uid);
-      if (ms && t && ms.ts > t.at) { t.at = ms.ts; t.snippet = (ms.mine ? 'Bạn: ' : '') + (ms.text || (ms.pic ? 'Đã gửi một ảnh.' : '')); if (!ms.mine) t.read = 0; list = true; }
+      if (ms && t && ms.ts > t.at) { t.at = ms.ts; t.snippet = (ms.mine ? 'Bạn: ' : '') + (ms.text || (ms.pic ? 'Đã gửi một ảnh.' : '')); if (!ms.mine) t.read = 1; list = true; } // read=1 (< giờ tin) = chưa đọc
     }
     if (threads.size || list) st.at = Date.now();
     return { threads, list };
@@ -282,7 +284,13 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
     const r = lsIngest(pageId, raw); if (!r) return;
     const sl = slots.get(String(pageId));
     if (r.list || r.threads.size) { if (Date.now() - (sl?.lastList || 0) > 800) { if (sl) sl.lastList = Date.now(); try { listChanged(String(pageId)); } catch {} } }
-    for (const uid of r.threads) try { threadChanged(`${pageId}:${uid}`); } catch {}
+    // Kèm tin cuối của hội thoại → Hộp thư sửa ngay dòng khách (tin cuối, giờ, đưa lên đầu) không cần đọc lại danh sách.
+    const st = lsStore(pageId);
+    for (const uid of r.threads) {
+      const m = [...(st.msgs.get(uid)?.values() || [])].filter(x => x.ts && (x.text || x.pic)).sort((a, b) => b.ts - a.ts)[0];
+      const info = m ? { ts: m.ts, mine: m.mine, text: m.text || (m.pic ? 'Đã gửi một ảnh.' : ''), name: st.contacts.get(uid)?.name || '' } : null;
+      try { threadChanged(`${pageId}:${uid}`, info); } catch {}
+    }
   };
   // Trạng thái các khung ẩn → Downloads/GetHelps-debug/trang-thai.json (30 giây/lần) để chẩn đoán khi chậm/kẹt.
   setInterval(() => {
@@ -356,6 +364,7 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
 
   // Danh sách hội thoại Business Suite: mỗi dòng có data-maiba-contact-id (UID Facebook thật của khách), tên và ảnh.
   // Đọc cả danh sách của một Page một lần (lưu 10 phút), rồi so tên với khách trong app.
+  const domTop = new Map(); // pageId -> uid các khách đầu danh sách lần đọc màn hình gần nhất
   const pageRows = new Map(); // pageId -> { at, rows: Map(nameKey -> [{uid,name,pic}]) }
   const key = s => String(s || '').normalize('NFC').replace(/\s+/g, ' ').trim().toLowerCase();
   const loadRows = async (pageId, wantName) => {
@@ -397,8 +406,10 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
   // Danh sách từ dữ liệu gốc (giờ chính xác tới mili giây, có cả khách chưa hiện trên màn hình) nếu đã có đủ; không thì đọc màn hình.
   const lsList = (pageId, max) => {
     const st = lsStores.get(String(pageId)); if (!st || st.threads.size < 3) return null;
+    // Chỉ tin dữ liệu gốc khi nó có đủ các khách đầu danh sách trên màn hình (lần đọc gần nhất); thiếu → đọc màn hình.
+    const top = domTop.get(String(pageId)); if (!top?.length || top.some(uid => !st.threads.has(uid) || !st.threads.get(uid).at)) return null;
     const names = pageRows.get(String(pageId))?.rows, nameOf = uid => { for (const [, l] of names || []) for (const r of l) if (r.uid === uid) return r.name; return ''; };
-    const rows = [...st.threads.values()].filter(t => t.folder !== 'spam').sort((a, b) => b.at - a.at).slice(0, max).map(t => {
+    const rows = [...st.threads.values()].filter(t => t.at && t.folder !== 'spam').sort((a, b) => b.at - a.at).slice(0, max).map(t => {
       const c = st.contacts.get(t.uid), name = c?.name || nameOf(t.uid);
       return { uid: t.uid, name: name || '', snippet: t.snippet, time: '', at: t.at, unread: t.read > 0 && t.read < t.at && !/^Bạn:/.test(t.snippet), pic: c?.pic || t.pic };
     });
@@ -463,7 +474,7 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
     // Dùng luôn cho tra avatar (cùng Page, khỏi tải lại).
     const entry = { at: Date.now(), rows: new Map(), full: false };
     for (const r of rows) entry.rows.set(key(r.name), [...(entry.rows.get(key(r.name)) || []), r]);
-    if (rows.length) pageRows.set(String(pageId), entry);
+    if (rows.length) { pageRows.set(String(pageId), entry); domTop.set(String(pageId), rows.slice(0, 8).map(r => r.uid)); }
     return { rows };
   });
 

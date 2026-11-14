@@ -961,7 +961,24 @@
     } finally { bsListBusy.delete(p.id); if (bsListAgain.delete(p.id)) App.inbox.bsListChanged(p.id); }
   };
   // App Windows báo hội thoại đang mở trong khung ẩn vừa đổi (tin mới, đã gửi…) → đọc lại ngay.
-  App.inbox.bsChanged = id => {
+  App.inbox.bsChanged = (id, info) => {
+    // Tin mới từ dữ liệu gốc: sửa ngay dòng khách trong danh sách (tin cuối, giờ, chưa đọc, đưa lên đầu) và báo tin.
+    if (info?.ts && bsFirst()) {
+      const row = S.convs.find(x => x.id === 'bs:' + id), pageId = id.split(':')[0];
+      if (row && info.ts > (row.lastAt || 0) + 1000) {
+        row.snippet = (info.mine ? 'Bạn: ' : '') + info.text; row.fromCustomer = !info.mine;
+        row.updated_time = new Date(info.ts).toISOString(); row.lastAt = info.ts; row.timeText = '';
+        const viewing = S.conv?.id === row.id && App.current() === 'inbox' && !document.hidden;
+        if (!info.mine && !viewing) {
+          row.unread_count = 1;
+          settings().then(st => { if (st.webNotify && !st.mutedPages?.includes(row.page.id) && InboxRules.notifyAllowed(st, row.page.id)) App.notify(`💬 ${row.other.name} · ${row.page.name}`, info.text || 'Tin nhắn mới'); }).catch(() => {});
+        }
+        bsNotified.set(row.id, `${row.snippet}|${row.timeText}`);
+        S.convs.sort((a, b) => new Date(b.updated_time) - new Date(a.updated_time));
+        const hit = bsCache.get(row.page.id); if (hit) hit.at = Date.now();
+        if (App.current() === 'inbox') drawList();
+      } else if (!row && !info.mine && Date.now() - info.ts < 10 * 60e3) App.inbox.bsListChanged(pageId); // khách mới chưa có trong danh sách
+    }
     const c = S.conv;
     if (!c?.bs || `${c.page.id}:${c.uid}` !== id || S.sending || document.hidden) return;
     if (bsLive) { bsAgain = true; return; }
