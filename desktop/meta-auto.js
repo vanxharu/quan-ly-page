@@ -288,6 +288,10 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
       if (seen.size >= max || (seen.size && seen.size === got && i > 4)) break; // đủ, hoặc cuộn hết
       got = seen.size;
     }
+    // Cuộn danh sách về đầu: hội thoại mới nhất luôn có sẵn để bấm mở ngay (danh sách chỉ vẽ phần đang thấy).
+    await wc.executeJavaScript(`(() => { let box = document.querySelector('[data-maiba-contact-id]');
+      while (box && !(box.scrollHeight > box.clientHeight + 5 && /auto|scroll/.test(getComputedStyle(box).overflowY))) box = box.parentElement;
+      if (box) box.scrollTop = 0; })()`).catch(() => {});
     const rows = [...seen.values()].slice(0, max);
     // Nhiều dòng không đọc được giờ: lưu mẫu chữ của các dòng đó để chỉnh cách đọc (Downloads/GetHelps-debug).
     // Mẫu cấu trúc danh sách (loại dòng, thứ tự) để đối chiếu với Business Suite khi thiếu hội thoại.
@@ -322,7 +326,8 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
     if (sl.opened === id && wc.getURL().includes(`asset_id=${pageId}`)) return true;
     // Khung chi tiết đã đúng khách này (data-surface "<uid>:<tên>") và có tin → xong.
     const ready = async () => !!(await wc.executeJavaScript(`(() => { const col = document.querySelector('[data-surface$="lib:inbox:detail_column"]');
-      return !!(col && col.querySelector('[data-surface^="${uid}:"]') && col.querySelector('[data-message-id]')); })()`).catch(() => false));
+      // Thẻ "<uid>:<tên>" có thể nằm ở cột thông tin khách (ngoài detail_column) → tìm trên toàn trang; cột tin phải có tin.
+      return !!(col && document.querySelector('[data-surface^="${uid}:"], [data-surface*="/${uid}:"]') && col.querySelector('[data-message-id]')); })()`).catch(() => false));
     // Nhanh: đang ở hộp thư của đúng Page → bấm thẳng vào dòng của khách (cuộn danh sách về đầu nếu cần), không tải lại trang (tiết kiệm 10–30 giây).
     if (wc.getURL().includes(`asset_id=${pageId}`)) {
       for (let i = 0; i < 2; i++) {
