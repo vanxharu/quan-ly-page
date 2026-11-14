@@ -272,8 +272,10 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
     }
     const seen = new Map(), started = Date.now();
     // Business Suite trong khung ẩn có khi tải 15–20 giây: còn vòng xoay (progressbar / aria-busy) và chưa có dòng nào thì chờ tiếp, tối đa 30 giây.
-    const loading = () => wc.executeJavaScript(`!!document.querySelector('[role="progressbar"],[aria-busy="true"]') && !document.querySelector('[data-maiba-contact-id]')`).catch(() => true);
-    while (!seen.size && Date.now() - started < 30000 && await loading()) { await sleep(1000); if (isLogin(wc.getURL())) return { error: 'login' }; }
+    // Chờ tới khi danh sách có dòng đầu tiên (tối đa 60 giây: nhiều Page tải cùng lúc thì mỗi trang chậm hơn), không chỉ lúc còn vòng xoay.
+    const hasRows = () => wc.executeJavaScript(`!!document.querySelector('[data-maiba-contact-id]')`).catch(() => false);
+    while (Date.now() - started < 60000 && !await hasRows()) { await sleep(700); if (isLogin(wc.getURL())) return { error: 'login' }; }
+    if (!await hasRows()) { const dir = await dumpPage(wc, 'khong-co-danh-sach'); return { error: `Business Suite chưa hiện danh sách hội thoại sau 60 giây (${wc.getURL().slice(0, 80)})${dir ? ' · đã lưu ảnh chụp vào ' + dir : ''}` }; }
     for (let i = 0, got = 0; i < 12; i++) {
       await sleep(i ? 700 : 1500);
       if (isLogin(wc.getURL())) return { error: 'login' };

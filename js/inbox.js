@@ -229,6 +229,7 @@
     if (hit && !force && Date.now() - hit.at < 60e3) return hit.list;
     const r = await window.metaDesktop.listThreads({ pageId: String(p.id) });
     if (r?.error === 'login') { if (bsLoginWarned) return null; bsLoginWarned = true; toast('Đăng nhập Business Suite trong cột Meta (menu "Hộp thư Meta") để app đọc tin khi API lỗi.', 8000); return null; }
+    if (r?.error) throw new Error(r.error); // báo lý do lên đầu danh sách thay vì lặng lẽ dùng danh sách API cũ
     if (!r?.rows?.length) return null;
     DB.set('bsList:' + p.id, { at: Date.now(), rows: r.rows }).catch(() => {});
     const list = bsConvs(p, r.rows);
@@ -373,7 +374,8 @@
       pages.forEach((p, i) => { if (saved[i].length && !S.convs.some(c => c.page.id === p.id)) partial.set(p.id, saved[i]); });
       if (partial.size) { S.crm = await App.crm.all(); await paint(); partial.clear(); }
     }
-    const lists = await pool(pages, viaBs ? 4 : 3, async p => (viaBs && await bsThreads(p, { force }).then(l => { if (l?.length) { partial.set(p.id, l); paint(); } return l; }).catch(() => null)) || convsFor(p, { maxAge: force ? 0 : silent ? listInterval(p) : 30e3, force, low: silent }).catch(async e => {
+    const lists = await pool(pages, viaBs ? 4 : 3, async p => (viaBs && await bsThreads(p, { force }).then(l => { if (l?.length) { partial.set(p.id, l); paint(); } return l; })
+      .catch(async e => { errors.push(`${p.name}: Business Suite — ${e.message}`); const saved = await bsSaved(p).catch(() => []); return saved.length ? saved : null; })) || convsFor(p, { maxAge: force ? 0 : silent ? listInterval(p) : 30e3, force, low: silent }).catch(async e => {
       const why = `${p.name}: ${e.message}${e.code ? ` (mã ${e.code}${e.sub ? '/' + e.sub : ''})` : ''}`;
       const bs = viaBs ? null : await bsThreads(p).catch(() => null);
       if (bs?.length) { errors.push(`${why} → đang hiện ${bs.length} hội thoại đọc từ Business Suite (bấm để mở trong cột Meta).`); return bs; }
