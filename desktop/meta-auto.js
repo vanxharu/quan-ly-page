@@ -215,26 +215,82 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
   // Ảnh trong tin (scontent) và ảnh đại diện vẫn tải để app lấy được. Chỉ áp dụng cho khung ẩn, cột Meta bạn xem vẫn đầy đủ.
   // Kèm theo: ghi lại vài gói dữ liệu tin nhắn gốc Business Suite tải về (để chuyển sang đọc dữ liệu gốc, nhanh hơn đọc màn hình).
   const BLOCK = [{ resourceType: 'Media' }, { resourceType: 'Font' }, { urlPattern: '*static.xx.fbcdn.net*', resourceType: 'Image' }, { urlPattern: '*/rsrc.php/*', resourceType: 'Image' }];
-  // Tin nhắn Business Suite đi qua giao thức "Lightspeed" (bước insertMessage…), qua HTTP lẫn WebSocket. Ghi lại vài mẫu để làm bộ đọc dữ liệu gốc.
-  let captured = 0;
-  const keepSample = (pageId, kind, url, body) => {
-    if (captured >= 16 || !/insertMessage|upsertMessage|lightspeed|LSPlatform|deleteThenInsertThread|verifyContactRowExists/i.test(body)) return;
-    captured++;
-    try {
-      const dir = path.join(app.getPath('downloads'), 'GetHelps-debug'); fs.mkdirSync(dir, { recursive: true });
-      fs.writeFileSync(path.join(dir, `ls-${pageId || 'x'}-${captured}.json`), JSON.stringify({ kind, url: String(url || '').replace(/[?&](fb_dtsg|jazoest|lsd|__\w+)=[^&]*/g, '').slice(0, 200), size: body.length, body: body.slice(0, 120000) }, null, 1));
-    } catch {}
+  // ── Dữ liệu gốc Business Suite (giao thức "Lightspeed", qua WebSocket/HTTP của khung ẩn) ──
+  // Mỗi gói là cây lệnh [5, "tênLệnh", ...tham số]; số lớn dạng [19,"123"], rỗng [9]. Vị trí tham số đọc từ mẫu thật 11/2026:
+  //  upsertMessage: 0 chữ · 3 khách (thread) · 5 giờ (ms) · 8 mã tin · 10 người gửi
+  //  insertBlobAttachment: 3/8 ảnh · 6 loại · 27 thread · 31 giờ · 32 mã tin   ·  insertXmaAttachment: 8 ảnh · 25 thread · 29 giờ · 30 mã tin · 58 tiêu đề
+  //  deleteThenInsertThread: 0 giờ hoạt động · 1 đã đọc tới · 2 tin cuối · 4 ảnh · 7 thread · 10 thư mục · 18 Page
+  //  deleteThenInsertContact: 0 id · 2 ảnh · 9 tên   ·  insertNewMessageRange: 0 thread (đã tải 1 đoạn tin của hội thoại)
+  const lsStores = new Map(); // pageId -> { threads, contacts, msgs: Map(uid -> Map(mid -> tin)), loaded:Set(uid), at }
+  const lsStore = pageId => { pageId = String(pageId); let st = lsStores.get(pageId); if (!st) lsStores.set(pageId, st = { threads: new Map(), contacts: new Map(), msgs: new Map(), loaded: new Set(), at: 0 }); return st; };
+  const lsVal = x => Array.isArray(x) ? (x[0] === 19 ? x[1] : x[0] === 9 ? null : x) : x;
+  const lsMsg = (st, uid, mid) => { let m = st.msgs.get(uid); if (!m) st.msgs.set(uid, m = new Map()); let x = m.get(mid); if (!x) m.set(mid, x = { mid, ts: 0, text: '', mine: false, pic: '' }); return x; };
+  function lsIngest(pageId, raw) {
+    const i = raw.indexOf('{"'); if (i < 0 || !/payload/.test(raw)) return null;
+    let outer, p; try { outer = JSON.parse(raw.slice(i)); p = typeof outer.payload === 'string' ? JSON.parse(outer.payload) : null; } catch { return null; }
+    if (!p?.step) return null;
+    const st = lsStore(pageId), pid = String(pageId), threads = new Set(); let list = false;
+    (function walk(a) {
+      if (!Array.isArray(a)) return;
+      if (a[0] === 5 && typeof a[1] === 'string') {
+        const v = a.slice(2).map(lsVal), n = a[1];
+        if (n === 'upsertMessage' || n === 'insertMessage') {
+          const uid = String(v[3] || ''); if (/^\d+$/.test(uid) && v[8]) {
+            const x = lsMsg(st, uid, String(v[8])); x.ts = Number(v[5]) || x.ts; x.text = v[0] && v[0] !== 'null' ? String(v[0]) : x.text; x.mine = String(v[10]) !== uid; threads.add(uid);
+          }
+        } else if (n === 'insertBlobAttachment' || n === 'insertXmaAttachment') {
+          const blob = n === 'insertBlobAttachment', uid = String(v[blob ? 27 : 25] || ''), mid = v[blob ? 32 : 30];
+          if (/^\d+$/.test(uid) && mid) { const x = lsMsg(st, uid, String(mid)); x.ts = x.ts || Number(v[blob ? 31 : 29]) || 0;
+            const url = [v[8], v[3]].find(u => /^https:\/\//.test(u || '')); if (url) x.pic = url;
+            if (!blob && !x.text && v[58]) x.text = String(v[58]); threads.add(uid); }
+        } else if (n === 'deleteThenInsertThread') {
+          const uid = String(v[7] || ''); if (/^\d+$/.test(uid) && uid !== pid && (!v[18] || String(v[18]) === pid)) {
+            st.threads.set(uid, { uid, at: Number(v[0]) || 0, read: Number(v[1]) || 0, snippet: String(v[2] || ''), pic: /^https/.test(v[4] || '') ? v[4] : '', folder: String(v[10] || '') }); list = true; }
+        } else if (n === 'deleteThenInsertContact') {
+          const id = String(v[0] || ''); if (/^\d+$/.test(id) && v[9]) st.contacts.set(id, { name: String(v[9]), pic: /^https/.test(v[2] || '') ? v[2] : '' });
+        } else if (n === 'insertNewMessageRange') {
+          // Đoạn tin thật sự (tin đầu khác tin cuối) = đã tải hội thoại; danh sách hội thoại cũng gửi "đoạn" 1 tin cuối, không tính.
+          const uid = String(v[0] || ''); if (/^\d+$/.test(uid) && v[3] && v[4] && v[3] !== v[4]) { st.loaded.add(uid); threads.add(uid); }
+        }
+      }
+      for (const x of a) if (Array.isArray(x)) walk(x);
+    })(p.step);
+    // Tin mới của hội thoại: cập nhật luôn dòng hội thoại (giờ, tin cuối) để danh sách đúng ngay.
+    for (const uid of threads) {
+      const ms = [...(st.msgs.get(uid)?.values() || [])].sort((a, b) => b.ts - a.ts)[0], t = st.threads.get(uid);
+      if (ms && t && ms.ts > t.at) { t.at = ms.ts; t.snippet = (ms.mine ? 'Bạn: ' : '') + (ms.text || (ms.pic ? 'Đã gửi một ảnh.' : '')); if (!ms.mine) t.read = 0; list = true; }
+    }
+    if (threads.size || list) st.at = Date.now();
+    return { threads, list };
+  }
+  // Tin của một hội thoại từ dữ liệu gốc → định dạng như readMessages (mốc giờ khi cách nhau > 30 phút).
+  const lsMessages = (pageId, uid) => {
+    const all = [...(lsStore(pageId).msgs.get(String(uid))?.values() || [])].filter(m => m.ts && (m.text || m.pic)).sort((a, b) => a.ts - b.ts);
+    const out = []; let last = 0;
+    for (const m of all) {
+      if (m.ts - last > 30 * 60e3) { const d = new Date(m.ts), hm = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+        out.push({ sep: new Date().toDateString() === d.toDateString() ? hm : `${hm} ${d.getDate()} Tháng ${d.getMonth() + 1}, ${d.getFullYear()}` }); }
+      last = m.ts; out.push({ mine: m.mine, text: m.text, ...(m.pic ? { pic: m.pic } : {}), ts: m.ts });
+    }
+    return out;
+  };
+  // Có dữ liệu gốc mới: báo Hộp thư ngay (danh sách đổi / hội thoại đang mở có tin mới), không chờ đọc màn hình.
+  const lsGot = (pageId, raw) => {
+    const r = lsIngest(pageId, raw); if (!r) return;
+    const sl = slots.get(String(pageId));
+    if (r.list || r.threads.size) { if (Date.now() - (sl?.lastList || 0) > 800) { if (sl) sl.lastList = Date.now(); try { listChanged(String(pageId)); } catch {} } }
+    for (const uid of r.threads) try { threadChanged(`${pageId}:${uid}`); } catch {}
   };
   const lighten = async (wc, pageId) => {
     if (!wc || wc.__gaLight) return; wc.__gaLight = true;
     const dbg = wc.debugger, pending = new Map();
     dbg.on('message', (_e, method, params) => {
       if (method === 'Fetch.requestPaused') dbg.sendCommand('Fetch.failRequest', { requestId: params.requestId, errorReason: 'BlockedByClient' }).catch(() => {});
-      else if (method === 'Network.webSocketFrameReceived' && captured < 16) { const f = params.response || {}; keepSample(pageId, 'ws', 'websocket', f.opcode === 2 ? Buffer.from(String(f.payloadData || ''), 'base64').toString('utf8') : String(f.payloadData || '')); }
-      else if (method === 'Network.responseReceived' && captured < 16 && /\/api\/graphql|lightspeed|ls_req|messaging/i.test(params.response?.url || '')) pending.set(params.requestId, params.response.url);
+      else if (method === 'Network.webSocketFrameReceived') { const f = params.response || {}; const raw = f.opcode === 2 ? Buffer.from(String(f.payloadData || ''), 'base64').toString('utf8') : String(f.payloadData || ''); if (/ls_resp|upsertMessage|deleteThenInsert/.test(raw)) lsGot(pageId, raw); }
+      else if (method === 'Network.responseReceived' && /\/api\/graphql|lightspeed|ls_req/i.test(params.response?.url || '')) pending.set(params.requestId, params.response.url);
       else if (method === 'Network.loadingFinished' && pending.has(params.requestId)) {
         const url = pending.get(params.requestId); pending.delete(params.requestId);
-        dbg.sendCommand('Network.getResponseBody', { requestId: params.requestId }).then(b => keepSample(pageId, 'http', url, b?.base64Encoded ? Buffer.from(b.body, 'base64').toString('utf8') : String(b?.body || ''))).catch(() => {});
+        dbg.sendCommand('Network.getResponseBody', { requestId: params.requestId }).then(b => { const raw = b?.base64Encoded ? Buffer.from(b.body, 'base64').toString('utf8') : String(b?.body || ''); if (/upsertMessage|deleteThenInsert/.test(raw)) for (const part of raw.split(/\r?\n(?=\{)/)) lsGot(pageId, part); }).catch(() => {});
       }
     });
     await dbg.sendCommand('Fetch.enable', { patterns: BLOCK }).catch(() => {});
@@ -321,7 +377,19 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
   });
 
   // Hộp thư dự phòng khi Graph API lỗi: đọc danh sách hội thoại mới nhất của Page trong khung ẩn.
-  const listThreads = ({ pageId, max = 15, full = false }) => !/^\d+$/.test(String(pageId)) ? Promise.resolve({ error: 'Thiếu Page.' }) : queue(pageId, async () => {
+  // Danh sách từ dữ liệu gốc (giờ chính xác tới mili giây, có cả khách chưa hiện trên màn hình) nếu đã có đủ; không thì đọc màn hình.
+  const lsList = (pageId, max) => {
+    const st = lsStores.get(String(pageId)); if (!st || st.threads.size < 3) return null;
+    const names = pageRows.get(String(pageId))?.rows, nameOf = uid => { for (const [, l] of names || []) for (const r of l) if (r.uid === uid) return r.name; return ''; };
+    const rows = [...st.threads.values()].filter(t => t.folder !== 'spam').sort((a, b) => b.at - a.at).slice(0, max).map(t => {
+      const c = st.contacts.get(t.uid), name = c?.name || nameOf(t.uid);
+      return name ? { uid: t.uid, name, snippet: t.snippet, time: '', at: t.at, unread: t.read > 0 && t.read < t.at && !/^Bạn:/.test(t.snippet), pic: c?.pic || t.pic } : null;
+    });
+    return rows.every(Boolean) ? rows : null;
+  };
+  const listThreads = ({ pageId, max = 15, full = false }) => !/^\d+$/.test(String(pageId)) ? Promise.resolve({ error: 'Thiếu Page.' })
+    : (!full && lsList(pageId, Math.min(Math.max(Number(max) || 15, 5), 80))) ? Promise.resolve({ rows: lsList(pageId, Math.min(Math.max(Number(max) || 15, 5), 80)), source: 'ls' })
+    : queue(pageId, async () => {
     const sl = slot(pageId), wc = sl.win.webContents;
     // Đang ở hộp thư của đúng Page (vd vừa mở hội thoại): đọc danh sách tại chỗ, không tải lại trang → hội thoại đang theo dõi vẫn giữ.
     const here = wc.getURL().includes(`asset_id=${pageId}`) && await wc.executeJavaScript(`!!document.querySelector('[data-maiba-contact-id]')`).catch(() => false);
@@ -543,12 +611,19 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
     finally { setTimeout(() => { try { if (oldText) clipboard.writeText(oldText); } catch {} }, 1500); }
   };
   const threadArgs = ({ pageId, uid }) => /^\d+$/.test(String(pageId)) && /^\d+$/.test(String(uid));
-  const readThread = args => !threadArgs(args) ? Promise.resolve({ error: 'Thiếu Page hoặc khách.' }) : queue(args.pageId, async () => {
+  // Hội thoại đã có dữ liệu gốc (đã tải một đoạn tin, tin mới tự đổ về): trả ngay, không phải mở trong khung ẩn.
+  const lsReady = args => !args.older && lsStores.get(String(args.pageId))?.loaded.has(String(args.uid)) && lsMessages(args.pageId, args.uid).some(m => !m.sep);
+  const readThread = args => !threadArgs(args) ? Promise.resolve({ error: 'Thiếu Page hoặc khách.' })
+    : lsReady(args) ? Promise.resolve({ messages: lsMessages(args.pageId, args.uid), source: 'ls' })
+    : queue(args.pageId, async () => {
     const ok = await openThreadHidden(String(args.pageId), String(args.uid));
     if (ok === 'login') return { error: 'login' };
     if (!ok) return { error: 'Không mở được hội thoại trong Business Suite.' };
-    const wc = slot(args.pageId).win.webContents;
+    const wc = slot(args.pageId).win.webContents, st = lsStore(args.pageId), uid = String(args.uid);
     if (args.older) { await wc.executeJavaScript(`(${readMessages})(true)`).catch(() => {}); await sleep(2500); }
+    // Vừa mở hội thoại: dữ liệu gốc thường về trong ~1 giây → dùng nó (đủ, chính xác hơn đọc màn hình).
+    for (let i = 0; i < 6 && !st.loaded.has(uid); i++) await sleep(250);
+    if (st.loaded.has(uid) && lsMessages(args.pageId, uid).some(m => !m.sep)) return { messages: lsMessages(args.pageId, uid), source: 'ls' };
     return await wc.executeJavaScript(`(${readMessages})(false)`).catch(() => null) || { error: 'Không đọc được tin.' };
   }, args.bg ? 0 : 1); // đọc trước (nền) nhường việc bạn đang chờ
   // Gửi tin như người dùng gõ trong Business Suite (không qua API → không bị giới hạn của app chưa duyệt).

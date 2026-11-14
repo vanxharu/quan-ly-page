@@ -223,7 +223,7 @@
     return rows.map((row, i) => {
       // Dùng đúng mốc giờ của từng dòng (dòng ghim / hội thoại Meta AI ở đầu có thể cũ hơn các dòng dưới, không được kéo cả danh sách lùi theo).
       // Dòng không có giờ: ngay sau dòng trước. Cùng mốc (vd cùng "Thứ Sáu") thì trừ vài mili giây để giữ thứ tự của Business Suite.
-      const t = bsTime(row.time, base);
+      const t = row.at ? Number(row.at) : bsTime(row.time, base); // dữ liệu gốc có giờ chính xác
       const at = t != null ? t - i : prev - 1000; prev = at;
       const c = { id: `bs:${p.id}:${row.uid}`, bs: true, uid: row.uid, page: p, other: { id: 'bs' + row.uid, name: row.name },
         snippet: row.snippet, timeText: row.time, updated_time: new Date(at).toISOString(), unread_count: row.unread ? 1 : 0,
