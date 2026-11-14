@@ -796,11 +796,29 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
     const mark = k => { T.buoc[k] = (Date.now() - t0) / 1000; };
     if (!threadArgs(args)) return Promise.resolve({ error: 'Thiếu Page hoặc khách.' });
     const finish = r => { mark('xong'); T.ketqua = r?.error ? 'lỗi: ' + String(r.error).slice(0, 80) : 'ok'; T.cach = args.image ? attachImage.last?.tried?.slice(-1)[0] || '' : sendCore.how || 'nut'; sendCore.how = ''; writeSendLog(T); return r; };
-    // Tin chỉ có chữ: gửi thẳng NGAY qua khung nào của Page đã sẵn sàng (khung gửi, hoặc khung đọc khi khung gửi còn đang khởi động) — không xếp hàng.
-    if (!args.image && String(args.text || '').trim()) return (async () => {
-      const pid = String(args.pageId), wc = await directReady(sendSlots.get(pid), pid) || await directReady(slots.get(pid), pid);
-      if (wc) { T.khung = wc === sendSlots.get(pid)?.win?.webContents ? 'gui' : 'doc'; mark('hang-doi'); const d = await tryDirect(args, wc, mark); if (d) return finish(d); args.directTried = true; }
-      return sendQueue(args.pageId, ss => { mark('hang-doi'); T.khung = ss.send ? 'gui' : 'doc'; return sendCore(args, mark, ss); }, 1).then(finish, e => { mark('xong'); T.ketqua = 'lỗi: ' + e.message; writeSendLog(T); throw e; });
+    // Ưu tiên GỬI THẲNG phần chữ (không xếp hàng, không mở hội thoại) qua khung nào của Page đã bám kết nối Meta.
+    //  - Vừa mở app, chưa khung nào sẵn sàng: chờ khung đầu tiên sẵn sàng (tối đa 25 giây) — bấm nút lúc này cũng phải chờ khung khởi động.
+    //  - Tin có cả chữ và ảnh: chữ đi thẳng ngay, ảnh đi sau bằng đường bấm nút (không gõ lại chữ).
+    if (String(args.text || '').trim()) return (async () => {
+      const pid = String(args.pageId), started = Date.now();
+      let wc = null;
+      while (!wc) {
+        wc = await directReady(sendSlots.get(pid), pid) || await directReady(slots.get(pid), pid);
+        const sw = sendSlots.get(pid)?.win?.webContents, swLoaded = (() => { try { return !!sw && !sw.isDestroyed() && !sw.isLoading() && sw.getURL().includes(`asset_id=${pid}`); } catch { return false; } })();
+        // Thôi chờ: quá 25 giây; hoặc khung gửi đã tải xong mà vẫn chưa bám được kết nối (chờ thêm cũng vô ích); hoặc Page chưa có khung nào.
+        if (wc || Date.now() - started > 25e3 || (swLoaded && Date.now() - started > 2000) || (!sendSlots.has(pid) && !slots.has(pid) && Date.now() - started > 3000)) break;
+        await sleep(400);
+      }
+      if (wc) {
+        T.khung = wc === sendSlots.get(pid)?.win?.webContents ? 'gui' : 'doc'; mark('hang-doi');
+        const d = await tryDirect(args, wc, mark);
+        if (d && !args.image) return finish(d);
+        if (d) { T.chu_thang = true; args = { ...args, text: '', directText: true }; } // chữ đã đi thẳng → chỉ còn gửi ảnh
+        else args.directTried = true;
+      }
+      return sendQueue(args.pageId, ss => { mark('hang-doi-anh'); T.khung = T.khung || (ss.send ? 'gui' : 'doc'); return sendCore(args, mark, ss); }, 1)
+        .then(r => { if (args.directText && r?.error && !/^Chữ đã gửi/.test(r.error)) r = { ...r, error: 'Chữ đã gửi, nhưng ' + String(r.error).replace(/^./, c => c.toLowerCase()) }; return finish(r); },
+          e => { mark('xong'); T.ketqua = 'lỗi: ' + e.message; writeSendLog(T); throw e; });
     })();
     return sendQueue(args.pageId, ss => { mark('hang-doi'); T.khung = ss.send ? 'gui' : 'doc'; return sendCore(args, mark, ss); }, 1).then(r => { mark('xong'); T.ketqua = r?.error ? 'lỗi: ' + String(r.error).slice(0, 80) : 'ok'; T.cach = args.image ? attachImage.last?.tried?.slice(-1)[0] || '' : sendCore.how || 'nut'; sendCore.how = ''; writeSendLog(T); return r; },
       e => { mark('xong'); T.ketqua = 'lỗi: ' + e.message; writeSendLog(T); throw e; });
