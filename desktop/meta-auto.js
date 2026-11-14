@@ -318,7 +318,10 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
     fs.writeFileSync(path.join(dir, 'ls-gui-mau.json'), JSON.stringify(sentSamples, null, 1)); } catch {} };
   // Giữ tham chiếu tới WebSocket của trang (cài trước khi trang tạo kết nối, có hiệu lực từ lần tải trang sau) → bước sau gửi thẳng qua kết nối này.
   const WS_HOOK = `(() => { const W = window.WebSocket; if (!W || W.__ga) return;
-    const G = function (...a) { const ws = new W(...a); try { (window.__gaWS = window.__gaWS || []).push(ws); if (window.__gaWS.length > 6) window.__gaWS.shift(); } catch (e) {} return ws; };
+    const G = function (...a) { const ws = new W(...a); try { (window.__gaWS = window.__gaWS || []).push(ws); if (window.__gaWS.length > 8) window.__gaWS.shift();
+        const send = ws.send; ws.send = function (d) { try { if (!ws.__ls) { const u = d instanceof ArrayBuffer ? new Uint8Array(d) : ArrayBuffer.isView(d) ? new Uint8Array(d.buffer, d.byteOffset, d.byteLength) : null;
+          if (u && u.length > 12 && String.fromCharCode.apply(null, Array.from(u.subarray(0, 24))).indexOf('/ls_req') >= 0) ws.__ls = true; } } catch (e) {} return send.apply(this, arguments); }; // kết nối Lightspeed = kết nối trang gửi /ls_req
+      } catch (e) {} return ws; };
     G.prototype = W.prototype; Object.setPrototypeOf(G, W); G.__ga = true;
     for (const k of ['CONNECTING', 'OPEN', 'CLOSING', 'CLOSED']) try { Object.defineProperty(G, k, { value: W[k] }); } catch (e) {}
     window.WebSocket = G; })();`;
@@ -341,7 +344,8 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
       if (method === 'Network.requestWillBeSent' && /upload|rupload/i.test(params.request?.url || '') && /POST|PUT/i.test(params.request?.method || '')) { const up = lsStore(pageId).uploads ||= new Map(); up.set(params.requestId, Date.now()); }
       else if ((method === 'Network.loadingFinished' || method === 'Network.loadingFailed') && lsStore(pageId).uploads?.delete(params.requestId)) lsStore(pageId).uploadsDone = Date.now();
       if (method === 'Fetch.requestPaused') dbg.sendCommand('Fetch.failRequest', { requestId: params.requestId, errorReason: 'BlockedByClient' }).catch(() => {});
-      else if (method === 'Network.webSocketFrameReceived' && (lsStore(pageId).frames = (lsStore(pageId).frames || 0) + 1)) { const f = params.response || {}; const raw = f.opcode === 2 ? Buffer.from(String(f.payloadData || ''), 'base64').toString('utf8') : String(f.payloadData || ''); if (/ls_resp|upsertMessage|deleteThenInsert/.test(raw)) got(pageId, raw); }
+      else if (method === 'Network.webSocketFrameReceived' && (lsStore(pageId).frames = (lsStore(pageId).frames || 0) + 1)) { const f = params.response || {}; const raw = f.opcode === 2 ? Buffer.from(String(f.payloadData || ''), 'base64').toString('utf8') : String(f.payloadData || '');
+        const wq = lsStore(pageId).waitReq; if (wq && raw.includes(`"request_id":${wq}`)) { lsStore(pageId).reqAck = Date.now(); sentSample(pageId, { at: new Date().toISOString(), kind: 'tra-loi', bytes: raw.length, text: raw.replace(/[\x00-\x08\x0e-\x1f]/g, '·').slice(0, 20000) }); } if (/ls_resp|upsertMessage|deleteThenInsert/.test(raw)) got(pageId, raw); }
       else if (method === 'Network.responseReceived' && /\/api\/graphql|lightspeed|ls_req/i.test(params.response?.url || '')) pending.set(params.requestId, params.response.url);
       else if (method === 'Network.loadingFinished' && pending.has(params.requestId)) {
         const url = pending.get(params.requestId); pending.delete(params.requestId);
@@ -764,14 +768,14 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
   async function directSend(wc, pageId, uid, text) {
     const cfg = lsStore(pageId).lsCfg;
     if (!cfg?.app || !cfg?.ver) return 'chưa học được app_id/version_id';
-    const req = 40000 + Math.floor(Math.random() * 25000);
+    const req = 40000 + Math.floor(Math.random() * 25000); lsStore(pageId).waitReq = req; lsStore(pageId).reqAck = 0;
     const task = { failure_count: null, label: '46', payload: `{"thread_id":${uid},"otid":"${snow()}","source":4456448,"send_type":1,"sync_group":${Number(cfg.group) || 205},"mark_thread_read":1,"text":${JSON.stringify(text)}}`,
       queue_name: String(uid), task_id: req };
     const payload = `{"epoch_id":${snow()},"tasks":[${JSON.stringify(task)}],"version_id":"${cfg.ver}"}`;
     const body = JSON.stringify({ app_id: cfg.app, payload, request_id: req, type: 3 });
     return wc.executeJavaScript(`(() => { const body = ${JSON.stringify(body)}, pid = ${req};
-      const ws = (window.__gaWS || []).filter(w => w.readyState === 1 && /chat|gateway|edge/i.test(w.url || '')).pop();
-      if (!ws) return 'chưa bám được kết nối (' + (window.__gaWS || []).length + ' socket)';
+      const all = window.__gaWS || [], ws = all.filter(w => w.readyState === 1 && w.__ls).pop();
+      if (!ws) return 'chưa thấy kết nối Lightspeed (' + all.length + ' socket: ' + all.map(w => (w.url || '').replace(/^wss:\/\//, '').split(/[/?]/)[0] + (w.readyState === 1 ? '' : '·đóng')).join(', ') + ')';
       const enc = new TextEncoder(), topic = enc.encode('/ls_req'), data = enc.encode(body);
       const rest = 2 + topic.length + 2 + data.length, len = []; let n = rest; do { let b = n % 128; n = Math.floor(n / 128); if (n) b |= 128; len.push(b); } while (n);
       const out = new Uint8Array(1 + len.length + rest); let i = 0;
@@ -800,12 +804,13 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
       const r = await directSend(sl.win.webContents, String(args.pageId), String(args.uid), text);
       mark('gui-thang'); sendCore.how = 'thang: ' + r;
       if (r === 'ok') {
-        for (let i = 0; i < 40 && !echoed(); i++) await sleep(100);
+        for (let i = 0; i < 30 && !echoed(); i++) await sleep(100);
         if (echoed()) { mark('xac-nhan-goc'); const lr = lsMessages(args.pageId, args.uid);
           return { done: true, direct: true, ...(lsStore(args.pageId).loaded.has(String(args.uid)) && lr.length ? { messages: lr, source: 'ls' } : {}) }; }
-        sendCore.how = 'thang: không thấy Meta xác nhận';
-        // Có thể tin đã đi mà xác nhận chậm: chờ thêm 2 giây trước khi gửi lại bằng cách bấm nút (tránh gửi 2 lần).
-        for (let i = 0; i < 20 && !echoed(); i++) await sleep(100);
+        const acked = lsStore(args.pageId).reqAck > t1;
+        sendCore.how = 'thang: ' + (acked ? 'Meta đã nhận gói nhưng chưa thấy tin' : 'Meta không trả lời gói');
+        // Meta đã nhận gói → tin có thể đang đi: chờ thêm 3 giây trước khi gửi lại bằng nút (tránh gửi 2 lần).
+        if (acked) for (let i = 0; i < 30 && !echoed(); i++) await sleep(100);
         if (echoed()) { mark('xac-nhan-goc'); return { done: true, direct: true }; }
       }
     }
@@ -1077,7 +1082,7 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
     const one = async (sl, ws) => { if (!sl) return 'none'; try { const wc = sl.win.webContents; if (wc.isDestroyed()) return 'none';
       if (wc.isLoading() || !wc.getURL().includes(`asset_id=${sl.pageId}`)) return 'loading';
       if (!ws) return 'ready';
-      const live = await Promise.race([wc.executeJavaScript(`(window.__gaWS || []).some(w => w.readyState === 1)`).catch(() => false), sleep(800).then(() => false)]);
+      const live = await Promise.race([wc.executeJavaScript(`(window.__gaWS || []).some(w => w.readyState === 1 && w.__ls)`).catch(() => false), sleep(800).then(() => false)]);
       const cfg = lsStore(sl.pageId).lsCfg; return live && cfg?.app && cfg?.ver ? 'fast' : 'ready'; } catch { return 'none'; } };
     const ids = [...new Set([...slots.keys(), ...sendSlots.keys()])];
     return Promise.all(ids.map(async id => ({ page: id, read: await one(slots.get(id), false), send: makeWorker ? await one(sendSlots.get(id), true) : 'none',
