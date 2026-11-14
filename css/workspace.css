@@ -248,3 +248,39 @@ td.num.neg{font-weight:700}
 .svc-react-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(92px,1fr));gap:6px;margin-top:6px}
 .svc-react-cell{display:flex;flex-direction:column;gap:2px;font-size:12px;font-weight:600}
 .svc-react-cell input{width:100%}
+/* Hộp thư gọn (11/2026): thanh lọc một hàng + menu ⋯, đầu hội thoại một dòng, nút tải thêm nhỏ, không dòng phím tắt */
+[data-panel=inbox] .split>.card:first-child{display:flex;flex-direction:column}
+[data-panel=inbox] .ib-toolbar{display:flex;align-items:center;gap:6px;margin:10px 0 6px;flex-wrap:nowrap;min-width:0}
+[data-panel=inbox] .ib-toolbar .chips{display:flex;gap:4px;flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none;min-width:0;flex:1}
+[data-panel=inbox] .ib-toolbar .chip{min-height:26px;padding:3px 9px;font-size:11px;white-space:nowrap;flex:none}
+[data-panel=inbox] #ibLabel{width:auto;max-width:96px;height:28px;min-height:0;line-height:1.2;padding:2px 6px;font-size:11px;flex:none;border-radius:8px}
+[data-panel=inbox] .ib-menu{position:relative;flex:none}
+[data-panel=inbox] .ib-menu>summary{list-style:none;cursor:pointer;width:28px;height:28px;display:grid;place-items:center;border:1px solid var(--border);border-radius:8px;color:var(--text-secondary);font-size:15px;line-height:1;user-select:none}
+[data-panel=inbox] .ib-menu>summary::-webkit-details-marker{display:none}
+[data-panel=inbox] .ib-menu[open]>summary,[data-panel=inbox] .ib-menu>summary:hover{background:var(--bg-hover);color:var(--text-primary)}
+[data-panel=inbox] .ib-menu-pop{position:absolute;right:0;top:calc(100% + 6px);z-index:30;min-width:190px;display:flex;flex-direction:column;gap:2px;padding:6px;background:var(--bg-card);border:1px solid var(--border);border-radius:10px;box-shadow:var(--shadow-sm,0 8px 24px #0004)}
+[data-panel=inbox] .ib-menu-pop button{all:unset;cursor:pointer;padding:7px 10px;border-radius:7px;font-size:12px;color:var(--text-primary)}
+[data-panel=inbox] .ib-menu-pop button:hover{background:var(--bg-hover)}
+[data-panel=inbox] .ib-menu-pop label{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:5px 10px;font-size:12px;white-space:nowrap;color:var(--text-secondary);border-bottom:1px solid var(--border-subtle,var(--border));margin-bottom:2px}
+[data-panel=inbox] .ib-menu-pop select{width:auto;height:26px;min-height:0;line-height:1.2;padding:2px 6px;font-size:11px}
+[data-panel=inbox] .ib-pf{position:relative;display:flex;justify-content:flex-end;font-size:10px;color:var(--text-muted);margin:0 2px 2px;padding-bottom:3px;transition:opacity .4s}
+[data-panel=inbox] .ib-pf::after{content:'';position:absolute;left:0;right:0;bottom:0;height:2px;border-radius:2px;background:var(--border)}
+[data-panel=inbox] .ib-pf>i{position:absolute;left:0;bottom:0;height:2px;border-radius:2px;background:var(--primary);z-index:1;transition:width .3s}
+[data-panel=inbox] .list{flex:1 1 auto}
+[data-panel=inbox] .list>.item{flex:none;min-height:0;padding:10px}
+[data-panel=inbox] .item .tags{margin-top:5px}
+[data-panel=inbox] .tags:empty{display:none}
+[data-panel=inbox] .ib-more{all:unset;cursor:pointer;align-self:center;margin-top:6px;padding:5px 12px;border-radius:999px;font-size:11px;color:var(--text-secondary)}
+[data-panel=inbox] .ib-more:hover{background:var(--bg-hover);color:var(--text-primary)}
+[data-panel=inbox] .ib-more[disabled]{opacity:.6;cursor:default}
+[data-panel=inbox] .split>.card:last-child>.card-head{min-height:0;margin-bottom:10px;gap:8px;align-items:center}
+[data-panel=inbox] #ibTitle{min-width:0;flex:1}
+[data-panel=inbox] .thread-head{width:100%;gap:10px}
+[data-panel=inbox] .th-text{min-width:0;flex:1;display:flex;flex-direction:column;gap:1px}
+[data-panel=inbox] .th-meta{display:flex;align-items:center;min-width:0;font-size:10.5px;font-weight:400;color:var(--text-muted);white-space:nowrap}
+[data-panel=inbox] .th-page{overflow:hidden;text-overflow:ellipsis;min-width:0;max-width:60%}
+[data-panel=inbox] .th-dot{margin:0 5px;flex:none}
+[data-panel=inbox] .th-meta a{color:var(--text-muted);text-decoration:none;flex:none}
+[data-panel=inbox] .th-meta a:hover{color:var(--primary);text-decoration:underline}
+[data-panel=inbox] .th-btn,[data-panel=inbox] #ibReload{flex:none;height:28px;min-height:0;padding:0 10px;font-size:11px;border-radius:8px;border:1px solid var(--border);background:transparent;color:var(--text-secondary);cursor:pointer;font-weight:500}
+[data-panel=inbox] .th-btn:hover,[data-panel=inbox] #ibReload:hover{background:var(--bg-hover);color:var(--text-primary)}

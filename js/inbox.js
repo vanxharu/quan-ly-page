@@ -143,21 +143,24 @@
           h('div', { className: 'card-head inbox-search-row' },
             h('input', { type: 'search', id: 'ibSearch', 'aria-label': 'Tìm hội thoại', placeholder: 'Tìm khách hoặc nội dung tin…', oninput: () => drawList() }),
             h('button', { className: 'icon-btn', title: 'Tải lại hội thoại', 'aria-label': 'Tải lại hội thoại', onclick: () => load(false, { force: true }) }, icon('i-sync'))),
-          h('div', { className: 'row', style: 'margin:10px 0;gap:6px' },
+          h('div', { className: 'ib-toolbar' },
             h('div', { className: 'chips', id: 'ibFilter' }, ...[['all', 'Tất cả'], ['unread', 'Chưa đọc'], ['unanswered', 'Chưa trả lời'], ['today', 'Hôm nay']].map(([f, t]) =>
               h('button', { className: 'chip', dataset: { f }, textContent: t, 'aria-pressed': String(f === S.filter), onclick: () => { S.filter = f; drawList(); } }))),
-            h('select', { id: 'ibLabel', style: 'width:auto;padding:4px 8px;font-size:12px', onchange: () => drawList() }),
-            window.metaDesktop?.openZalo ? h('button', { type: 'button', className: 'btn btn-ghost btn-sm', title: 'Mở Zalo Web (Zalo cá nhân) ở cột phải · Ctrl+Shift+Z', onclick: () => window.metaDesktop.openZalo() }, 'Zalo') : null,
-            window.metaDesktop?.listThreads ? h('select', { 'aria-label': 'Nguồn tin nhắn', title: 'Business Suite: đọc như hộp thư Meta, trả lời được cả tin quá 7 ngày (trong cột Meta). API: đọc và trả lời ngay trong app.', style: 'width:auto;padding:4px 8px;font-size:12px',
-              onchange: e => { local.set('inboxSource', e.target.value); S.convs = []; S.more.clear(); load(false, { force: true }); } },
-              h('option', { value: 'bs', textContent: 'Nguồn: Business Suite', selected: bsFirst() }), h('option', { value: 'api', textContent: 'Nguồn: API', selected: !bsFirst() })) : null,
-            window.metaDesktop?.lookupProfile ? h('button',{type:'button',className:'btn btn-ghost btn-sm',textContent:'Lấy avatar',title:'Đọc avatar + UID khách từ Business Suite (từng khách, tối đa 30)',onclick:e=>lookupList(e.currentTarget)}) : null,
-            h('button',{type:'button',className:'btn btn-ghost btn-sm',textContent:'Báo lỗi ảnh',title:'Tải báo lỗi ảnh khách trên phiên hiện tại',onclick:downloadAvatarDiagnostic})),
+            h('select', { id: 'ibLabel', 'aria-label': 'Lọc theo nhãn', onchange: () => drawList() }),
+            h('details', { className: 'ib-menu' },
+              h('summary', { title: 'Thêm', 'aria-label': 'Thêm' }, '⋯'),
+              h('div', { className: 'ib-menu-pop' },
+                window.metaDesktop?.listThreads ? h('label', {}, 'Nguồn tin', h('select', { 'aria-label': 'Nguồn tin nhắn', title: 'Business Suite: đọc như hộp thư Meta, trả lời được cả tin quá 7 ngày (trong cột Meta). API: đọc và trả lời ngay trong app.',
+                  onchange: e => { local.set('inboxSource', e.target.value); S.convs = []; S.more.clear(); load(false, { force: true }); } },
+                  h('option', { value: 'bs', textContent: 'Business Suite', selected: bsFirst() }), h('option', { value: 'api', textContent: 'API', selected: !bsFirst() }))) : null,
+                window.metaDesktop?.openZalo ? h('button', { type: 'button', title: 'Mở Zalo Web (Zalo cá nhân) ở cột phải · Ctrl+Shift+Z', onclick: () => window.metaDesktop.openZalo() }, 'Mở Zalo') : null,
+                window.metaDesktop?.lookupProfile ? h('button',{type:'button',textContent:'Lấy avatar khách',title:'Đọc avatar + UID khách từ Business Suite (từng khách, tối đa 30)',onclick:e=>lookupList(e.currentTarget)}) : null,
+                h('button',{type:'button',textContent:'Báo lỗi ảnh',title:'Tải báo lỗi ảnh khách trên phiên hiện tại',onclick:downloadAvatarDiagnostic})))),
           h('div', { className: 'list', id: 'ibList' }),
-          h('button', { type: 'button', className: 'btn btn-ghost btn-sm', id: 'ibMore', hidden: true, textContent: 'Tải thêm hội thoại', onclick: loadMore })),
+          h('button', { type: 'button', className: 'ib-more', id: 'ibMore', hidden: true, textContent: 'Tải thêm hội thoại', onclick: loadMore })),
         h('div', { className: 'card' },
           h('div', { className: 'card-head' }, h('h3', { className: 'card-title', id: 'ibTitle', textContent: 'Chưa chọn hội thoại' }),
-            h('button', { className: 'btn btn-ghost', id: 'ibReload', hidden: true, textContent: 'Đọc lại', onclick: () => S.conv && (S.conv.bs ? openBs(S.conv, { silent: true }) : openConv(S.conv)) })),
+            h('button', { className: 'btn btn-ghost', id: 'ibReload', hidden: true, textContent: '↻ Đọc lại', title: 'Đọc lại tin của hội thoại', onclick: () => S.conv && (S.conv.bs ? openBs(S.conv, { silent: true }) : openConv(S.conv)) })),
           h('div', { className: 'thread', id: 'ibThread' }, empty('Chọn một hội thoại bên trái để xem tin nhắn.')),
           h('div', { id: 'ibCrm', className: 'crm', hidden: true }),
           h('div', { className: 'composer' },
@@ -171,10 +174,10 @@
                 if (f) { const image = await fileToDataUrl(f); if (draftKey(S.conv) === draftKey(c)) { S.image = image; drawAttach(); saveDraft(); } }
                 e.target.value = '';
               } })),
-              h('textarea', { id: 'ibText', 'aria-label': 'Nội dung trả lời', placeholder: 'Nhập tin trả lời… (gõ / để chọn mẫu)', rows: 1, disabled: true, oninput: onType, onkeydown: onKey }),
-              h('button', { className: 'send-btn', id: 'ibSend', disabled: true, 'aria-label': 'Gửi', onclick: send }, icon('i-send'))),
-            h('div', { className: 'hint', style: 'margin-top:6px' }, h('kbd', {}, 'Enter'), ' gửi · ', h('kbd', {}, 'Shift'), '+', h('kbd', {}, 'Enter'), ' xuống dòng · ',
-              h('kbd', {}, '/'), ' chọn mẫu · quá 24 giờ: tự gửi kèm thẻ Nhân viên trả lời (tới 7 ngày)')))));
+              h('textarea', { id: 'ibText', 'aria-label': 'Nội dung trả lời', placeholder: 'Nhập tin trả lời… (gõ / để chọn mẫu)', title: 'Enter gửi · Shift+Enter xuống dòng · / chọn mẫu · quá 24 giờ: tự gửi kèm thẻ Nhân viên trả lời (tới 7 ngày)', rows: 1, disabled: true, oninput: onType, onkeydown: onKey }),
+              h('button', { className: 'send-btn', id: 'ibSend', disabled: true, 'aria-label': 'Gửi', onclick: send }, icon('i-send')))))));
+      // Menu ⋯: bấm ra ngoài hoặc chọn một mục thì đóng.
+      document.addEventListener('click', e => { const m = el.querySelector('.ib-menu'); if (m?.open && (!m.contains(e.target) || e.target.closest('.ib-menu-pop button'))) m.open = false; });
     },
     refresh() { load(S.convs.length > 0); }
   });
@@ -246,11 +249,12 @@
   function pfBar() {
     const list = $('ibList'); if (!list) return;
     let bar = $('ibPf');
-    if (!bar) { bar = h('div', { id: 'ibPf', className: 'hint', style: 'font-size:11.5px;padding:3px 10px;margin:0 0 4px;border-radius:999px;background:var(--surface-2,rgba(127,127,127,.12));width:max-content;max-width:100%;transition:opacity .4s' }); list.before(bar); }
+    if (!bar) { bar = h('div', { id: 'ibPf', className: 'ib-pf' }, h('span'), h('i')); list.before(bar); }
+    const say = (t, pct) => { bar.firstChild.textContent = t; bar.lastChild.style.width = pct + '%'; };
     clearTimeout(pf.timer);
-    if (pf.done < pf.todo) { bar.style.opacity = '1'; bar.hidden = false; bar.textContent = `⏳ Đang đọc trước tin ${pf.done}/${pf.todo} khách…`; return; }
+    if (pf.done < pf.todo) { bar.style.opacity = '1'; bar.hidden = false; say(`Đang đọc trước ${pf.done}/${pf.todo}`, Math.round(pf.done / pf.todo * 100)); return; }
     if (!pf.todo) { bar.hidden = true; return; }
-    bar.style.opacity = '1'; bar.hidden = false; bar.textContent = `✓ Đã đọc trước tin ${pf.done} khách mới nhất`;
+    bar.style.opacity = '1'; bar.hidden = false; say(`✓ Đã đọc trước ${pf.done} khách`, 100);
     pf.timer = setTimeout(() => { bar.style.opacity = '0'; pf.timer = setTimeout(() => { bar.hidden = true; pf.todo = pf.done = 0; }, 400); }, 4000);
   }
   async function bsPrefetch(p, list) {
@@ -612,9 +616,10 @@
   };
   function drawHead(c) {
     if (c.bs) return $('ibTitle').replaceChildren(h('span', { className: 'thread-head' }, custAvatar(c, 32),
-      h('span', { style: 'min-width:0' }, h('div', { className: 'card-title', textContent: c.other.name }), h('div', { className: 'hint', textContent: `${c.page.name} · qua Business Suite` }),
-        h('a', { className: 'hint', href: 'https://www.facebook.com/profile.php?id=' + c.uid, target: '_blank', rel: 'noopener noreferrer', textContent: 'UID ' + c.uid })),
-      h('button', { type: 'button', className: 'btn btn-ghost btn-sm', textContent: 'Mở trong cột Meta ↗', onclick: () => window.metaDesktop.openThread({ pageId: String(c.page.id), uid: c.uid }) })));
+      h('span', { className: 'th-text' }, h('div', { className: 'card-title', textContent: c.other.name }),
+        h('div', { className: 'th-meta' }, h('span', { className: 'th-page', title: c.page.name, textContent: c.page.name }), h('span', { className: 'th-dot', textContent: '·' }),
+          h('a', { href: 'https://www.facebook.com/profile.php?id=' + c.uid, target: '_blank', rel: 'noopener noreferrer', title: 'Mở trang cá nhân của khách', textContent: 'UID ' + c.uid }))),
+      h('button', { type: 'button', className: 'th-btn', title: 'Mở hội thoại này trong cột Meta', textContent: 'Meta ↗', onclick: () => window.metaDesktop.openThread({ pageId: String(c.page.id), uid: c.uid }) })));
     const identity=S.identities.get(pictureKey(c));
     $('ibTitle').replaceChildren(h('span', { className: 'thread-head' }, custAvatar(c, 32),
       h('span', { style: 'min-width:0' }, h('div', { className: 'card-title', textContent: c.other.name || 'Khách' }), h('div', { className: 'hint', textContent: c.page.name }),
@@ -633,7 +638,6 @@
       (S.filter !== 'today' || new Date(c.updated_time).toDateString() === today) &&
       (!lab || (S.crm?.[c.key]?.labels || []).includes(lab)) &&
       (!q || norm(`${c.other.name} ${c.snippet} ${(S.crm?.[c.key]?.labels || []).join(' ')}`).includes(q)));
-    const multi = App.selected().length > 1;
     // Mở Hộp thư chỉ hiện 15 khách mới nhất (tìm kiếm thì hiện hết kết quả); bấm "Tải thêm hội thoại" để hiện thêm 15.
     const total = list.length;
     if (!q) list.splice(S.showN || 15);
@@ -653,11 +657,9 @@
           h('div', { className: 'body' },
             h('div', { className: 'top' }, h('span', { className: 'name', textContent: c.other.name || 'Khách' }),
               c.unread_count ? h('span', { className: 'badge', textContent: c.unread_count }) : null,
-              h('span', { className: 'time', textContent: c.timeText || fmtShort(c.updated_time) })),
+              h('span', { className: 'time', textContent: c.timeText || (new Date(c.updated_time).toDateString() === today ? new Date(c.updated_time).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }) : fmtShort(c.updated_time)) })),
             h('div', { className: 'snippet', textContent: c.snippet || '' }),
-            (multi || c.bs || wait != null || labels.length) ? h('div', { className: 'tags' },
-              multi ? h('span', { className: 'page-chip', textContent: c.page.name }) : null,
-              c.bs ? h('span', { className: 'page-chip', title: c.src === 'ls' ? 'Đọc từ dữ liệu gốc Business Suite (nhanh, giờ chính xác)' : 'Đọc từ màn hình Business Suite', textContent: c.src === 'ls' ? 'Business Suite ⚡' : 'Business Suite' }) : null,
+            ((wait != null && wait < 7 * 1440) || labels.length) ? h('div', { className: 'tags' },
               wait != null && wait < 7 * 1440 ? h('span', { className: 'wait' + (wait > st.waitMinutes ? ' late' : ''), title: 'Khách đang chờ trả lời', textContent: '⏳ ' + InboxRules.formatWait(wait) }) : null,
               ...labels.slice(0, 3).map(l => tag(l))) : null));
       }) : [empty(S.convs.length ? 'Không có hội thoại khớp bộ lọc.' : 'Chưa có tin nhắn.')]));
