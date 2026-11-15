@@ -24,7 +24,7 @@ app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion,In
 app.userAgentFallback = app.userAgentFallback.replace(/ (Electron|meta-assistant)\/\S+/g, '');
 
 // Đăng nhập Facebook / ChatGPT phải mở trong app (cần window.opener); link khác mở bằng trình duyệt mặc định.
-const IN_APP = /^https:\/\/([a-z0-9-]+\.)*(facebook\.com|chatgpt\.com|openai\.com|google\.com|live\.com|microsoftonline\.com|apple\.com)\//i;
+const IN_APP = /^https:\/\/([a-z0-9-]+\.)*(facebook\.com|chatgpt\.com|openai\.com|google\.com|live\.com|microsoftonline\.com|apple\.com|zalo\.me|zaloapp\.com|zalo\.vn)\//i;
 const inApp = url => url === 'about:blank' || url.startsWith(WEB) || IN_APP.test(url);
 
 // Đăng nhập Facebook (API) ngay trong cột Meta của app: dùng chung phiên bạn đã đăng nhập Business Suite ở đó,
