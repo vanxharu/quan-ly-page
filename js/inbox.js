@@ -235,6 +235,24 @@
   const bsChip = t => { const s = String(t || '').trim().toLowerCase(), cut = s.replace(/\s*(…|\.{3})$/, '');
     return !!s && BS_CHIPS.some(c => c === s || (cut !== s && cut.length >= 2 && c.startsWith(cut))); };
   const lastSaid = id => { const m = (bsMsgCache.get(id)?.messages || []).filter(x => !x.sep && (x.text || x.pic)).pop(); return m ? (m.mine ? 'Bạn: ' : '') + (m.text || 'Đã gửi một ảnh.') : ''; };
+  // ── Số tin chưa đọc (Business Suite) ──
+  // Mất số khi: Page đã trả lời · bạn đã mở khách trong app (không có tin mới hơn) · Page đã đọc ở nơi khác (điện thoại, Business Suite, cột Meta).
+  // Còn lại giữ số lớn nhất đã biết: đọc lại danh sách (khung ẩn có thể làm Business Suite coi là đã xem) không làm mất số.
+  const appRead = new Map(Object.entries((() => { try { return JSON.parse(localStorage.getItem('bsAppRead') || '{}'); } catch { return {}; } })()));
+  const markAppRead = (id, at) => { if (!id || !at || (appRead.get(id) || 0) >= at) return; appRead.set(id, at);
+    if (appRead.size > 600) [...appRead.keys()].slice(0, appRead.size - 500).forEach(k => appRead.delete(k));
+    try { localStorage.setItem('bsAppRead', JSON.stringify(Object.fromEntries(appRead))); } catch {} };
+  function unreadOf(id, row, at) {
+    if (/^(bạn|you)\s*:/i.test(row.snippet || '')) { unreadHold.delete(id); return 0; }
+    if ((appRead.get(id) || 0) >= at - 1000 || (row.readAt && row.readAt >= at - 1000)) { unreadHold.delete(id); return 0; }
+    const prev = S.convs.find(x => x.id === id), keep = prev && Math.abs((prev.lastAt || 0) - at) < 5000 ? prev.unread_count || 0 : 0;
+    return Math.max(row.unread ? Math.max(1, Number(row.unread) || 1) : 0, unreadHold.get(id) || 0, keep);
+  }
+  App.inbox.bsRead = (id, at) => {
+    const row = S.convs.find(x => x.id === 'bs:' + id); if (!row) return;
+    row.readAt = at;
+    if (at >= (row.lastAt || 0) - 1000 && row.unread_count) { row.unread_count = 0; unreadHold.delete(row.id); if (App.current() === 'inbox') drawList(); }
+  };
   function bsConvs(p, rows, base = Date.now()) {
     let prev = base + 1000;
     for (const row of rows) if (bsChip(row.snippet)) { const id = `bs:${p.id}:${row.uid}`, old = S.convs.find(x => x.id === id)?.snippet;
@@ -246,9 +264,9 @@
       const at = t != null ? t - i : prev - 1000; prev = at;
       const c = { id: `bs:${p.id}:${row.uid}`, bs: true, uid: row.uid, page: p, other: { id: 'bs' + row.uid, name: row.name },
         snippet: row.snippet, timeText: row.time, updated_time: new Date(at).toISOString(),
-        unread_count: Math.max(row.unread ? Math.max(1, Number(row.unread) || 1) : 0, /^(bạn|you)\s*:/i.test(row.snippet || '') ? 0 : unreadHold.get(`bs:${p.id}:${row.uid}`) || 0),
+        unread_count: unreadOf(`bs:${p.id}:${row.uid}`, row, at),
         // Nhãn CRM ghép theo Page + tên khách (giống hội thoại đọc qua API); tin cuối "Bạn: …" là Page đã trả lời.
-        key: App.crmKey(p.id, row.name), lastAt: at, fromCustomer: !/^(bạn|you)\s*:/i.test(row.snippet) };
+        key: App.crmKey(p.id, row.name), lastAt: at, readAt: row.readAt || 0, fromCustomer: !/^(bạn|you)\s*:/i.test(row.snippet) };
       if (row.pic) S.pics.set(pictureKey(c), row.pic);
       return c;
     });
@@ -385,7 +403,7 @@
       if (S.conv !== c) return;
       if (cached?.messages?.length) { drawBs(c, cached); $('ibThread').append(h('div', { className: 'hint', style: 'text-align:center;margin:6px 0', id: 'ibBsUpd', textContent: 'Đang cập nhật tin mới…' })); }
       else $('ibThread').replaceChildren(empty(c.zalo ? 'Đang đọc tin từ Zalo…' : 'Đang đọc tin từ Business Suite…'));
-      c.unread_count = 0; unreadHold.delete(c.id); drawList();
+      c.unread_count = 0; unreadHold.delete(c.id); markAppRead(c.id, c.lastAt || Date.now()); drawList();
       const draft = await DB.get(draftKey(c), {}).catch(() => ({}));
       if (S.conv !== c) return;
       $('ibText').value = draft.text || ''; S.image = draft.image || ''; S.draftReady = true; $('ibText').disabled = false; drawAttach();
@@ -418,6 +436,8 @@
       }
     }
     clearIfSent(c, r.messages || []);
+    // Đang xem khách này trong app: tin mới nhất coi như đã đọc (không hiện lại số chưa đọc).
+    if (!older && lastMsg?.ts && S.conv === c && App.current() === 'inbox' && !document.hidden) markAppRead(c.id, lastMsg.ts);
     if (!older) await tagAndCrm(c, { render: !silent });
   }
   // Ô nhập vẫn còn nội dung đã thực sự gửi (vd lần gửi trước báo lỗi nhầm): thấy tin của Page trùng nội dung trong hội thoại thì dọn ô nhập.
@@ -1274,7 +1294,7 @@
       if (list?.length) {
         for (const c of list) { const o = S.convs.find(x => x.id === c.id), held = unreadHold.get(c.id) || 0;
           if (o && o.lastMid) c.lastMid = o.lastMid;
-          if (Math.max(held, o?.unread_count || 0) > (c.unread_count || 0) && (held || c.unread_count) && !/^(bạn|you)\s*:/i.test(c.snippet || '')) c.unread_count = Math.max(held, o?.unread_count || 0); }
+          if (!c.unread_count && held && c.fromCustomer && (appRead.get(c.id) || 0) < (c.lastAt || 0) - 1000 && !(c.readAt >= (c.lastAt || 0) - 1000)) c.unread_count = held; }
         S.convs = [...new Map([...S.convs.filter(c => c.page.id !== p.id), ...list].map(c => [c.id, c])).values()].sort((a, b) => new Date(b.updated_time) - new Date(a.updated_time));
         if (App.current() === 'inbox') await drawList();
         const fresh = S.conv && list.find(c => c.id === S.conv.id);
@@ -1290,7 +1310,7 @@
     if (info?.ts && bsFirst()) {
       const row = S.convs.find(x => x.id === 'bs:' + id), pageId = id.split(':')[0];
       // Tin vừa đến (2 phút gần đây) mới được đếm/báo; tin cũ (đọc lại lịch sử) chỉ sửa dòng nếu mới hơn.
-      const fresh = Date.now() - info.ts < 120e3;
+      const fresh = Date.now() - info.ts < 120e3, recent = Date.now() - info.ts < 30 * 60e3, newer = row && info.ts > (row.lastAt || 0) - 1000;
       if (row && (info.mid == null || info.mid !== row.lastMid) && (fresh ? info.ts >= (row.lastAt || 0) - 1000 : info.ts > (row.lastAt || 0) + 60e3)) {
         row.lastMid = info.mid;
         row.snippet = (info.mine ? 'Bạn: ' : '') + info.text; row.fromCustomer = !info.mine;
@@ -1299,11 +1319,12 @@
         if (!info.mine && fresh) prefetchHot(row);
         if (!info.mine && fresh && (info.pic || /^Đã gửi một ảnh/.test(info.text) || PAY_SAID.test(info.text || ''))) notePay(row.key, info.pic || /^Đã gửi một ảnh/.test(info.text) ? 'pic' : 'text');
         if (info.mine) { row.unread_count = 0; unreadHold.delete(row.id); } // Page đã trả lời → hết chờ
-        else if (!viewing && fresh) {
+        else if (viewing) { row.unread_count = 0; markAppRead(row.id, info.ts); }
+        else if (newer && recent) {
           // Đếm số câu khách đã nhắn (chưa đọc): cộng dồn từng tin mới, không thấp hơn số câu liên tiếp đọc từ dữ liệu gốc.
           row.unread_count = Math.max((row.unread_count || 0) + 1, info.streak || 1);
           unreadHold.set(row.id, row.unread_count);
-          settings().then(st => { if (st.webNotify && !st.mutedPages?.includes(row.page.id) && InboxRules.notifyAllowed(st, row.page.id)) App.notify(`💬 ${row.other.name} · ${row.page.name}`, info.text || 'Tin nhắn mới'); }).catch(() => {});
+          if (fresh) settings().then(st => { if (st.webNotify && !st.mutedPages?.includes(row.page.id) && InboxRules.notifyAllowed(st, row.page.id)) App.notify(`💬 ${row.other.name} · ${row.page.name}`, info.text || 'Tin nhắn mới'); }).catch(() => {});
         }
         bsNotified.set(row.id, `${row.snippet}|${row.timeText}`);
         S.convs.sort((a, b) => new Date(b.updated_time) - new Date(a.updated_time));

@@ -181,7 +181,7 @@ async function putImage(dbg, objectId, image, base) {
   return r?.result?.value === 1;
 }
 
-function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMeta = () => () => {}, metaShown = () => true, notify = () => {}, progress = () => {}, threadChanged = () => {}, listChanged = () => {}, receiptChanged = () => {} }) {
+function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMeta = () => () => {}, metaShown = () => true, notify = () => {}, progress = () => {}, threadChanged = () => {}, listChanged = () => {}, receiptChanged = () => {}, threadRead = () => {} }) {
   // Hội thoại đang mở trong khung ẩn có tin mới/đổi → báo ngay cho Hộp thư (không phải chờ chu kỳ đọc lại).
   // Trang ẩn theo dõi khung tin bằng MutationObserver và in một dấu hiệu ra console; ở đây bắt dấu hiệu đó.
   const watchThread = wc => wc.executeJavaScript(`(() => { try { window.__gaObs?.disconnect(); } catch {}
@@ -250,7 +250,7 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
   function lsIngest(pageId, raw) {
     if (!/payload/.test(raw)) return null;
     const ps = lsPayloads(raw); if (!ps.length) return null;
-    const st = lsStore(pageId), pid = String(pageId), threads = new Set(), rc = new Set(); let list = false, seen = 0;
+    const st = lsStore(pageId), pid = String(pageId), threads = new Set(), rc = new Set(), pr = new Set(); let list = false, seen = 0;
     // Mốc khách đã nhận / đã xem (ms). addParticipantIdToGroupThread: 0 thread · 1 người · 2 đã xem tới · 3 đã nhận tới;
     // updateReadReceipt / updateDeliveryReceipt: 0 mốc · 1 thread · 2 người. Chỉ lấy của chính khách (người = thread), bỏ của Page.
     const setRc = (uid, k, at) => { at = Number(at) || 0; if (!/^\d+$/.test(uid) || uid === pid || !at) return; let x = st.rcpt.get(uid); if (!x) st.rcpt.set(uid, x = { read: 0, dlv: 0 });
@@ -284,6 +284,9 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
           const uid = String(v[0] || ''); if (String(v[1]) === uid) { setRc(uid, 'read', v[2]); setRc(uid, 'dlv', v[3]); }
         } else if (n === 'updateReadReceipt' || n === 'updateDeliveryReceipt') {
           const uid = String(v[1] || ''); if (String(v[2]) === uid) setRc(uid, n === 'updateReadReceipt' ? 'read' : 'dlv', v[0]);
+          // Page đã đọc hội thoại (bạn đọc trên điện thoại / Business Suite / trả lời): cập nhật mốc đã đọc → app bỏ số chưa đọc.
+          else if (n === 'updateReadReceipt' && String(v[2]) === pid && /^\d+$/.test(uid)) { const t = st.threads.get(uid), at = Number(v[0]) || 0;
+            if (t && at > (t.read || 0)) { t.read = at; pr.add(uid); list = true; } }
         } else if (n === 'insertNewMessageRange') {
           // Đoạn tin thật sự (tin đầu khác tin cuối) = đã tải hội thoại; danh sách hội thoại cũng gửi "đoạn" 1 tin cuối, không tính.
           const uid = String(v[0] || ''); if (/^\d+$/.test(uid) && v[3] && v[4] && v[3] !== v[4]) { st.loaded.add(uid); threads.add(uid); }
@@ -298,7 +301,7 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
       if (ms && t && ms.ts > t.at) { t.at = ms.ts; t.snippet = (ms.mine ? 'Bạn: ' : '') + (ms.text || (ms.pic ? 'Đã gửi một ảnh.' : '')); if (!ms.mine) t.read = 1; list = true; } // read=1 (< giờ tin) = chưa đọc
     }
     if (threads.size || list) st.at = Date.now();
-    return { threads, list, rc };
+    return { threads, list, rc, pr };
   }
   // Tin của một hội thoại từ dữ liệu gốc → định dạng như readMessages (mốc giờ khi cách nhau > 30 phút).
   const lsMessages = (pageId, uid) => {
@@ -327,6 +330,7 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
       try { threadChanged(`${pageId}:${uid}`, info); } catch {}
     }
     for (const uid of r.rc) { try { receiptChanged(`${pageId}:${uid}`, st.rcpt.get(uid)); } catch {} }
+    for (const uid of r.pr) { try { threadRead(`${pageId}:${uid}`, st.threads.get(uid)?.read || 0); } catch {} }
   };
   const lsRcpt = (pageId, uid) => lsStores.get(String(pageId))?.rcpt.get(String(uid)) || null;
   const withRcpt = (args, r) => r && typeof r === 'object' && Array.isArray(r.messages) ? { ...r, rcpt: lsRcpt(args.pageId, args.uid) } : r;
@@ -507,7 +511,7 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
     const names = pageRows.get(String(pageId))?.rows, nameOf = uid => { for (const [, l] of names || []) for (const r of l) if (r.uid === uid) return r.name; return ''; };
     const rows = [...st.threads.values()].filter(t => t.at && t.folder !== 'spam').sort((a, b) => b.at - a.at).slice(0, max).map(t => {
       const c = st.contacts.get(t.uid), name = c?.name || nameOf(t.uid);
-      return { uid: t.uid, name: name || '', snippet: t.snippet, time: '', at: t.at, unread: t.read > 0 && t.read < t.at && !/^Bạn:/.test(t.snippet) ? Math.max(1, lsStreak(st, t.uid)) : 0, pic: c?.pic || t.pic };
+      return { uid: t.uid, name: name || '', snippet: t.snippet, time: '', at: t.at, readAt: t.read || 0, unread: (t.read || 0) < t.at - 1000 && !/^Bạn:/.test(t.snippet) ? Math.max(1, lsStreak(st, t.uid)) : 0, pic: c?.pic || t.pic };
     });
     // Thiếu tên vài khách (dữ liệu liên hệ chưa về): vẫn dùng nếu đa số có tên; khách thiếu tên tạm ghi "Khách Messenger".
     if (rows.filter(r => r.name).length < Math.ceil(rows.length * 0.7)) return null;
