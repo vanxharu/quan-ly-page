@@ -140,7 +140,11 @@ function readMessages(scrollUp) {
     if (SEP.test(t) && !seen.has(t + y)) { seen.add(t + y); items.push({ y: y - 0.1, sep: t }); }
   }
   items.sort((a, b) => a.y - b.y);
-  return { messages: items.map(({ y, ...m }) => m), count: blocks.length };
+  // Trạng thái tin cuối của Page mà Business Suite đang hiện (avatar "Đã xem bởi…", biểu tượng Đã nhận / Đã gửi).
+  const lab = el => (el.getAttribute('aria-label') || el.getAttribute('alt') || el.getAttribute('title') || '').trim();
+  const marks = [...col.querySelectorAll('[aria-label],img[alt],[title]')].map(lab);
+  const domRc = marks.some(t => /^(Đã xem|Seen)( bởi| by|$)/i.test(t)) ? 'seen' : marks.some(t => /^(Đã nhận|Delivered)$/i.test(t)) ? 'dlv' : marks.some(t => /^(Đã gửi|Sent)$/i.test(t)) ? 'sent' : '';
+  return { messages: items.map(({ y, ...m }) => m), count: blocks.length, domRc };
 }
 
 // Chạy trong trang: tìm phần tử hiện trên màn hình theo selector / role / chữ / nhãn (aria-labelledby), cuộn vào giữa, trả toạ độ tâm.
@@ -328,6 +332,7 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
         return { page: sl.pageId, url: (() => { try { return sl.win.webContents.getURL().replace(/[?&](business_id|ir_qe_exposed)=[^&]*/g, '').slice(0, 120); } catch { return 'đã đóng'; } })(),
           opened: sl.opened, busySec: sl.queue.runningSince ? Math.round((now - sl.queue.runningSince) / 1000) : 0, busyPrio: sl.queue.runningPrio, waiting: sl.queue.waiting?.() || 0,
           wsFrames: st.frames || 0, lsThreads: st.threads?.size || 0, lsContacts: st.contacts?.size || 0, lsLoaded: st.loaded?.size || 0, lsAgoSec: st.at ? Math.round((now - st.at) / 1000) : null,
+          rcpt: st.rcpt?.size || 0, rcptOpen: sl.opened ? st.rcpt?.get(String(sl.opened).split(':').pop()) || null : null,
           lsTop: st.threads ? [...st.threads.values()].sort((a, b) => b.at - a.at).slice(0, 3).map(t => (st.contacts.get(t.uid)?.name || '?').slice(0, 3) + '… ' + new Date(t.at).toISOString().slice(5, 16)) : [] };
       }), send: [...sendSlots.values()].map(ss => ({ page: ss.pageId, opened: ss.opened, busySec: ss.queue.runningSince ? Math.round((now - ss.queue.runningSince) / 1000) : 0, waiting: ss.queue.waiting?.() || 0,
         url: (() => { try { return ss.win.webContents.getURL().slice(0, 100); } catch { return 'đã đóng'; } })() })) };

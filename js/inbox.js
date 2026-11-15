@@ -478,7 +478,7 @@
     const all = r.messages || [];
     { const tail = []; for (let i = all.length - 1; i >= 0 && tail.length < 8; i--) { const m = all[i]; if (m.sep) continue; if (m.mine) break; tail.push(m); }
       if (tail.some(m => m.pic)) notePay(c.key, 'pic'); else if (tail.some(m => PAY_SAID.test(m.text || ''))) notePay(c.key, 'text'); else if (S.payHint.has(c.key) && all.some(m => m.mine)) { S.payHint.delete(c.key); drawOrder().catch(() => {}); } }
-    c.bsLast = r; if (r.rcpt) c.rcpt = r.rcpt;
+    c.bsLast = r; if (r.rcpt) c.rcpt = r.rcpt; c.domRc = r.domRc || '';
     if (!silent && !older && !keepTop) c.bsShow = BS_STEP;
     let start = Math.max(0, all.length - (c.bsShow || BS_STEP));
     if (start > 0 && all[start - 1]?.sep) start--; // giữ mốc giờ đi kèm tin đầu
@@ -513,7 +513,10 @@
     const tail = rows.slice(k); if (!tail.length) return;
     const rc = c.rcpt || {}, read = rc.read || 0, dlv = rc.dlv || 0, ts = r => Number(r.dataset.ts) || 0;
     const last = tail[tail.length - 1], lt = ts(last);
+    // Tin không có giờ (đọc từ màn hình): so mốc với giờ tin cuối của hội thoại, hoặc dùng trạng thái Business Suite đang hiện.
+    const lastAt = lt || (c.fromCustomer === false ? c.lastAt || Date.parse(c.updated_time) || 0 : 0);
     let seenRow = null; for (const r of tail) if (ts(r) && ts(r) <= read) seenRow = r;
+    if (!seenRow && !lt && ((lastAt && read >= lastAt - 1000) || c.domRc === 'seen')) seenRow = last;
     const slot = r => r.querySelector(':scope > .rc-slot');
     let note;
     if (seenRow) {
@@ -522,7 +525,7 @@
       if (seenRow === last) note = 'Đã xem · ' + hm(read);
     }
     if (seenRow !== last) {
-      const got = lt && lt <= dlv;
+      const got = (lastAt && lastAt <= dlv) || c.domRc === 'dlv';
       slot(last).replaceChildren(h('span', { className: 'rc ' + (got ? 'dlv' : 'sent'), title: got ? 'Khách đã nhận' : 'Đã gửi' }));
       note = got ? 'Đã nhận' : 'Đã gửi';
     }
