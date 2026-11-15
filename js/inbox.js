@@ -154,6 +154,7 @@
                   onchange: e => { local.set('inboxSource', e.target.value); S.convs = []; S.more.clear(); load(false, { force: true }); } },
                   h('option', { value: 'bs', textContent: 'Business Suite', selected: bsFirst() }), h('option', { value: 'api', textContent: 'API', selected: !bsFirst() }))) : null,
                 window.metaDesktop?.openZalo ? h('button', { type: 'button', title: 'Mở Zalo Web (Zalo cá nhân) ở cột phải · Ctrl+Shift+Z', onclick: () => window.metaDesktop.openZalo() }, 'Mở Zalo') : null,
+                window.metaDesktop?.resetZalo ? h('button', { type: 'button', title: 'Zalo Web treo "Đang đăng nhập…": xoá phiên Zalo trong app rồi quét QR lại', onclick: () => { if (confirm('Đăng nhập lại Zalo?\n\nApp xoá phiên Zalo Web trong app (không ảnh hưởng Zalo trên điện thoại), bạn quét mã QR lại.')) window.metaDesktop.resetZalo(true); } }, 'Đăng nhập lại Zalo') : null,
                 window.metaDesktop?.lookupProfile ? h('button',{type:'button',textContent:'Lấy avatar khách',title:'Đọc avatar + UID khách từ Business Suite (từng khách, tối đa 30)',onclick:e=>lookupList(e.currentTarget)}) : null,
                 h('button',{type:'button',textContent:'Báo lỗi ảnh',title:'Tải báo lỗi ảnh khách trên phiên hiện tại',onclick:downloadAvatarDiagnostic})))),
           h('div', { className: 'list', id: 'ibList' }),

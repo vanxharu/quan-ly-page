@@ -9,6 +9,7 @@ contextBridge.exposeInMainWorld('metaDesktop', {
   readThread: args => ipcRenderer.invoke('meta-thread-read', args),
   sendThread: args => ipcRenderer.invoke('meta-thread-send', args),
   openZalo: () => ipcRenderer.send('open-zalo'),
+  resetZalo: full => ipcRenderer.send('zalo-reset', !!full),
   openService: url => ipcRenderer.send('open-svc', url),
   svcApi: args => ipcRenderer.invoke('svc-api', args),
   svcCatalog: args => ipcRenderer.invoke('svc-catalog', args),

@@ -192,7 +192,7 @@ app.whenReady().then(async () => {
   const svcSes = session.fromPartition('persist:svc');
   svcSes.setUserAgent(app.userAgentFallback);
   svcView = new WebContentsView({ webPreferences: { partition: 'persist:svc', sandbox: true, contextIsolation: true } });
-  for (const wc of [metaView.webContents, worker.webContents, composer.webContents, zaloView.webContents]) await asChrome(wc);
+  for (const wc of [metaView.webContents, worker.webContents, composer.webContents]) await asChrome(wc); // Zalo Web chạy như trình duyệt thường (giả Chrome có thể làm Zalo treo "Đang đăng nhập…")
   mainWindow.contentView.addChildView(panelView);
   mainWindow.contentView.addChildView(metaView);
   mainWindow.contentView.addChildView(zaloView);
@@ -253,7 +253,21 @@ app.whenReady().then(async () => {
     metaView.webContents.loadURL('https://business.facebook.com/latest/inbox/all').catch(() => {});
     show('meta', true);
   }).catch(() => {});
+  // Zalo Web treo "Đang đăng nhập…": lần 1 xoá bộ nhớ đệm + service worker rồi tải lại (giữ đăng nhập); lần 2 xoá hẳn phiên → hiện mã QR quét lại.
+  let zaloFix = 0, zaloWatch = 0;
+  const resetZalo = async full => {
+    try { await zaloSes.clearStorageData(full ? {} : { storages: ['serviceworkers', 'cachestorage', 'shadercache'] }); await zaloSes.clearCache(); } catch {}
+    zaloView.webContents.loadURL('https://chat.zalo.me/').catch(() => {});
+  };
+  const watchZalo = () => { clearTimeout(zaloWatch); zaloWatch = setTimeout(async () => {
+    const stuck = await zaloView.webContents.executeJavaScript(`/Đang đăng nhập|Logging in/i.test(document.body?.innerText || '') && !document.querySelector('canvas, img[src*="qr"], [class*="qr" i]')`).catch(() => false);
+    if (!stuck) { zaloFix = 0; return; }
+    if (zaloFix >= 2) return; // đã thử 2 lần: để bạn bấm "Đăng nhập lại Zalo"
+    await resetZalo(zaloFix++ === 1); watchZalo();
+  }, 25000); };
+  zaloView.webContents.on('did-finish-load', () => { if (zaloView.webContents.getURL().startsWith('https://chat.zalo.me')) watchZalo(); });
   const openZalo = () => { if (!zaloView.webContents.getURL().startsWith('https://chat.zalo.me')) zaloView.webContents.loadURL('https://chat.zalo.me/').catch(() => {}); show('zalo', true); };
+  ipcMain.on('zalo-reset', (e, full) => { if (!fromPage(e)) return; zaloFix = 0; resetZalo(!!full); show('zalo', true); });
   ipcMain.on('open-zalo', e => { if (fromPage(e)) openZalo(); });
   // Mở web dịch vụ ở cột phải (trang chủ do người dùng đặt trong tab Dịch vụ; chỉ https).
   ipcMain.on('open-svc', (e, url) => {
@@ -460,6 +474,7 @@ app.whenReady().then(async () => {
         shell.openPath(dir);
       } },
       // Lưu trang Zalo Web đang mở (danh sách hội thoại / hội thoại đang xem) để viết phần đọc tin Zalo theo giao diện thật.
+      { label: 'Đăng nhập lại Zalo (xoá phiên, quét QR)', click: () => { zaloFix = 0; resetZalo(true); show('zalo', true); } },
       { label: 'Lưu chẩn đoán Zalo', click: async () => {
         const dir = app.getPath('desktop'), stamp = new Date().toISOString().replace(/[:.]/g, '-'), wc = zaloView.webContents;
         if (!wc.getURL()) return openZalo();
