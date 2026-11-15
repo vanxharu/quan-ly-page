@@ -435,17 +435,19 @@ app.whenReady().then(async () => {
   worker.webContents.setAudioMuted(true);
   worker.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   ipcMain.handle('meta-lookup', (e, args) => fromPage(e) ? auto.lookupProfile(args || {}) : { error: 'denied' });
+  const zaloDbg = async () => { const d = zaloView.webContents.debugger; if (!d.isAttached()) d.attach('1.3');
+    await d.sendCommand('Emulation.setFocusEmulationEnabled', { enabled: true }).catch(() => {}); return d; };
+  const zaloKey = async (d, key, modifiers = 0) => { const k = key === 'Enter' ? { key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13 } : { key, code: key };
+    await d.sendCommand('Input.dispatchKeyEvent', { type: 'rawKeyDown', modifiers, ...k });
+    if (key === 'Enter' && !modifiers) await d.sendCommand('Input.dispatchKeyEvent', { type: 'char', modifiers, text: '\r', unmodifiedText: '\r', ...k });
+    await d.sendCommand('Input.dispatchKeyEvent', { type: 'keyUp', modifiers, ...k }); };
   // Zalo cá nhân đi chung đường với Business Suite: Hộp thư gọi đọc/gửi với pageId "zalo".
   const zalo = createZaloAuto({ wc: () => zaloView.webContents,
-    // Gõ chữ thật: cho cột Zalo tiêu điểm trong chốc lát, chèn chữ (xuống dòng = Shift+Enter), rồi trả tiêu điểm lại trang chính.
-    // Nhập chữ thật vào ô chat Zalo: mode 'paste' = dán bằng clipboard (Ctrl+V thật), mode 'type' = gõ từng dòng (insertText, Shift+Enter xuống dòng).
-    typeText: async (text, mode = 'paste') => { const w = zaloView.webContents, back = !zaloView.__top; w.focus();
-      if (mode === 'paste') { const old = clipboard.readText(); clipboard.writeText(String(text)); w.paste(); await new Promise(r => setTimeout(r, 300)); clipboard.writeText(old); }
-      else { const parts = String(text).split('\n');
-        for (let i = 0; i < parts.length; i++) { if (i) { w.sendInputEvent({ type: 'keyDown', keyCode: 'Enter', modifiers: ['shift'] }); w.sendInputEvent({ type: 'keyUp', keyCode: 'Enter', modifiers: ['shift'] }); await new Promise(r => setTimeout(r, 30)); }
-          if (parts[i]) w.insertText(parts[i]); await new Promise(r => setTimeout(r, 30)); } }
-      if (back) setTimeout(() => pageView.webContents.focus(), 1500); },
-    sendKey: key => { const w = zaloView.webContents; w.sendInputEvent({ type: 'keyDown', keyCode: key }); if (key === 'Enter') w.sendInputEvent({ type: 'char', keyCode: '\r' }); w.sendInputEvent({ type: 'keyUp', keyCode: key }); },
+    // Nhập chữ / bấm phím THẬT vào Zalo qua giao thức trình duyệt (CDP): Zalo nằm ẩn dưới trang chính nên không có tiêu điểm,
+    // giả lập "đang được chọn" (Emulation.setFocusEmulationEnabled) rồi Input.insertText / Input.dispatchKeyEvent — không cướp tiêu điểm của bạn.
+    typeText: async text => { const d = await zaloDbg(); const parts = String(text).split('\n');
+      for (let i = 0; i < parts.length; i++) { if (i) await zaloKey(d, 'Enter', 8); if (parts[i]) await d.sendCommand('Input.insertText', { text: parts[i] }); } },
+    sendKey: async key => { try { await zaloKey(await zaloDbg(), key, 0); } catch { const w = zaloView.webContents; w.sendInputEvent({ type: 'keyDown', keyCode: key }); if (key === 'Enter') w.sendInputEvent({ type: 'char', keyCode: '\r' }); w.sendInputEvent({ type: 'keyUp', keyCode: key }); } },
     onList: rows => pageView.webContents.executeJavaScript(`window.App?.inbox?.zaloList?.(${JSON.stringify(rows)})`).catch(() => {}),
     onThread: id => pageView.webContents.executeJavaScript(`window.App?.inbox?.bsChanged?.(${JSON.stringify('zalo:' + id)}, null)`).catch(() => {}) });
   zaloView.webContents.on('console-message', (ev, ...a) => zalo.onConsole(ev?.message ?? a[1]));
