@@ -269,6 +269,7 @@ app.whenReady().then(async () => {
     const stuck = await zaloView.webContents.executeJavaScript(`/Đang đăng nhập|Logging in/i.test(document.body?.innerText || '') && !document.querySelector('canvas, img[src*="qr"], [class*="qr" i]')`).catch(() => false);
     if (!stuck) { zaloFix = 0; return; }
     if (zaloFix >= 2) return; // đã thử 2 lần: để bạn bấm "Đăng nhập lại Zalo"
+    if (zaloFix === 1 && side !== 'zalo') return; // xoá hẳn phiên (phải quét QR) chỉ khi bạn đang mở cột Zalo
     await resetZalo(zaloFix++ === 1); watchZalo();
   }, 25000); };
   zaloView.webContents.on('did-finish-load', () => { if (zaloView.webContents.getURL().startsWith('https://chat.zalo.me')) watchZalo(); });
@@ -384,9 +385,13 @@ app.whenReady().then(async () => {
   zaloSes.cookies.get({ domain: 'zalo.me' }).then(cs => { if (cs.some(c => /^zpw_sek$/.test(c.name)) && !zaloView.webContents.getURL()) zaloView.webContents.loadURL('https://chat.zalo.me/').catch(() => {}); }).catch(() => {});
   ipcMain.handle('thread-react', (e, args) => !fromPage(e) ? { error: 'denied' } : args?.pageId === 'zalo' ? zalo.react(args) : auto.react(args || {}));
   ipcMain.handle('zalo-list', async (e, args) => { if (!fromPage(e)) return { error: 'denied' };
-    // Chưa mở Zalo Web (vd lần trước chưa đăng nhập, hoặc phiên chưa được nhận ra): mở ẩn rồi báo Hộp thư chờ.
-    if (!zaloView.webContents.getURL().startsWith('https://chat.zalo.me')) { zaloView.webContents.loadURL('https://chat.zalo.me/').catch(() => {}); return { error: 'loading' }; }
-    return zalo.list(args || {}); });
+    // Chưa mở Zalo Web: mở ẩn rồi báo Hộp thư chờ. Đang tải thì KHÔNG tải lại (tải lại liên tục làm Zalo không bao giờ mở xong).
+    const w = zaloView.webContents, url = w.getURL();
+    if (!url && !w.isLoading()) { w.loadURL('https://chat.zalo.me/').catch(() => {}); return { error: 'loading' }; }
+    if (/^https:\/\/([a-z0-9-]+\.)*zalo\.me\//.test(url) && !url.startsWith('https://chat.zalo.me')) return { error: 'login' }; // bị chuyển sang trang đăng nhập Zalo
+    if (!url.startsWith('https://chat.zalo.me')) return { error: w.isLoading() ? 'loading' : 'login' };
+    const r = await zalo.list(args || {});
+    return r.error && /đang tải/i.test(r.error) && zalo.status().state === 'login' ? { error: 'login' } : r; });
   ipcMain.handle('meta-thread-read', (e, args) => !fromPage(e) ? { error: 'denied' } : args?.pageId === 'zalo' ? zalo.read(args) : auto.readThread(args || {}));
   ipcMain.handle('meta-thread-send', (e, args) => !fromPage(e) ? { error: 'denied' } : args?.pageId === 'zalo' ? zalo.send(args) : auto.sendThread(args || {}));
   ipcMain.handle('meta-threads', (e, args) => fromPage(e) ? auto.listThreads(args || {}) : { error: 'denied' });

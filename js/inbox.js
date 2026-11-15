@@ -948,7 +948,7 @@
               return h('div', { className: 'snip-row' }, h('div', { className: 'snippet', textContent: c.snippet || '' }),
                 chips.length ? h('div', { className: 'tags' }, ...chips, more.length ? h('span', { className: 'lbl more', title: more.map(x => x.textContent).join(' · '), textContent: '+' + more.length }) : null) : null);
             })()));
-      }) : [empty(S.plat === 'zalo' && !S.convs.some(c => platOf(c) === 'zalo') ? (S.zErr === 'login' ? 'Chưa đăng nhập Zalo trong app: mở cột Zalo (Ctrl+Shift+Z) và quét mã QR.' : S.zErr && S.zErr !== 'loading' ? 'Chưa đọc được Zalo: ' + S.zErr : 'Đang mở Zalo Web để đọc tin… (lần đầu mất khoảng 10–20 giây)') : S.convs.length ? 'Không có hội thoại khớp bộ lọc.' : 'Chưa có tin nhắn.')]));
+      }) : [empty(S.plat === 'zalo' && !S.convs.some(c => platOf(c) === 'zalo') ? (S.zErr === 'login' ? 'Zalo Web đang ở trang đăng nhập: mở cột Zalo (Ctrl+Shift+Z) và quét mã QR. Quét xong danh sách tự hiện ở đây.' : S.zErr && S.zErr !== 'loading' ? 'Chưa đọc được Zalo: ' + S.zErr : S.zSince && Date.now() - S.zSince > 60e3 ? 'Zalo Web chưa mở xong sau 1 phút: bấm Ctrl+Shift+Z xem cột Zalo đang hiện gì (trang đăng nhập / quay vòng), chụp màn hình gửi người hỗ trợ.' : 'Đang mở Zalo Web để đọc tin… (lần đầu mất khoảng 10–20 giây)') : S.convs.length ? 'Không có hội thoại khớp bộ lọc.' : 'Chưa có tin nhắn.')]));
   }
   function resetThread() {
     S.reply = null; drawReply(); closePop();
@@ -1283,7 +1283,7 @@
     if (!window.metaDesktop?.zaloList || (!deep && Date.now() - zLoaded < 60e3)) return;
     zLoaded = Date.now();
     const r = await window.metaDesktop.zaloList({ deep }).catch(e => ({ error: e.message }));
-    S.zErr = r?.rows ? '' : r?.error || 'lỗi';
+    S.zErr = r?.rows ? '' : r?.error || 'lỗi'; S.zSince ||= Date.now(); if (r?.rows) S.zSince = 0;
     if (r?.rows) App.inbox.zaloList(r.rows); else { zLoaded = Date.now() - 45e3; if (App.current() === 'inbox' && S.plat === 'zalo') drawList(); } // thử lại sau ~15 giây
   };
   setInterval(() => { if (App.current() === 'inbox' && !document.hidden && !S.zconvs.length) App.inbox.zaloLoad().catch(() => {}); }, 15e3);

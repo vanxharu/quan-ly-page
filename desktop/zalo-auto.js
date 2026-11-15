@@ -12,7 +12,7 @@ function zState() {
   if (document.querySelector('#conversationList')) return 'ready';
   const t = document.body?.innerText || '';
   if (/Đang đăng nhập|Logging in/i.test(t)) return 'loading';
-  if (/quét mã|Đăng nhập|QR/i.test(t) && !document.querySelector('#main-tab')) return 'login';
+  if ((/quét mã|qr code|đăng nhập bằng|với mã qr/i.test(t) || document.querySelector('.qrcode, [class*="qr-code" i], img[src*="qr" i]')) && !document.querySelector('#main-tab')) return 'login';
   return 'loading';
 }
 function zList() {
