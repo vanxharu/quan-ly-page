@@ -219,9 +219,9 @@ function createZaloAuto({ wc, sendKey, typeText = null, beginInput = async () =>
     return await run(zRead, !!args.older).catch(x => null) || { error: 'Không đọc được tin Zalo.' };
   });
   const send = args => queue(async () => {
+    try { await beginInput(); } catch (x) { return { error: x.message }; } // vd đang mở cột Zalo
     const e = await open(args.uid); if (e) return e;
-    // Zalo chỉ nhận chữ khi trang thật sự được chọn: hiện cột Zalo trong lúc gửi (vài giây) rồi trả lại như cũ.
-    await beginInput(); try { return await send0(args); } finally { endInput(); }
+    try { return await send0(args); } finally { endInput(); }
   });
   const send0 = async args => {
     const text = String(args.text || '').trim(), image = String(args.image || '');
