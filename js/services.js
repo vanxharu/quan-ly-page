@@ -1490,14 +1490,17 @@
       const all = (await DB.get(ORDERS, [])).filter(o => o.source === 'service' && o.at >= from);
       refillOk = new Set(); if (s.apiKey) try { for (const x of await services()) if (x.refill || warrantyName(x.name)) refillOk.add(x.id); } catch {}
       const list = all.filter(o => !q || norm([o.customer?.name, o.link, o.serviceName, o.providerOrderId, App.pageById(o.pageKey)?.name].join(' ')).includes(q)).sort((a, b) => b.at - a.at);
-      const sum = Pure.summarize(all), running = all.filter(o => ['new', 'shipping'].includes(o.status)).length;
+      // Dịch vụ thu tiền TRƯỚC khi tạo đơn → tính doanh thu / giá gốc / lời ngay khi có đơn (trừ đơn bị huỷ), không chờ hoàn thành.
+      const live = all.filter(o => o.status !== 'cancelled' && o.status !== 'returned');
+      const revenue = live.reduce((t, o) => t + orderSell(o), 0), costSum = live.reduce((t, o) => t + orderOf(o).cost, 0);
+      const sum = { revenue, cost: costSum, profit: revenue - costSum }, running = all.filter(o => ['new', 'shipping'].includes(o.status)).length;
       // Dọn báo giá quá hạn hơn 7 ngày mà khách chưa trả đồng nào.
       let qs = await quotes();
       const stale = qs.filter(x => x.state === 'quote' && !x.paidAmount && Date.now() - (x.expiresAt || 0) > 7 * 864e5);
       if (stale.length) { qs = qs.filter(x => !stale.includes(x)); await DB.set(QUOTES, qs); }
       const waiting = qs.filter(x => x.state === 'quote' && !expired(x));
       drawQuotes(qs); drawVip(await DB.get(ORDERS, []), qs);
-      $('svKpis').replaceChildren(...[['Chờ thanh toán', `${waiting.length} · ${money(waiting.reduce((t, x) => t + amountDue(x), 0))}`], ['Đã thu, chưa tạo đơn', qs.filter(x => x.state === 'paid').length], ['Đơn', all.length], ['Đang chạy', running], ['So với giá gói', (d => (d > 0 ? '+' : '') + money(d))(all.reduce((t, o) => t + (vsList(o) || 0), 0))], ['Doanh thu', money(sum.revenue)], ['Giá gốc', money(sum.cost)], ['Lời', money(sum.profit)]]
+      $('svKpis').replaceChildren(...[['Chờ thanh toán', `${waiting.length} · ${money(waiting.reduce((t, x) => t + amountDue(x), 0))}`], ['Đã thu, chưa tạo đơn', qs.filter(x => x.state === 'paid').length], ['Đơn', all.length], ['Đang chạy', running], ['So với giá gói', (d => (d > 0 ? '+' : '') + money(d))(all.reduce((t, o) => t + (vsList(o) || 0), 0))], ['Doanh thu (đã thu)', money(sum.revenue)], ['Giá gốc', money(sum.cost)], ['Lời', money(sum.profit) + (sum.revenue ? ` (${Math.round(sum.profit / sum.revenue * 100)}%)` : '')]]
         .map(([l, v]) => h('div', { className: 'kpi' }, h('div', { className: 'label', textContent: l }), h('div', { className: 'value', textContent: v }))));
       $('svOrders').replaceChildren(list.length ? h('table', {},
         h('thead', {}, h('tr', {}, ...['Tạo lúc', 'Khách / Page', 'Dịch vụ', 'Link', 'SL', 'Giá bán', 'So với giá gói', 'Giá gốc', 'Lời', 'Trạng thái', 'Hoàn thành', 'Gửi khách'].map(t => h('th', { textContent: t })))),
