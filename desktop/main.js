@@ -437,6 +437,12 @@ app.whenReady().then(async () => {
   ipcMain.handle('meta-lookup', (e, args) => fromPage(e) ? auto.lookupProfile(args || {}) : { error: 'denied' });
   // Zalo cá nhân đi chung đường với Business Suite: Hộp thư gọi đọc/gửi với pageId "zalo".
   const zalo = createZaloAuto({ wc: () => zaloView.webContents,
+    // Gõ chữ thật: cho cột Zalo tiêu điểm trong chốc lát, chèn chữ (xuống dòng = Shift+Enter), rồi trả tiêu điểm lại trang chính.
+    typeText: async text => { const w = zaloView.webContents, back = !zaloView.__top; w.focus();
+      const parts = String(text).split('\n');
+      for (let i = 0; i < parts.length; i++) { if (i) { w.sendInputEvent({ type: 'keyDown', keyCode: 'Enter', modifiers: ['shift'] }); w.sendInputEvent({ type: 'keyUp', keyCode: 'Enter', modifiers: ['shift'] }); await new Promise(r => setTimeout(r, 30)); }
+        if (parts[i]) w.insertText(parts[i]); await new Promise(r => setTimeout(r, 30)); }
+      if (back) setTimeout(() => pageView.webContents.focus(), 1500); },
     sendKey: key => { const w = zaloView.webContents; w.sendInputEvent({ type: 'keyDown', keyCode: key }); if (key === 'Enter') w.sendInputEvent({ type: 'char', keyCode: '\r' }); w.sendInputEvent({ type: 'keyUp', keyCode: key }); },
     onList: rows => pageView.webContents.executeJavaScript(`window.App?.inbox?.zaloList?.(${JSON.stringify(rows)})`).catch(() => {}),
     onThread: id => pageView.webContents.executeJavaScript(`window.App?.inbox?.bsChanged?.(${JSON.stringify('zalo:' + id)}, null)`).catch(() => {}) });

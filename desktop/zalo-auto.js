@@ -134,16 +134,21 @@ async function zReplyTo(ts) {
   return quoted();
 }
 // Đặt chữ vào ô nhập (dán như người dùng → giữ xuống dòng); trả số ký tự ô nhập có.
-function zPutText(text) {
+async function zPutText(text) {
   const ed = document.querySelector('#richInput'); if (!ed) return -1;
   ed.focus();
   const sel = window.getSelection(); sel.selectAllChildren(ed); document.execCommand('delete');
   const dt = new DataTransfer(); dt.setData('text/plain', text);
   ed.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
-  if (!(ed.innerText || '').trim()) document.execCommand('insertText', false, text);
+  await new Promise(r => setTimeout(r, 200)); // ô nhập Zalo xử lý dán chậm một nhịp
+  if (!(ed.innerText || '').trim()) { document.execCommand('insertText', false, text); await new Promise(r => setTimeout(r, 100)); }
   const r = document.createRange(); r.selectNodeContents(ed); r.collapse(false); sel.removeAllRanges(); sel.addRange(r);
   return (ed.innerText || '').trim().length;
 }
+// Đặt con trỏ vào ô nhập (rỗng) để app gõ chữ thật (webContents.insertText) khi dán không ăn.
+function zFocusInput() { const ed = document.querySelector('#richInput'); if (!ed) return false; ed.focus(); const sel = window.getSelection(); sel.selectAllChildren(ed); document.execCommand('delete');
+  const r = document.createRange(); r.selectNodeContents(ed); r.collapse(false); sel.removeAllRanges(); sel.addRange(r); return document.activeElement === ed; }
+function zInputLen() { return (document.querySelector('#richInput')?.innerText || '').trim().length; }
 // Thả ảnh vào khung tin ("Gửi nhanh" của Zalo Web: thả là gửi luôn).
 async function zDropImage(b64, type, name) {
   const bin = atob(b64), bytes = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
@@ -176,7 +181,7 @@ function zWatch(tag) {
   return true;
 }
 
-function createZaloAuto({ wc, sendKey, onList = () => {}, onThread = () => {}, log = () => {} }) {
+function createZaloAuto({ wc, sendKey, typeText = null, onList = () => {}, onThread = () => {}, log = () => {} }) {
   // Trạng thái để chẩn đoán (thanh trạng thái + Downloads/GetHelps-debug/zalo.json).
   const stat = { state: 'closed', url: '', rows: 0, kept: 0, err: '', listAt: 0, events: 0, watch: false };
   // Hàm chạy trong trang kèm hàm phụ (zReacts dùng trong zRead).
@@ -218,7 +223,10 @@ function createZaloAuto({ wc, sendKey, onList = () => {}, onThread = () => {}, l
     let replyWarn = '';
     if (text && /^z\d+$/.test(args.replyTo || '')) { if (!(await run(zReplyTo, Number(args.replyTo.slice(1))).catch(() => false))) replyWarn = 'Không bấm được "Trả lời" trên Zalo: tin đã gửi dạng thường.'; }
     if (text) {
-      if ((await run(zPutText, text).catch(() => -1)) <= 0) return { error: 'Không nhập được chữ vào ô chat Zalo.' };
+      let len = await run(zPutText, text).catch(() => -1);
+      // Dán không ăn (trang Zalo ẩn không có tiêu điểm…): gõ chữ thật vào ô nhập như bàn phím.
+      if (len <= 0 && typeText && await run(zFocusInput).catch(() => false)) { await typeText(text); await sleep(250); len = await run(zInputLen).catch(() => 0); }
+      if (len <= 0) return { error: 'Không nhập được chữ vào ô chat Zalo (mở cột Zalo, bấm vào ô chat một lần rồi thử lại).' };
       await sleep(120); sendKey('Enter');
       let ok = false; for (let i = 0; i < 40 && !ok; i++) { await sleep(150); const c = await run(zMineCount).catch(() => before); ok = c.n > before.n;
         if (!ok && i === 14) await run(zClickSend).catch(() => {}); } // Enter không ăn: bấm nút Gửi
@@ -262,4 +270,4 @@ function createZaloAuto({ wc, sendKey, onList = () => {}, onThread = () => {}, l
   return { list, read, send, react, onConsole, ready, status: () => ({ ...stat }) };
 }
 
-module.exports = { createZaloAuto, _page: { zReacts, zReact, zReplyTo, zState, zList, zListAll, zCurrent, zOpen, zRead, zPutText, zDropImage, zClickSend, zMineCount, zWatch } };
+module.exports = { createZaloAuto, _page: { zFocusInput, zInputLen, zReacts, zReact, zReplyTo, zState, zList, zListAll, zCurrent, zOpen, zRead, zPutText, zDropImage, zClickSend, zMineCount, zWatch } };
