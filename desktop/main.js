@@ -346,18 +346,21 @@ app.whenReady().then(async () => {
     if (!fromPage(e)) return { error: 'denied' };
     let o; try { o = new URL(origin); } catch { return { error: 'bad origin' }; }
     if (o.protocol !== 'https:') return { error: 'https' };
-    for (const p of ['/', '/home', '/dashboard']) {
-      try { const r = await svcSes.fetch(o.origin + p, { headers: { accept: 'text/html' } }); if (!r.ok) continue;
-        const text = (await r.text()).replace(/<script[\s\S]*?<\/script>/gi, ' ').replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ');
-        // Trang có thể có nhiều chỗ "Số dư" (khung mẫu = 0 do JS điền sau): ưu tiên chỗ ngay sau "Username", không thì số lớn nhất.
-        const all = [...text.matchAll(/Số dư\s*:?\s*([\d.,]+)/gi)].map(m => ({ raw: m[1], ctx: text.slice(Math.max(0, m.index - 60), m.index + 40).trim(), user: /Username|Tài khoản/i.test(text.slice(Math.max(0, m.index - 80), m.index)) }));
-        if (all.length) { const n = v => Number(String(v).replace(/[.,](?=\d{3}\b)/g, '').replace(',', '.')) || 0;
-          const pick = all.find(a => a.user && n(a.raw) > 0) || [...all].sort((a, b) => n(b.raw) - n(a.raw))[0];
-          if (n(pick.raw) > 0) return { raw: pick.raw, all: all.slice(0, 5), path: p };
-          if (!all.some(a => n(a.raw) > 0)) return { error: 'web-zero', all: all.slice(0, 5), path: p }; }
-        if (/đăng nhập|login/i.test(text) && !/đăng xuất|logout/i.test(text)) return { error: 'login' }; } catch {}
-    }
-    return { error: 'not-found' };
+    // Số dư do JavaScript của web điền sau khi tải (HTML gốc ghi "Số dư: 0") → đọc trên trang ĐÃ CHẠY: cột Dịch vụ nếu đang mở web đó,
+    // không thì mở ẩn trang chủ bằng phiên cột Dịch vụ, chờ trang điền số rồi đọc.
+    const READ = `(() => { const t = (document.body?.innerText || '').replace(/\\s+/g, ' ');
+      const all = [...t.matchAll(/Số dư\\s*:?\\s*([\\d.,]+)/gi)].map(m => ({ raw: m[1], ctx: t.slice(Math.max(0, m.index - 60), m.index + 40) }));
+      return { all, login: /đăng nhập|login/i.test(t) && !/đăng xuất|logout/i.test(t) }; })()`;
+    const n = v => Number(String(v).replace(/[.,](?=\d{3}\b)/g, '').replace(',', '.')) || 0;
+    const pick = r => { const ok = (r?.all || []).filter(a => n(a.raw) > 0); return ok.length ? { raw: ok.sort((a, b) => n(b.raw) - n(a.raw))[0].raw, all: r.all.slice(0, 5) } : null; };
+    const read = async wc => { for (let i = 0; i < 16; i++) { const r = await wc.executeJavaScript(READ).catch(() => null); const p = pick(r); if (p) return p; if (r?.login) return { error: 'login', all: r.all }; await new Promise(x => setTimeout(x, 500)); }
+      return { error: 'web-zero', all: (await wc.executeJavaScript(READ).catch(() => null))?.all?.slice(0, 5) }; };
+    try { if (svcView.webContents.getURL().startsWith(o.origin) && !svcView.webContents.isLoading()) { const r = await read(svcView.webContents); if (r.raw) return { ...r, from: 'cot-dich-vu' }; } } catch {}
+    const w = new BrowserWindow({ show: false, width: 1280, height: 900, webPreferences: { partition: 'persist:svc', offscreen: true, sandbox: true, contextIsolation: true } });
+    try { w.webContents.setAudioMuted(true); w.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+      await Promise.race([w.loadURL(o.origin + '/'), new Promise(x => setTimeout(x, 20e3))]).catch(() => {});
+      return { ...(await read(w.webContents)), from: 'an' };
+    } catch (err) { return { error: err.message }; } finally { if (!w.isDestroyed()) w.destroy(); }
   });
   const openMetaInbox = url => {
     if (!/^https:\/\/business\.facebook\.com\/latest\/inbox/.test(url)) return;

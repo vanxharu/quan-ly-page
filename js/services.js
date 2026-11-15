@@ -241,6 +241,7 @@
   // Số tiền có thể ghi kiểu Việt "2.450.000" / "12.448" (dấu chấm ngăn nghìn), kiểu Anh "2,450,000.50" hoặc số thường "2450000.0000".
   // Số dư lấy từ API theo tài liệu Baostar: action=balance → { "balance": "343423", "currency": "VND" }.
   // Chỉ khi API ghi rõ currency "USD" mới đổi theo tỉ giá (mặc định 27.000đ/USD, sửa trong Cài đặt dịch vụ). API lỗi mới đọc số dư trên trang web.
+  let webBal = null;
   async function vndBalance() {
     const s = await settings(), rate = Number(s.usdRate) || 27000;
     try {
@@ -251,7 +252,10 @@
       if (Number.isFinite(v)) {
         if (cur === 'USD') {
           // API chỉ có 2 số lẻ USD (1.87 ≈ 50.490đ, lệch tới ±135đ) → lấy đúng số VND trên web nếu đọc được, không thì hiện "≈".
-          const w = window.metaDesktop?.svcWebBalance && s.home ? await window.metaDesktop.svcWebBalance({ origin: s.home }).catch(() => null) : null, wv = w?.raw ? money0(w.raw) : NaN;
+          // Số dư web đọc từ trang đã chạy (mở ẩn vài giây) → nhớ 2 phút; số dư USD của API đổi thì đọc lại ngay.
+          const fresh = webBal && webBal.usd === raw && Date.now() - webBal.at < 120e3;
+          const w = fresh ? webBal.w : window.metaDesktop?.svcWebBalance && s.home ? await window.metaDesktop.svcWebBalance({ origin: s.home }).catch(() => null) : null, wv = w?.raw ? money0(w.raw) : NaN;
+          if (w?.raw) webBal = { w, usd: raw, at: Date.now() };
           if (Number.isFinite(wv) && wv > 0) return { v: wv, src: 'web', note: `Số dư trên web: ${wv.toLocaleString('vi-VN')}đ · API: ${raw} USD × ${rate.toLocaleString('vi-VN')}đ ≈ ${Math.round(v * rate).toLocaleString('vi-VN')}đ` };
           return { v: Math.round(v * rate), approx: true, src: 'api', note: `API: ${raw} USD × ${rate.toLocaleString('vi-VN')}đ (gần đúng; đăng nhập web ở cột Dịch vụ để có số chính xác)` };
         }
