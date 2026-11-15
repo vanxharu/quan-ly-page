@@ -374,8 +374,19 @@ app.whenReady().then(async () => {
     const w = new BrowserWindow({ show: false, width: 430, height: 932, webPreferences: { partition: fbLike ? META : 'persist:snap', offscreen: true, sandbox: true, contextIsolation: true, backgroundThrottling: false } });
     try {
       w.webContents.setAudioMuted(true); w.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
-      w.webContents.setUserAgent('Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1');
-      await Promise.race([w.loadURL(u.href), new Promise(r => setTimeout(r, 20e3))]).catch(() => {});
+      const MOBILE = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1';
+      const load = async href => { await Promise.race([w.loadURL(href), new Promise(r => setTimeout(r, 20e3))]).catch(() => {}); };
+      const isFeed = href => { try { const x = new URL(href); return /facebook\.com$/i.test(x.hostname) && (/^\/(home\.php)?$/.test(x.pathname) || /^\/(login|checkpoint)/.test(x.pathname)); } catch { return false; } };
+      let target = u.href;
+      if (/facebook\.com|fb\.watch|fb\.me/i.test(u.hostname)) {
+        // Link chia sẻ Facebook (/share/…, fb.me…): mở bằng trình duyệt máy tính để lấy địa chỉ bài thật (bản điện thoại hay đẩy về Bảng tin).
+        if (/^\/share\/|^\/story\.php|fb\.me|fb\.watch/i.test(u.pathname + u.hostname)) { await load(u.href); await new Promise(r => setTimeout(r, 1500)); const fin = w.webContents.getURL(); if (fin && !isFeed(fin)) target = fin; }
+        try { const t = new URL(target); if (/^(www\.)?facebook\.com$/i.test(t.hostname)) { t.hostname = 'm.facebook.com'; target = t.href; } } catch {}
+      }
+      w.webContents.setUserAgent(MOBILE);
+      await load(target);
+      // Bị đẩy về Bảng tin / trang đăng nhập: không phải bài của khách → không chụp (tránh ảnh sai).
+      if (isFeed(w.webContents.getURL().replace('m.facebook.com', 'www.facebook.com'))) return { error: 'Facebook không mở được bài này (bài riêng tư, đã xoá, hoặc link chia sẻ không còn dùng được)' };
       await new Promise(r => setTimeout(r, 4500)); // chờ trang điền số follow / like
       // Đóng hộp "mở ứng dụng / đăng nhập" che trang (nếu có), cuộn lên đầu.
       await w.webContents.executeJavaScript(`(() => { for (const b of document.querySelectorAll('[aria-label*="Close" i],[aria-label*="Đóng" i],[data-e2e*="close" i]')) try { b.click(); } catch (e) {} scrollTo(0, 0); })()`).catch(() => {});
