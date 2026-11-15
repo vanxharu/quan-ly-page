@@ -453,3 +453,6 @@ td.num.neg{font-weight:700}
 
 .svc-balance{border:1px solid var(--border);background:var(--bg-input);color:var(--text-primary);border-radius:999px;padding:6px 12px;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap}
 .svc-balance:hover{border-color:var(--primary);background:var(--primary-soft)}
+
+.svc-api-alert{display:flex;align-items:center;flex-wrap:wrap;gap:6px;padding:10px 14px;margin:0 0 12px;border-radius:12px;background:#fee2e2;color:#991b1b;border:1px solid #fca5a5;font-size:12px}
+.svc-api-alert strong{font-weight:800}

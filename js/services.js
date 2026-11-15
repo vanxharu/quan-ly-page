@@ -29,7 +29,21 @@
   const STATUS_VI = { pending: 'Chờ chạy', 'in progress': 'Đang chạy', processing: 'Đang xử lý', completed: 'Hoàn thành', partial: 'Hoàn thành một phần', canceled: 'Đã huỷ', cancelled: 'Đã huỷ', refunded: 'Đã hoàn tiền' };
   const statusVi = s => STATUS_VI[String(s || '').toLowerCase()] || s || 'Chờ chạy';
 
+  // API key sai / hết hạn: báo rõ (dải cảnh báo ở tab Dịch vụ + thông báo máy tính 1 lần), tự tắt khi gọi API lại thành công.
+  const KEY_BAD = /key|api ?key|unauthori[sz]ed|forbidden|invalid|không hợp lệ|hết hạn|expired|token|xác thực|authentication|401|403|không tồn tại|incorrect/i;
+  let apiBad = '';
+  function setApiBad(msg) {
+    const was = apiBad; apiBad = msg || '';
+    const box = $('svApiAlert');
+    if (box) { box.hidden = !apiBad; box.replaceChildren(...(apiBad ? [h('strong', { textContent: '⚠ API key Baostar sai hoặc đã hết hạn' }), h('span', { textContent: ' · ' + apiBad + ' · ' }),
+      h('button', { type: 'button', className: 'btn btn-sm btn-primary', textContent: 'Dán API key mới', onclick: () => document.querySelector('#svSettings input[type=password]')?.scrollIntoView({ block: 'center' }) || document.querySelector('#svSettings input[type=password]')?.focus() })] : [])); }
+    if (apiBad && !was) { toast('⚠ API key Baostar sai hoặc đã hết hạn: ' + apiBad, 12000); App.notify?.('⚠ API key Baostar có vấn đề', apiBad); }
+  }
   async function call(action, params = {}) {
+    try { const r = await callRaw(action, params); if (apiBad) setApiBad(''); return r; }
+    catch (e) { if (KEY_BAD.test(e.message) && !/CORS|Chưa nhập API key/.test(e.message)) setApiBad(e.message.replace(/^Web dịch vụ: /, '')); throw e; }
+  }
+  async function callRaw(action, params = {}) {
     const s = await settings();
     if (!s.apiKey) throw Error('Chưa nhập API key: tab Dịch vụ › Cài đặt.');
     const body = { key: s.apiKey, action, ...params };
@@ -232,7 +246,12 @@
     try {
       const b = await call('balance'), raw = b?.balance ?? b?.data?.balance ?? b?.money ?? b?.amount ?? b, cur = String(b?.currency || '').toUpperCase(), v = money0(raw);
       if (Number.isFinite(v)) {
-        if (cur === 'USD') return { v: Math.round(v * rate), src: 'api', note: `API: ${raw} USD × ${rate.toLocaleString('vi-VN')}đ` };
+        if (cur === 'USD') {
+          // API chỉ có 2 số lẻ USD (1.87 ≈ 50.490đ, lệch tới ±135đ) → lấy đúng số VND trên web nếu đọc được, không thì hiện "≈".
+          const w = window.metaDesktop?.svcWebBalance && s.home ? await window.metaDesktop.svcWebBalance({ origin: s.home }).catch(() => null) : null, wv = w?.raw ? money0(w.raw) : NaN;
+          if (Number.isFinite(wv)) return { v: wv, src: 'web', note: `Số dư trên web: ${wv.toLocaleString('vi-VN')}đ · API: ${raw} USD × ${rate.toLocaleString('vi-VN')}đ ≈ ${Math.round(v * rate).toLocaleString('vi-VN')}đ` };
+          return { v: Math.round(v * rate), approx: true, src: 'api', note: `API: ${raw} USD × ${rate.toLocaleString('vi-VN')}đ (gần đúng; đăng nhập web ở cột Dịch vụ để có số chính xác)` };
+        }
         return { v, src: 'api', note: `API trả: ${JSON.stringify(b).slice(0, 120)}` };
       }
     } catch (e) { if (!window.metaDesktop?.svcWebBalance) throw e; }
@@ -1246,6 +1265,7 @@
           h('button', { className: 'btn btn-ghost', textContent: '＋ Thêm đơn theo mã', title: 'Đơn đã tạo thẳng trên web dịch vụ: nhập mã đơn để app theo dõi giá gốc, trạng thái', onclick: () => importById() }),
           h('button', { className: 'btn btn-ghost', textContent: 'Mở web dịch vụ ↗', onclick: () => openWeb() }),
           h('button', { className: 'btn btn-primary', textContent: '＋ Báo giá', onclick: () => createDialog() })),
+        h('div', { id: 'svApiAlert', className: 'svc-api-alert', hidden: true }),
         h('div', { id: 'svPriceAlerts' }),
         h('div', { className: 'kpis', id: 'svKpis' }),
         h('div', { className: 'card', id: 'svVip', hidden: true }),
@@ -1295,8 +1315,8 @@
             (o.refillable || refillOk.has(String(o.serviceId))) && o.status !== 'cancelled' ? h('button', { type: 'button', className: 'btn btn-ghost btn-sm', title: 'Yêu cầu Baostar bảo hành (bù số lượng tụt)', textContent: '🛡', onclick: () => requestRefill(o) }) : null,
             h('button', { type: 'button', className: 'btn btn-ghost btn-sm', title: o.progressSentAt ? 'Đã báo tiến độ lúc ' + fmtTime(o.progressSentAt) : 'Báo tiến độ cho khách', textContent: '📊', onclick: async () => { await refreshStatus([o]).catch(() => {}); const f = (o.payCode && o.groupSize > 1 && await groupOf(o.payCode)) || (await DB.get(ORDERS, [])).find(y => y.id === o.id) || o; invoiceDialog(f, 'progress'); } })))); }))) : h('div', { className: 'empty', textContent: 'Chưa có đơn dịch vụ trong khoảng này. Tạo đơn từ Hộp thư (nút "＋ Tạo đơn dịch vụ") hoặc nút ＋ Tạo đơn.' }));
       drawSettings(s, this);
-      if (s.apiKey) vndBalance().then(r => { const b = $('svBalance'); b.textContent = Number.isFinite(r.v) ? `💰 Số dư Baostar: ${r.v.toLocaleString('vi-VN')}đ` : '⚠ ' + r.why; b.dataset.note = r.note || r.why || ''; })
-        .catch(e => { const b = $('svBalance'); b.textContent = '⚠ Số dư: ' + e.message; b.dataset.note = e.message; });
+      if (s.apiKey) vndBalance().then(r => { const b = $('svBalance'); b.textContent = Number.isFinite(r.v) ? `💰 Số dư Baostar: ${r.approx ? '≈ ' : ''}${r.v.toLocaleString('vi-VN')}đ` : '⚠ ' + r.why; b.dataset.note = r.note || r.why || ''; })
+        .catch(e => { const b = $('svBalance'); b.textContent = apiBad ? '⚠ API key lỗi' : '⚠ Số dư: ' + e.message; b.dataset.note = e.message; });
       else $('svBalance').textContent = '💰 Chưa nhập API key';
     }
   });
