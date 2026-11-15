@@ -791,7 +791,7 @@
     let i = 0; img.onerror = () => { if (++i < exts.length) img.src = `img/platforms/${p.file}.${exts[i]}`; else letter(); };
     box.append(img); return box;
   }
-  // Ảnh khách: logo nền tảng ở góc phải dưới, ảnh Page nhỏ ở góc trái dưới.
+  // Ảnh khách: logo nền tảng ở góc trái dưới, ảnh Page nhỏ ở góc phải dưới.
   const custAvatar = (c, size = 36) => {
     const pg = App.avatar(c.page.name, App.pageAvatarUrl(c.page), Math.round(size * .38));
     pg.classList.add('pg'); pg.title = c.page.name;

@@ -412,8 +412,7 @@ td.num.neg{font-weight:700}
 .plat{display:inline-flex;align-items:center;justify-content:center;flex:none;border-radius:24%;overflow:hidden}
 .plat img{width:100%;height:100%;object-fit:contain;display:block}
 .plat-ch{width:100%;height:100%;border-radius:50%;color:#fff;font-weight:700;display:flex;align-items:center;justify-content:center;line-height:1}
-.avwrap .pl{position:absolute;right:-3px;bottom:-3px;border:2px solid var(--bg-card);border-radius:28%;background:var(--bg-card);box-sizing:content-box}
-.avwrap .pg{right:auto;left:-3px}
+.avwrap .pl{position:absolute;left:-3px;bottom:-3px;border:2px solid var(--bg-card);border-radius:28%;background:var(--bg-card);box-sizing:content-box}
 [data-panel=inbox] .ib-plats{display:inline-flex;gap:3px;align-items:center}
 [data-panel=inbox] .ib-plat{height:26px;min-width:26px;padding:0 6px;border-radius:8px;border:1px solid var(--border);background:transparent;color:var(--text-secondary);font-size:11px;display:inline-flex;align-items:center;justify-content:center;cursor:pointer}
 [data-panel=inbox] .ib-plat[aria-pressed=true]{border-color:var(--primary);background:var(--primary-soft);color:var(--text-primary)}
