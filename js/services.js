@@ -841,6 +841,13 @@
   // Ghép "ảnh thực tế" (app chụp ngầm link của khách: trang TikTok, bài Facebook…) vào dưới ảnh phiếu: báo giá, tiến độ, hoàn thành.
   // Số thật trên trang khách (vd TikTok 56 follower) theo loại dịch vụ: follow → followers, like/tim → likes, view → views, bình luận → comments.
   const metricOf = name => /follow|theo dõi/i.test(name) ? 'followers' : /view|lượt xem|mắt/i.test(name) ? 'views' : /bình luận|comment|cmt/i.test(name) ? 'comments' : /share|chia sẻ/i.test(name) ? 'shares' : /like|tim|thích|cảm xúc/i.test(name) ? 'likes' : '';
+  // Đơn "đã chỉnh theo số thật": còn lại = tổng − (số thật − số ban đầu) (không thấp hơn số Baostar đã báo).
+  const LABEL = { followers: 'follower', following: 'following', likes: 'lượt thích', views: 'lượt xem', comments: 'bình luận', shares: 'chia sẻ' };
+  function withReal(o, real) {
+    if (!real || multi(o) || o.startCount == null) return null;
+    const q = qtyOf(o), start = num(o.startCount), d = doneOf(o) ?? 0, dd = Math.min(q, Math.max(d, real.v - start));
+    return { ...o, remains: q - dd, _real: real };
+  }
   async function invoiceImage(o, inv, kind, { snap = true } = {}) {
     const link = o.link || o.lines?.find(l => l.link)?.link || '';
     const want = snap && link && ['quote', 'progress', 'done'].includes(kind) && window.metaDesktop?.svcSnap;
@@ -848,6 +855,7 @@
     // Chụp được số thật → phiếu tiến độ dùng số thật (Baostar báo tiến độ thường chậm hơn trang thật).
     const key = metricOf(o.displayName || o.serviceName || ''), real = sn?.metrics && key && Number.isFinite(sn.metrics[key]) ? { key, v: sn.metrics[key] } : null;
     const res = await invoiceImage0(real && !multi(o) ? { ...o, _real: real } : o, inv, kind);
+    if (real) res.real = real;
     if (!want) return res;
     if (!sn?.dataUrl) return { ...res, snapError: sn?.error || 'không chụp được' };
     const [card, shot] = await Promise.all([loadImg(res.dataUrl), loadImg(sn.dataUrl)]); if (!card || !shot) return res;
@@ -952,14 +960,18 @@
   async function invoiceDialog(o, kind = 'new') {
     const inv = (await settings()).invoice || {};
     const dlg = h('dialog', { className: 'svc-dialog svc-invoice', onclose: () => dlg.remove() });
-    const text = h('textarea', { rows: 11, value: invoiceText(o, inv, kind) });
+    const text = h('textarea', { rows: 11, value: invoiceText(o, inv, kind) }); text.dataset.orig = text.value;
     const img = h('img', { alt: 'Ảnh hoá đơn', className: 'svc-inv-img' }), hint = h('div', { className: 'hint' }), withImg = h('input', { type: 'checkbox', checked: true });
     let image = '';
     // Vẽ phiếu ngay; rồi chụp "ảnh thực tế" link khách (vài giây) và ghép vào nếu được.
     const snapNow = async () => { if (!window.metaDesktop?.svcSnap || !['quote', 'progress', 'done'].includes(kind) || !(o.link || o.lines?.some(l => l.link))) return;
       const keep = hint.textContent; hint.textContent = (keep ? keep + ' ' : '') + '📸 Đang chụp ảnh thực tế của link khách…';
       const r = await invoiceImage(o, inv, kind).catch(() => null);
-      if (r?.snapped) { image = r.dataUrl; img.src = image; hint.textContent = keep + (keep ? ' ' : '') + '📸 Đã ghép ảnh thực tế.'; }
+      if (r?.snapped) { image = r.dataUrl; img.src = image; hint.textContent = keep + (keep ? ' ' : '') + '📸 Đã ghép ảnh thực tế.';
+        // Tin chữ chưa sửa tay → viết lại theo số thật trên trang (vd "đã lên 17/500", "Số thật trên trang: 63 follower").
+        const o2 = withReal(o, r.real);
+        if (o2 && text.value === text.dataset.orig) { const line = `• Số thật trên trang lúc ${new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}: ${r.real.v.toLocaleString('vi-VN')} ${LABEL[r.real.key] || ''}`, t0 = invoiceText(o2, inv, kind), cut = t0.indexOf('\n\n');
+          text.value = cut > 0 ? t0.slice(0, cut) + '\n' + line + t0.slice(cut) : t0 + '\n' + line; text.dataset.orig = text.value; hint.textContent += ' Tin chữ đã cập nhật theo số thật.'; } }
       else hint.textContent = keep + (keep ? ' ' : '') + `📸 Không chụp được ảnh thực tế (${r?.snapError || 'lỗi'}), gửi ảnh phiếu thôi.`; };
     const render = async () => { hint.textContent = 'Đang vẽ ảnh hoá đơn…'; const r = await invoiceImage(o, inv, kind, { snap: false }); image = r.dataUrl; img.src = image; setTimeout(() => snapNow(), 0);
       hint.textContent = [r.qrMissing ? 'Không tải được mã QR (kiểm tra mạng hoặc số tài khoản); đơn vẫn có thông tin chuyển khoản.' : '', !inv.acc && hasPayBlock(kind) ? 'Chưa có thông tin thanh toán: thêm ở Dịch vụ › Cài đặt › Hoá đơn gửi khách.' : ''].filter(Boolean).join(' '); };
@@ -1307,8 +1319,15 @@
     if (!o) return null;
     const q = qtyOf(o), d = doneOf(o), name = shortSvc(o), link = o.link ? `\n• Link: ${o.link}` : '';
     const prog = () => d != null ? `đã lên ${d.toLocaleString('vi-VN')}/${q.toLocaleString('vi-VN')} (${Math.min(100, Math.round(d / q * 100))}%)` : 'đang chạy';
-    const progImg = async () => { try { const inv = (await settings()).invoice || {}; return (await invoiceImage(group.length > 1 && o.payCode ? await groupOf(o.payCode) : o, inv, o.status === 'done' ? 'done' : 'progress')).dataUrl; } catch { return ''; } };
-    if (['start', 'half', 'ask'].includes(n.kind)) { const r = await nudgeText0(n, o, q, d, name, link, prog); return r ? { ...r, hasImage: true, image: withImage ? await progImg() : '' } : null; }
+    const progImg = async () => { try { const inv = (await settings()).invoice || {}; return await invoiceImage(group.length > 1 && o.payCode ? await groupOf(o.payCode) : o, inv, o.status === 'done' ? 'done' : 'progress'); } catch { return null; } };
+    if (['start', 'half', 'ask'].includes(n.kind)) {
+      if (!withImage) { const r = nudgeText0(n, o, q, d, name, link, prog); return r ? { ...r, hasImage: true, image: '' } : null; }
+      // Lúc gửi: chụp trang khách → viết tin theo số thật (Baostar báo chậm hơn).
+      const im = await progImg(), o2 = withReal(o, im?.real) || o, d2 = doneOf(o2);
+      const prog2 = () => d2 != null ? `đã lên ${d2.toLocaleString('vi-VN')}/${q.toLocaleString('vi-VN')} (${Math.min(100, Math.round(d2 / q * 100))}%)` : 'đang chạy';
+      const r = nudgeText0(n, o2, q, d2, name, link, prog2); if (!r) return null;
+      return { ...r, text: r.text + (im?.real ? `\n• Hiện tại trên trang: ${im.real.v.toLocaleString('vi-VN')} ${LABEL[im.real.key] || ''}` : ''), hasImage: true, image: im?.dataUrl || '' };
+    }
     return nudgeText1(n, o, group, q, name, link, withImage);
   }
   function nudgeText0(n, o, q, d, name, link, prog) {
