@@ -455,24 +455,17 @@ app.whenReady().then(async () => {
   worker.webContents.setAudioMuted(true);
   worker.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   ipcMain.handle('meta-lookup', (e, args) => fromPage(e) ? auto.lookupProfile(args || {}) : { error: 'denied' });
-  let zaloInput = null;
-  const zaloDbg = async () => { const d = ZW().debugger; if (!d.isAttached()) d.attach('1.3');
-    await d.sendCommand('Emulation.setFocusEmulationEnabled', { enabled: true }).catch(() => {}); return d; };
-  const zaloKey = async (d, key, modifiers = 0) => { const k = key === 'Enter' ? { key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13 } : { key, code: key };
-    await d.sendCommand('Input.dispatchKeyEvent', { type: 'rawKeyDown', modifiers, ...k });
-    if (key === 'Enter' && !modifiers) await d.sendCommand('Input.dispatchKeyEvent', { type: 'char', modifiers, text: '\r', unmodifiedText: '\r', ...k });
-    await d.sendCommand('Input.dispatchKeyEvent', { type: 'keyUp', modifiers, ...k }); };
+  // Lệnh trình duyệt (CDP) cho khung ngầm Zalo: bấm chuột / phím / chèn chữ thật như khung Business Suite.
+  const zaloCdp = async (method, params) => { const d = ZW().debugger; if (!d.isAttached()) d.attach('1.3'); return d.sendCommand(method, params || {}); };
+  // Nhật ký gửi tin Zalo (10 lần gần nhất) → Downloads/GetHelps-debug/zalo-gui.json: từng cách nhập / gửi đã thử và kết quả (không ghi nội dung tin).
+  const zaloSendLog = [];
   // Zalo cá nhân đi chung đường với Business Suite: Hộp thư gọi đọc/gửi với pageId "zalo".
-  const zalo = createZaloAuto({ wc: () => ZW(),
-    // Nhập chữ / bấm phím THẬT vào Zalo qua giao thức trình duyệt (CDP): Zalo nằm ẩn dưới trang chính nên không có tiêu điểm,
-    // giả lập "đang được chọn" (Emulation.setFocusEmulationEnabled) rồi Input.insertText / Input.dispatchKeyEvent — không cướp tiêu điểm của bạn.
-    // Trong lúc gửi: mở cột Zalo (để trang Zalo được chọn thật, nhận chữ / Enter), gửi xong trả lại cột đang mở trước đó.
-    // Khung ngầm dựng hình ngoài màn hình: gõ phím qua CDP như khung Business Suite, không cướp tiêu điểm, không mở cột.
+  const zalo = createZaloAuto({ wc: () => ZW(), cdp: zaloCdp,
+    // Khung ngầm dựng hình ngoài màn hình: không cướp tiêu điểm, không mở cột.
     beginInput: async () => { if (zaloColOpen) throw Error('Đang mở cột Zalo: gửi tin trong cột Zalo, hoặc đóng cột (Ctrl+Shift+Z) để app gửi ngầm.'); },
     endInput: () => {},
-    typeText: async text => { const d = await zaloDbg(); const parts = String(text).split('\n');
-      for (let i = 0; i < parts.length; i++) { if (i) await zaloKey(d, 'Enter', 8); if (parts[i]) await d.sendCommand('Input.insertText', { text: parts[i] }); } },
-    sendKey: async key => { try { await zaloKey(await zaloDbg(), key, 0); } catch { const w = ZW(); w.sendInputEvent({ type: 'keyDown', keyCode: key }); if (key === 'Enter') w.sendInputEvent({ type: 'char', keyCode: '\r' }); w.sendInputEvent({ type: 'keyUp', keyCode: key }); } },
+    log: entry => { try { zaloSendLog.unshift({ app: app.getVersion(), ...entry }); zaloSendLog.splice(10); const dir = path.join(app.getPath('downloads'), 'GetHelps-debug'); require('fs').mkdirSync(dir, { recursive: true });
+      require('fs').writeFileSync(path.join(dir, 'zalo-gui.json'), JSON.stringify(zaloSendLog, null, 1)); } catch {} },
     onList: rows => pageView.webContents.executeJavaScript(`window.App?.inbox?.zaloList?.(${JSON.stringify(rows)})`).catch(() => {}),
     onThread: id => pageView.webContents.executeJavaScript(`window.App?.inbox?.bsChanged?.(${JSON.stringify('zalo:' + id)}, null)`).catch(() => {}) });
   ZW().on('console-message', (ev, ...a) => zalo.onConsole(ev?.message ?? a[1]));

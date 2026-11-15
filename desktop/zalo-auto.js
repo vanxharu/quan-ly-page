@@ -145,6 +145,100 @@ async function zPutText(text) {
   const r = document.createRange(); r.selectNodeContents(ed); r.collapse(false); sel.removeAllRanges(); sel.addRange(r);
   return (ed.innerText || '').trim().length;
 }
+// ── Nhập chữ vào ô chat khi Zalo chạy ngầm ──
+// Trang ngầm không có tiêu điểm: Chrome không bắn sự kiện focus, document.hasFocus() = false → ô nhập của Zalo bỏ qua chữ.
+// zPrepInput(true): giả lập "đang được chọn" ở mức trang (hasFocus, visibilityState, sự kiện focus) trong lúc gửi; (false): trả về trạng thái nghỉ
+// (ép hasFocus = false để Zalo không tự báo "đã xem" các tin tới sau). Trả toạ độ ô nhập để app bấm chuột thật.
+function zPrepInput(on) {
+  const D = Document.prototype;
+  if (!window.__gaFocusPatched) { window.__gaFocusPatched = 1;
+    const orig = D.hasFocus; window.__gaHasFocus = () => orig.call(document);
+    D.hasFocus = function () { return window.__gaFocus === true ? true : window.__gaFocus === false ? false : orig.call(this); };
+    for (const [k, v] of [['visibilityState', 'visible'], ['hidden', false]]) { const d = Object.getOwnPropertyDescriptor(D, k);
+      if (d && d.get) Object.defineProperty(document, k, { configurable: true, get() { return window.__gaFocus === true ? v : d.get.call(document); } }); }
+  }
+  const ed = document.querySelector('#richInput');
+  if (!on) { window.__gaFocus = false;
+    try { if (ed) { ed.dispatchEvent(new FocusEvent('blur')); ed.dispatchEvent(new FocusEvent('focusout', { bubbles: true })); } window.dispatchEvent(new Event('blur')); } catch (e) {}
+    return true; }
+  window.__gaFocus = true;
+  if (!ed) return null;
+  try { window.dispatchEvent(new Event('focus')); document.dispatchEvent(new Event('visibilitychange')); } catch (e) {}
+  ed.scrollIntoView({ block: 'nearest' });
+  const r = ed.getBoundingClientRect();
+  return { x: Math.round(r.left + Math.min(r.width / 2, 80)), y: Math.round(r.top + r.height / 2) };
+}
+// Đặt con trỏ vào CUỐI DÒNG CUỐI của ô nhập (bên trong <div id="input_line_N">, không phải ngay trong #richInput:
+// chữ nằm ngoài dòng sẽ bị Zalo xoá khi nó dựng lại ô nhập) + báo Zalo ô nhập vừa được chọn.
+function zCaret() {
+  const ed = document.querySelector('#richInput'); if (!ed) return 'no-ed';
+  ed.focus();
+  try { ed.dispatchEvent(new FocusEvent('focus')); ed.dispatchEvent(new FocusEvent('focusin', { bubbles: true })); } catch (e) {}
+  const lines = ed.querySelectorAll(':scope > div'), line = lines[lines.length - 1] || ed;
+  const sel = getSelection(), r = document.createRange(); r.selectNodeContents(line);
+  if (line.lastChild && line.lastChild.nodeName === 'BR') r.setEndBefore(line.lastChild);
+  r.collapse(false); sel.removeAllRanges(); sel.addRange(r);
+  return line === ed ? 'ed' : (line.id || 'div');
+}
+// Trạng thái ô nhập (để kiểm tra từng cách nhập + ghi chẩn đoán).
+function zEdState() {
+  const ed = document.querySelector('#richInput'); if (!ed) return null;
+  const an = getSelection().anchorNode, host = an ? (an.nodeType === 1 ? an : an.parentElement) : null;
+  const text = ed.innerText || '';
+  return { text, len: text.replace(/\s+/g, '').length, lines: ed.querySelectorAll(':scope > div').length, kids: ed.childNodes.length,
+    caret: host ? (host.id || String(host.className || '').slice(0, 24) || host.tagName) : '-', inEd: !!(host && ed.contains(host)),
+    active: (document.activeElement && (document.activeElement.id || document.activeElement.tagName)) || '-',
+    focus: window.__gaHasFocus ? window.__gaHasFocus() : document.hasFocus(), vis: document.visibilityState, cls: ed.className };
+}
+// Cách "dán": sự kiện paste kèm chữ (Zalo tự chia dòng như khi bạn Ctrl+V).
+function zInsPaste(text) {
+  const ed = document.querySelector('#richInput'); if (!ed) return 'no-ed';
+  const an = getSelection().anchorNode, host = an ? (an.nodeType === 1 ? an : an.parentElement) : null, target = host && ed.contains(host) ? host : ed;
+  const dt = new DataTransfer(); dt.setData('text/plain', text);
+  const ev = new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true });
+  target.dispatchEvent(ev); return ev.defaultPrevented ? 'zalo-nhận' : 'mặc-định';
+}
+// Cách "lệnh soạn thảo": chèn chữ tại con trỏ (xuống dòng do trình duyệt tự tách đoạn).
+function zInsExec(text) { return document.execCommand('insertText', false, text) ? 'ok' : 'từ-chối'; }
+// Cách "ghi thẳng": dựng lại các dòng của ô nhập rồi báo Zalo nội dung đã đổi.
+function zInsDom(text) {
+  const ed = document.querySelector('#richInput'); if (!ed) return 'no-ed';
+  ed.replaceChildren(...String(text).split('\n').map((l, i) => { const d = document.createElement('div'); d.id = 'input_line_' + i; if (l) d.textContent = l; else d.append(document.createElement('br')); return d; }));
+  ed.classList.remove('empty');
+  const last = ed.lastElementChild, sel = getSelection(), r = document.createRange(); r.selectNodeContents(last); r.collapse(false); sel.removeAllRanges(); sel.addRange(r);
+  ed.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: text }));
+  return 'ok';
+}
+// Dọn ô nhập về 1 dòng trống (khi phím Ctrl+A / Backspace thật không dọn được).
+function zEdReset() {
+  const ed = document.querySelector('#richInput'); if (!ed) return false;
+  const d = document.createElement('div'); d.id = 'input_line_0'; d.append(document.createElement('br')); ed.replaceChildren(d);
+  ed.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'deleteContentBackward' })); return true;
+}
+// Enter giả (khi phím Enter thật không tới được trang).
+function zEnterJs() {
+  const ed = document.querySelector('#richInput'); if (!ed) return false;
+  for (const t of ['keydown', 'keypress', 'keyup']) ed.dispatchEvent(new KeyboardEvent(t, { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, charCode: t === 'keypress' ? 13 : 0, bubbles: true, cancelable: true, composed: true }));
+  return true;
+}
+// Toạ độ nút Gửi (hiện thay nút 👍 khi ô nhập có chữ).
+function zSendBtn() {
+  const box = document.querySelector('#chat-input-right-layout-id, #chat-input-container-id, #chatInput') || document;
+  const shown = e => { const r = e.getBoundingClientRect(); return r.width > 4 && r.height > 4; };
+  let b = [...box.querySelectorAll('[data-translate-title="STR_SEND"], [data-translate-inner="STR_SEND"], [icon*="Sent" i], [icon*="Send" i], [title="Gửi"], [title="Send"], [data-id*="SendMsg" i], [class*="send-msg" i], [class*="send-btn" i]')].find(shown);
+  if (!b) { const g = [...document.querySelectorAll('#normal-buttons-group-id .z--btn--v2')].filter(shown), last = g[g.length - 1];
+    if (last && !/STR_TOOLTIP_EMOJI|STR_EMOTICON_TT/.test(last.getAttribute('data-translate-title') || '') && g.length) b = last; }
+  if (!b) return null;
+  const r = b.getBoundingClientRect(); b.setAttribute('data-ga-send', '1');
+  return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2), what: (b.getAttribute('icon') || b.getAttribute('title') || b.className || '').slice(0, 40) };
+}
+// Dán ảnh (file) vào ô nhập: Zalo hiện ảnh chờ gửi, bấm Enter để gửi.
+function zPasteImage(b64, type, name) {
+  const ed = document.querySelector('#richInput'); if (!ed) return false;
+  const bin = atob(b64), bytes = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  const dt = new DataTransfer(); dt.items.add(new File([bytes], name, { type }));
+  const ev = new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }); ed.dispatchEvent(ev); return ev.defaultPrevented;
+}
 // Đặt con trỏ vào ô nhập (rỗng) để app gõ chữ thật (webContents.insertText) khi dán không ăn.
 function zFocusInput() { const ed = document.querySelector('#richInput'); if (!ed) return false; ed.focus(); const sel = window.getSelection(); sel.selectAllChildren(ed); document.execCommand('delete');
   const r = document.createRange(); r.selectNodeContents(ed); r.collapse(false); sel.removeAllRanges(); sel.addRange(r); return document.activeElement === ed; }
@@ -168,7 +262,8 @@ function zClickSend() {
   const b = [...box.querySelectorAll('[icon], [title], [data-id]')].find(e => /send/i.test(e.getAttribute('icon') || '') || /^gửi$|^send$/i.test(e.getAttribute('title') || '') || /SendMsg/i.test(e.getAttribute('data-id') || ''));
   if (!b) return false; for (const t of ['mousedown', 'mouseup', 'click']) b.dispatchEvent(new MouseEvent(t, { bubbles: true, cancelable: true, view: window })); return true;
 }
-function zMineCount() { const all = [...document.querySelectorAll('#messageViewScroll [data-component="bubble-message"].me')]; return { n: all.length, pics: all.filter(e => e.querySelector('img.zimg-el')).length, last: (all.pop()?.innerText || '').replace(/\s+/g, ' ').trim() }; }
+function zMineCount() { const all = [...document.querySelectorAll('#messageViewScroll [data-component="bubble-message"].me')]; const last = all[all.length - 1];
+  return { n: all.length, pics: all.filter(e => e.querySelector('img.zimg-el')).length, lastId: last ? last.id : '', last: ((last && last.innerText) || '').replace(/\s+/g, ' ').trim().slice(0, 60) }; }
 // Báo app khi danh sách / hội thoại đang mở đổi (tin mới tới) qua console → main nghe 'console-message'.
 function zWatch(tag) {
   if (window.__gaZW) return true; window.__gaZW = 1;
@@ -183,7 +278,7 @@ function zWatch(tag) {
   return true;
 }
 
-function createZaloAuto({ wc, sendKey, typeText = null, beginInput = async () => {}, endInput = () => {}, onList = () => {}, onThread = () => {}, log = () => {} }) {
+function createZaloAuto({ wc, cdp = null, beginInput = async () => {}, endInput = () => {}, onList = () => {}, onThread = () => {}, log = () => {} }) {
   // Trạng thái để chẩn đoán (thanh trạng thái + Downloads/GetHelps-debug/zalo.json).
   const stat = { state: 'closed', url: '', rows: 0, kept: 0, err: '', listAt: 0, events: 0, watch: false };
   // Hàm chạy trong trang kèm hàm phụ (zReacts dùng trong zRead).
@@ -223,33 +318,87 @@ function createZaloAuto({ wc, sendKey, typeText = null, beginInput = async () =>
     const e = await open(args.uid); if (e) return e;
     try { return await send0(args); } finally { endInput(); }
   });
+  // ── Gửi tin trong khung ngầm ──
+  // Mỗi bước đều kiểm tra lại ô nhập; cách nào không ăn thì thử cách kế. Toàn bộ các bước ghi vào Downloads/GetHelps-debug/zalo-gui.json.
   const send0 = async args => {
-    const text = String(args.text || '').trim(), image = String(args.image || '');
-    const before = await run(zMineCount).catch(() => ({ n: 0, pics: 0 }));
-    let replyWarn = '';
-    if (text && /^z\d+$/.test(args.replyTo || '')) { if (!(await run(zReplyTo, Number(args.replyTo.slice(1))).catch(() => false))) replyWarn = 'Không bấm được "Trả lời" trên Zalo: tin đã gửi dạng thường.'; }
-    if (text) {
-      let len = await run(zPutText, text).catch(() => -1);
-      // Dán không ăn (trang Zalo ẩn không có tiêu điểm…): gõ chữ thật vào ô nhập như bàn phím.
-      for (const mode of ['paste', 'type']) { if (len > 0 || !typeText) break;
-        if (!(await run(zFocusInput).catch(() => false))) break;
-        await typeText(text, mode); await sleep(300); len = await run(zInputLen).catch(() => 0); stat.lastInput = mode + ':' + len; }
-      if (len <= 0) { const dg = await run(zInputDiag).catch(e => 'lỗi đọc: ' + e.message); stat.lastSendDiag = dg;
-        return { error: 'Không nhập được chữ vào ô chat Zalo · ' + dg }; }
-      await sleep(120); sendKey('Enter');
-      let ok = false; for (let i = 0; i < 40 && !ok; i++) { await sleep(150); const c = await run(zMineCount).catch(() => before); ok = c.n > before.n;
-        if (!ok && i === 14) await run(zClickSend).catch(() => {}); } // Enter không ăn: bấm nút Gửi
-      if (!ok) return { error: 'Đã bấm gửi nhưng chưa thấy tin trong Zalo. Kiểm tra cột Zalo trước khi gửi lại.' };
+    const text = String(args.text || '').trim(), image = String(args.image || ''), t0 = Date.now(), steps = [];
+    const note = (s, x = {}) => steps.push({ s, ms: Date.now() - t0, ...x });
+    const finish = r => { try { log({ at: new Date().toISOString(), chu: text.length, dong: text ? text.split('\n').length : 0, anh: !!image, ketqua: r.error ? 'lỗi: ' + String(r.error).slice(0, 120) : 'ok', steps }); } catch {} return r; };
+    // Lệnh trình duyệt (chuột / phím / chèn chữ thật). Lỗi không dừng việc gửi, chỉ ghi lại để thử cách khác.
+    const C = async (method, params) => { if (!cdp) return 'không có cdp'; try { await cdp(method, params); return ''; } catch (e) { note('cdp-lỗi', { method, err: String(e.message || e).slice(0, 100) }); return e.message || 'lỗi'; } };
+    const click = async p => { for (const type of ['mouseMoved', 'mousePressed', 'mouseReleased']) await C('Input.dispatchMouseEvent', { type, x: p.x, y: p.y, button: 'left', clickCount: 1 }); };
+    const KEYS = { Enter: [13, 'Enter', '\r'], Backspace: [8, 'Backspace', ''], a: [65, 'KeyA', ''] };
+    const key = async (k, modifiers = 0) => { const [vk, code, ch] = KEYS[k], base = { key: k, code, windowsVirtualKeyCode: vk, nativeVirtualKeyCode: vk, modifiers };
+      await C('Input.dispatchKeyEvent', { type: 'rawKeyDown', ...base });
+      if (ch && !modifiers) await C('Input.dispatchKeyEvent', { type: 'char', ...base, text: ch, unmodifiedText: ch });
+      await C('Input.dispatchKeyEvent', { type: 'keyUp', ...base }); };
+    const st = async () => (await run(zEdState).catch(e => ({ err: String(e.message).slice(0, 80) }))) || { err: 'không thấy ô nhập' };
+    const brief = r => r.err ? { err: r.err } : { len: r.len, lines: r.lines, kids: r.kids, caret: r.caret, inEd: r.inEd, active: r.active, focus: r.focus, vis: r.vis };
+    const nn = t => String(t || '').normalize('NFC').replace(/[^\p{L}\p{N}]/gu, '').toLowerCase(), want = nn(text);
+    const good = r => !!r && !r.err && (want ? (nn(r.text) === want || (nn(r.text).length >= want.length * 0.9 && nn(r.text).length <= want.length * 1.15 && nn(r.text).includes(want.slice(0, Math.min(24, want.length))))) : r.len > 0);
+    const mine = () => run(zMineCount).catch(() => null);
+    const before = await mine() || { n: 0, pics: 0, lastId: '' };
+    const sentSince = async (b, ms, pic = false) => { for (let i = 0; i < ms / 150; i++) { await sleep(150); const c = await mine(); if (c && (pic ? c.pics > b.pics || c.n > b.n : c.n > b.n || (c.lastId && c.lastId !== b.lastId))) return true; } return false; };
+    const clearEd = async () => { await key('a', 2); await key('Backspace'); await sleep(120); let r = await st();
+      if (r.len > 0) { await run(zEdReset).catch(() => {}); await sleep(120); r = await st(); } note('dọn', brief(r)); return r; };
+    try {
+      // Chuẩn bị: báo trang "đang được chọn", bấm chuột thật vào ô nhập (như khung Business Suite).
+      const pos = await run(zPrepInput, true).catch(e => { note('prep-lỗi', { err: String(e.message).slice(0, 80) }); return null; });
+      await C('Emulation.setFocusEmulationEnabled', { enabled: true }); await C('Page.setWebLifecycleState', { state: 'active' });
+      let replyWarn = '';
+      if (text && /^z\d+$/.test(args.replyTo || '')) { if (!(await run(zReplyTo, Number(args.replyTo.slice(1))).catch(() => false))) replyWarn = 'Không bấm được "Trả lời" trên Zalo: tin đã gửi dạng thường.'; }
+      if (text) {
+        if (!pos) return finish({ error: 'Không thấy ô chat của Zalo trong khung ngầm (khách này có thể không nhắn được).' });
+        await click(pos); await sleep(150);
+        let r = await st(); note('bấm-ô-nhập', brief(r));
+        if (!r.err && !r.inEd) { note('đặt-con-trỏ', { at: await run(zCaret).catch(() => 'lỗi') }); r = await st(); }
+        if (r.len > 0) r = await clearEd(); // chữ sót từ lần trước
+        const lines = text.split('\n');
+        const ways = [
+          ['gõ-thật', async () => { for (const [i, line] of lines.entries()) { if (i) await key('Enter', 8); if (line) await C('Input.insertText', { text: line }); } }],
+          ['dán', async () => { await run(zCaret); note('dán-kq', { kq: await run(zInsPaste, text) }); }],
+          ['lệnh-soạn-thảo', async () => { await run(zCaret); note('lệnh-kq', { kq: await run(zInsExec, text) }); }],
+          ['ghi-thẳng', async () => { await run(zInsDom, text); }]];
+        let how = '';
+        for (const [name, fn] of ways) {
+          try { await fn(); } catch (e) { note(name + '-lỗi', { err: String(e.message).slice(0, 80) }); }
+          await sleep(280); r = await st(); note(name, { ...brief(r), ok: good(r) });
+          if (good(r)) { how = name; break; }
+          if (r.len > 0) await clearEd();
+        }
+        if (!how) return finish({ error: 'Không nhập được chữ vào ô chat Zalo (đã thử 4 cách). Gửi file Downloads/GetHelps-debug/zalo-gui.json cho người hỗ trợ.' });
+        // Gửi: Enter thật → Enter giả → bấm nút Gửi. Ô nhập đã trống = Zalo đã nhận tin, không bấm thêm (tránh gửi 2 lần).
+        let ok = false;
+        const tries = [['enter-thật', () => key('Enter')], ['enter-giả', () => run(zEnterJs)],
+          ['nút-gửi', async () => { const b = await run(zSendBtn).catch(() => null); note('tìm-nút-gửi', { thấy: !!b, what: b?.what }); if (b) await click(b); else await run(zClickSend).catch(() => {}); }],
+          ['nút-gửi-giả', () => run(zClickSend)]];
+        for (const [name, fn] of tries) {
+          try { await fn(); } catch (e) { note(name + '-lỗi', { err: String(e.message).slice(0, 80) }); }
+          ok = await sentSince(before, 1800); const e2 = await st(); note(name, { ok, len: e2.len });
+          if (ok) break;
+          if (!e2.err && e2.len === 0) { ok = await sentSince(before, 6000); note('chờ-tin-hiện', { ok }); break; }
+        }
+        if (!ok) return finish({ error: 'Đã bấm gửi nhưng chưa thấy tin trong Zalo. Kiểm tra cột Zalo trước khi gửi lại.' });
+      }
+      if (image) {
+        const m = image.match(/^data:(image\/(\w+));base64,(.+)$/); if (!m) return finish({ error: text ? 'Chữ đã gửi, ảnh không đọc được.' : 'Ảnh không đọc được.' });
+        const b0 = await mine() || before, name = 'anh.' + (m[2] === 'jpeg' ? 'jpg' : m[2]);
+        await run(zDropImage, m[3], m[1], name).catch(e => note('thả-ảnh-lỗi', { err: String(e.message).slice(0, 80) }));
+        let ok = await sentSince(b0, 7000, true); note('thả-ảnh', { ok });
+        if (!ok) { // dán ảnh vào ô nhập rồi Enter
+          if (pos) await click(pos); await run(zCaret).catch(() => {});
+          note('dán-ảnh', { nhận: await run(zPasteImage, m[3], m[1], name).catch(() => false) }); await sleep(900);
+          await key('Enter'); ok = await sentSince(b0, 5000, true); note('dán-ảnh-enter-thật', { ok });
+          if (!ok) { await run(zEnterJs).catch(() => {}); ok = await sentSince(b0, 4000, true); note('dán-ảnh-enter-giả', { ok }); }
+          if (!ok) { const b = await run(zSendBtn).catch(() => null); if (b) { await click(b); ok = await sentSince(b0, 5000, true); note('dán-ảnh-nút-gửi', { ok }); } }
+        }
+        if (!ok) return finish({ error: (text ? 'Chữ đã gửi, ảnh chưa gửi được qua Zalo.' : 'Ảnh chưa gửi được qua Zalo.') + ' Gửi file Downloads/GetHelps-debug/zalo-gui.json cho người hỗ trợ.' });
+      }
+      await sleep(300);
+      return finish({ ok: true, ...(replyWarn ? { warn: replyWarn } : {}), ...(await run(zRead, false).catch(() => null) || {}) });
+    } finally {
+      await run(zPrepInput, false).catch(() => {}); await C('Emulation.setFocusEmulationEnabled', { enabled: false });
     }
-    if (image) {
-      const m = image.match(/^data:(image\/(\w+));base64,(.+)$/); if (!m) return { error: text ? 'Chữ đã gửi, ảnh không đọc được.' : 'Ảnh không đọc được.' };
-      const b0 = await run(zMineCount).catch(() => before);
-      await run(zDropImage, m[3], m[1], 'anh.' + (m[2] === 'jpeg' ? 'jpg' : m[2])).catch(() => false);
-      let ok = false; for (let i = 0; i < 100 && !ok; i++) { await sleep(150); const c = await run(zMineCount).catch(() => b0); ok = c.pics > b0.pics || c.n > b0.n; }
-      if (!ok) return { error: text ? 'Chữ đã gửi, ảnh chưa gửi được qua Zalo.' : 'Ảnh chưa gửi được qua Zalo.' };
-    }
-    await sleep(300);
-    return { ok: true, ...(replyWarn ? { warn: replyWarn } : {}), ...(await run(zRead, false).catch(() => null) || {}) };
   };
   const EMO = ['👍', '❤️', '😆', '😮', '😢', '😡'];
   const react = args => queue(async () => {
@@ -279,4 +428,4 @@ function createZaloAuto({ wc, sendKey, typeText = null, beginInput = async () =>
   return { list, read, send, react, onConsole, ready, status: () => ({ ...stat }) };
 }
 
-module.exports = { createZaloAuto, _page: { zInputDiag, zFocusInput, zInputLen, zReacts, zReact, zReplyTo, zState, zList, zListAll, zCurrent, zOpen, zRead, zPutText, zDropImage, zClickSend, zMineCount, zWatch } };
+module.exports = { createZaloAuto, _page: { zPrepInput, zCaret, zEdState, zInsPaste, zInsExec, zInsDom, zEdReset, zEnterJs, zSendBtn, zPasteImage, zInputDiag, zFocusInput, zInputLen, zReacts, zReact, zReplyTo, zState, zList, zListAll, zCurrent, zOpen, zRead, zPutText, zDropImage, zClickSend, zMineCount, zWatch } };

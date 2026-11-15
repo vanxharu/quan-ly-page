@@ -261,7 +261,10 @@
       // Dùng đúng mốc giờ của từng dòng (dòng ghim / hội thoại Meta AI ở đầu có thể cũ hơn các dòng dưới, không được kéo cả danh sách lùi theo).
       // Dòng không có giờ: ngay sau dòng trước. Cùng mốc (vd cùng "Thứ Sáu") thì trừ vài mili giây để giữ thứ tự của Business Suite.
       const t = row.at ? Number(row.at) : bsTime(row.time, base); // dữ liệu gốc có giờ chính xác
-      const at = t != null ? t - i : prev - 1000; prev = at;
+      let at = t != null ? t - i : prev - 1000;
+      // Danh sách đọc từ màn hình (giờ gần đúng): tin cuối không đổi thì giữ mốc giờ cũ → dòng không đổi chỗ qua lại mỗi lần đọc lại.
+      const was = !row.at && S.convs.find(x => x.id === `bs:${p.id}:${row.uid}`); if (was && was.lastAt && was.snippet === row.snippet) at = was.lastAt;
+      prev = at;
       const c = { id: `bs:${p.id}:${row.uid}`, bs: true, uid: row.uid, page: p, other: { id: 'bs' + row.uid, name: row.name },
         snippet: row.snippet, timeText: row.time, updated_time: new Date(at).toISOString(),
         unread_count: unreadOf(`bs:${p.id}:${row.uid}`, row, at),
@@ -909,6 +912,35 @@
     }
     sel.classList.toggle('on', !!sel.value); sel.title = sel.value ? `Đang lọc nhãn: ${sel.value} (chọn "Nhãn" để bỏ lọc)` : 'Lọc theo nhãn';
   }
+  // Vẽ lại danh sách khách không giật: dòng giữ nguyên nội dung thì dùng lại (ảnh không nháy); dòng đổi chỗ trượt mượt tới vị trí mới;
+  // khách vừa có tin mới "nổi lên" đầu danh sách (nhấc nhẹ, đổ bóng, như Business Suite); khách mới hiện dần. Đổi bộ lọc / tìm kiếm thì không chạy hiệu ứng.
+  let listView = null;
+  function flipList(box, els, view) {
+    const old = new Map(); for (const el of box.querySelectorAll(':scope > .item[data-cid]')) old.set(el.dataset.cid, { el, top: el.getBoundingClientRect().top });
+    const calm = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+    const animate = !calm && old.size > 0 && view === listView && !document.hidden && typeof box.animate === 'function'; listView = view;
+    const top = box.scrollTop;
+    const out = els.map(el => { const id = el.dataset?.cid, o = id && old.get(id);
+      if (o && o.el.__sig === el.outerHTML) { o.el.onclick = el.onclick; return o.el; } // y hệt lần trước: dùng lại dòng cũ
+      if (id) el.__sig = el.outerHTML; return el; });
+    box.replaceChildren(...out); box.scrollTop = top;
+    if (!animate) return;
+    const view0 = box.getBoundingClientRect(), ease = 'cubic-bezier(.2,.8,.2,1)';
+    for (const el of out) { const id = el.dataset?.cid; if (!id) continue;
+      el.getAnimations().forEach(a => a.cancel());
+      const o = old.get(id), r = el.getBoundingClientRect();
+      if (!o) { if (r.top < view0.bottom && r.bottom > view0.top) el.animate([{ opacity: 0, transform: 'translateY(-10px)' }, { opacity: 1, transform: 'none' }], { duration: 280, easing: 'ease-out' }); continue; }
+      const dy = o.top - r.top; if (Math.abs(dy) < 2) continue;
+      if ((o.top > view0.bottom && r.top > view0.bottom) || (o.top + r.height < view0.top && r.bottom < view0.top)) continue; // trước và sau đều ngoài vùng nhìn thấy
+      if (dy > r.height * 0.6) { // đi lên: khách vừa có tin mới → nổi lên trên các dòng khác
+        el.style.position = 'relative'; el.style.zIndex = '3';
+        const a = el.animate([{ transform: `translateY(${dy}px) scale(1)`, boxShadow: '0 0 0 rgba(0,0,0,0)', background: 'var(--primary-soft)' },
+          { transform: `translateY(${dy * 0.45}px) scale(1.025)`, boxShadow: '0 12px 30px rgba(0,0,0,.45)', background: 'var(--primary-soft)', offset: 0.4 },
+          { transform: 'translateY(0) scale(1)', boxShadow: '0 0 0 rgba(0,0,0,0)', background: 'var(--primary-soft)', offset: 0.85 }, { transform: 'none' }], { duration: 560, easing: ease });
+        a.onfinish = a.oncancel = () => { el.style.position = ''; el.style.zIndex = ''; };
+      } else el.animate([{ transform: `translateY(${dy}px)` }, { transform: 'none' }], { duration: 400, easing: ease });
+    }
+  }
   async function drawList() {
     const st = await settings();
     drawLabelFilter();
@@ -932,11 +964,10 @@
       ...S.errors.map(e => h('div', { style: 'margin-top:8px', textContent: e })),
       // API lỗi: xem / trả lời tin của Page đó ngay trong Business Suite (cột Meta trong app, tab mới trên trình duyệt).
       ...(S.errorPages || []).map(p => h('div', { style: 'margin-top:6px' }, App.metaLink(`https://business.facebook.com/latest/inbox/all?asset_id=${p.id}`, `Mở hộp thư ${p.name.slice(0, 30)} trong Business Suite ↗`))))] : [];
-    $('ibList').replaceChildren(...errors,
-      ...(list.length ? list.map(c => {
+    const rowEls = (list.length ? list.map(c => {
         const wait = c.fromCustomer ? (Date.now() - c.lastAt) / 60e3 : null;
         const labels = S.crm?.[c.key]?.labels || [];
-        return h('div', { className: 'item' + (c.unread_count ? ' unread' : '') + (S.conv?.id === c.id ? ' active' : ''), onclick: () => c.bs ? openBs(c) : openConv(c) },
+        return h('div', { className: 'item' + (c.unread_count ? ' unread' : '') + (S.conv?.id === c.id ? ' active' : ''), dataset: { cid: c.id }, onclick: () => c.bs ? openBs(c) : openConv(c) },
           custAvatar(c),
           h('div', { className: 'body' },
             h('div', { className: 'top' }, h('span', { className: 'name', textContent: c.other.name || 'Khách' }),
@@ -951,7 +982,8 @@
               return h('div', { className: 'snip-row' }, h('div', { className: 'snippet', textContent: c.snippet || '' }),
                 chips.length ? h('div', { className: 'tags' }, ...chips, more.length ? h('span', { className: 'lbl more', title: more.map(x => x.textContent).join(' · '), textContent: '+' + more.length }) : null) : null);
             })()));
-      }) : [empty(S.plat === 'zalo' && !S.convs.some(c => platOf(c) === 'zalo') ? (S.zErr === 'login' ? 'Zalo Web đang ở trang đăng nhập: mở cột Zalo (Ctrl+Shift+Z) và quét mã QR. Quét xong danh sách tự hiện ở đây.' : S.zErr && S.zErr !== 'loading' ? 'Chưa đọc được Zalo: ' + S.zErr : S.zSince && Date.now() - S.zSince > 60e3 ? 'Zalo Web chưa mở xong sau 1 phút: bấm Ctrl+Shift+Z xem cột Zalo đang hiện gì (trang đăng nhập / quay vòng), chụp màn hình gửi người hỗ trợ.' : 'Đang mở Zalo Web để đọc tin… (lần đầu mất khoảng 10–20 giây)') : S.convs.length ? 'Không có hội thoại khớp bộ lọc.' : 'Chưa có tin nhắn.')]));
+      }) : [empty(S.plat === 'zalo' && !S.convs.some(c => platOf(c) === 'zalo') ? (S.zErr === 'login' ? 'Zalo Web đang ở trang đăng nhập: mở cột Zalo (Ctrl+Shift+Z) và quét mã QR. Quét xong danh sách tự hiện ở đây.' : S.zErr && S.zErr !== 'loading' ? 'Chưa đọc được Zalo: ' + S.zErr : S.zSince && Date.now() - S.zSince > 60e3 ? 'Zalo Web chưa mở xong sau 1 phút: bấm Ctrl+Shift+Z xem cột Zalo đang hiện gì (trang đăng nhập / quay vòng), chụp màn hình gửi người hỗ trợ.' : 'Đang mở Zalo Web để đọc tin… (lần đầu mất khoảng 10–20 giây)') : S.convs.length ? 'Không có hội thoại khớp bộ lọc.' : 'Chưa có tin nhắn.')]);
+    flipList($('ibList'), [...errors, ...rowEls], `${S.filter}|${S.plat}|${lab}|${q}|${S.showN || 15}`);
   }
   function resetThread() {
     S.reply = null; drawReply(); closePop();
