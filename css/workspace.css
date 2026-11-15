@@ -479,3 +479,7 @@ td.num.neg{font-weight:700}
 .svc-kpi.tone-violet{--k:#8b7cf6}.svc-kpi.tone-blue{--k:#3b82f6}.svc-kpi.tone-teal{--k:#14b8a6}.svc-kpi.tone-green{--k:#10b981}
 .svc-kpi.tone-red{--k:#ef4444}.svc-kpi.tone-amber{--k:#f59e0b}.svc-kpi.tone-orange{--k:#f97316}.svc-kpi.tone-muted{--k:#94a3b8}
 .svc-kpi.big{background:linear-gradient(135deg,color-mix(in srgb,var(--k) 14%,var(--bg-card)),var(--bg-card))}
+/* Chấm trạng thái khung ngầm: xanh lá sáng, phát sáng khi sẵn sàng */
+.bg-status .dot{display:inline-block!important;flex:none;width:9px!important;height:9px!important;border-radius:50%}
+.bg-status.ready .dot,.bg-status.fast .dot{background:#39ff7a!important;box-shadow:0 0 0 3px #39ff7a33,0 0 8px #39ff7acc!important;animation:bgGlow 2s ease-in-out infinite}
+@keyframes bgGlow{0%,100%{box-shadow:0 0 0 3px #39ff7a33,0 0 6px #39ff7a99}50%{box-shadow:0 0 0 4px #39ff7a22,0 0 12px #39ff7aff}}
