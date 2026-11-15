@@ -814,7 +814,8 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
   const snow = () => String(BigInt(Date.now()) * 4194304n + BigInt(Math.floor(Math.random() * 4194304)));
   // Trả lời trích dẫn (reply): thêm reply_metadata trỏ tới mã tin gốc (mid.$…).
   async function directSend(wc, pageId, uid, text, replyTo = '') {
-    const reply = /^mid\./.test(replyTo) ? `,"reply_metadata":{"reply_source_id":${JSON.stringify(replyTo)},"reply_source_type":1,"reply_type":0}` : '';
+    const R = learned.reply?.meta || {};
+    const reply = /^mid\./.test(replyTo) ? `,"reply_metadata":${JSON.stringify({ ...R, reply_source_id: replyTo, reply_source_type: R.reply_source_type ?? 1, reply_type: R.reply_type ?? 0 })}` : '';
     return directTask(wc, pageId, '46', `{"thread_id":${uid},"otid":"${snow()}","source":4456448,"send_type":1,"sync_group":${Number(lsStore(pageId).lsCfg?.group) || 205},"mark_thread_read":1,"text":${JSON.stringify(text)}${reply}}`, String(uid));
   }
   async function directTask(wc, pageId, label, taskPayload, queueName) {
@@ -1171,6 +1172,27 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
     return Promise.all(ids.map(async id => ({ page: id, read: await one(slots.get(id), false), send: makeWorker ? await one(sendSlots.get(id), true) : 'none',
       busy: !!slots.get(id)?.queue.runningSince, frames: lsStore(id).frames || 0 })));
   };
+  // ── Học mẫu gói thật từ cột Meta: khi BẠN tự thả cảm xúc / trả lời trong cột Meta, ghi lại cấu trúc gói Business Suite gửi
+  // (label 29 = cảm xúc, label 46 có reply_metadata = trả lời) vào userData/ls-mau-hoc.json, lần sau app gửi đúng y như vậy.
+  const learnFile = path.join(app.getPath('userData'), 'ls-mau-hoc.json');
+  let learned = {}; try { learned = JSON.parse(fs.readFileSync(learnFile, 'utf8')); } catch {}
+  const learnFrame = text => {
+    const i = text.indexOf('{"app_id"'); if (i < 0) return;
+    let outer; try { outer = JSON.parse(text.slice(i)); } catch { return; }
+    let inner; try { inner = JSON.parse(outer.payload); } catch { return; }
+    let changed = false;
+    for (const t of inner.tasks || []) {
+      let pl; try { pl = JSON.parse(t.payload); } catch { continue; }
+      if (String(t.label) === '29') { learned.react = { keys: pl, queue: t.queue_name, at: new Date().toISOString() }; changed = true; }
+      if (String(t.label) === '46' && pl.reply_metadata) { learned.reply = { meta: pl.reply_metadata, at: new Date().toISOString() }; changed = true; }
+    }
+    if (changed) try { fs.writeFileSync(learnFile, JSON.stringify(learned, null, 1)); } catch {}
+  };
+  try { const dbg = metaView.webContents.debugger; if (!dbg.isAttached()) dbg.attach('1.3');
+    dbg.sendCommand('Network.enable').catch(() => {});
+    dbg.on('message', (_e, method, params) => { if (method !== 'Network.webSocketFrameSent') return; const f = params.response || {};
+      const t = f.opcode === 2 ? Buffer.from(String(f.payloadData || ''), 'base64').toString('utf8') : String(f.payloadData || '');
+      if (t.includes('/ls_req') && /\\"label\\":\\"(29|46)\\"/.test(t)) learnFrame(t); }); } catch {}
   // Thả / bỏ cảm xúc lên một tin (gói "label 29" như Business Suite): chờ Meta báo lại upsertReaction của Page cho tin đó.
   async function react(args) {
     const pid = String(args.pageId || ''), uid = String(args.uid || ''), mid = String(args.mid || ''), emoji = String(args.emoji || '');
@@ -1179,13 +1201,21 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
     if (!wc) return { error: 'Khung Business Suite của Page chưa sẵn sàng, thử lại sau vài giây.' };
     const st = lsStore(pid), m = st.msgs.get(uid)?.get(mid), ts = Number(args.ts) || m?.ts || Date.now();
     st.capture = Date.now() + 15e3; // ghi mẫu gói gửi / trả lời để chẩn đoán nếu Meta không nhận
-    const payload = `{"thread_key":${uid},"timestamp_ms":${ts},"message_id":${JSON.stringify(mid)},"actor_id":${pid},"reaction":${JSON.stringify(emoji)},"reaction_style":null,"sync_group":1,"send_attribution":4456448}`;
-    const r = await directTask(wc, pid, '29', payload, JSON.stringify(['reaction', mid]));
+    // Có mẫu học từ cột Meta: giữ nguyên mọi trường (sync_group, send_attribution…), chỉ thay khách / tin / cảm xúc.
+    const L = learned.react?.keys || {};
+    const obj = { ...L, thread_key: Number(uid), timestamp_ms: ts, message_id: mid, actor_id: Number(pid), reaction: emoji,
+      reaction_style: L.reaction_style ?? null, sync_group: L.sync_group ?? (Number(st.lsCfg?.group) || 1), send_attribution: L.send_attribution ?? 4456448 };
+    // Số lớn (id) phải giữ nguyên dạng số không làm tròn: ghép tay.
+    const payload = JSON.stringify(obj).replace(`"thread_key":${Number(uid)}`, `"thread_key":${uid}`).replace(`"actor_id":${Number(pid)}`, `"actor_id":${pid}`);
+    const queue = learned.react?.queue ? String(learned.react.queue).replace(/mid\.[^"\\]+/, mid) : JSON.stringify(['reaction', mid]);
+    const r = await directTask(wc, pid, '29', payload, queue);
     if (r !== 'ok') return { error: 'Không gửi được cảm xúc: ' + r };
     const mineNow = () => st.reacts.get(mid)?.get(pid) || '';
     for (let i = 0; i < 40 && mineNow() !== emoji; i++) await sleep(100);
-    if (mineNow() !== emoji && !(st.reqAck > Date.now() - 5000)) return { error: 'Meta chưa nhận cảm xúc. Gửi file Downloads/GetHelps-debug/ls-gui-mau.json cho người hỗ trợ.' };
-    if (mineNow() !== emoji) { const rx = st.reacts.get(mid) || new Map(); if (emoji) rx.set(pid, emoji); else rx.delete(pid); st.reacts.set(mid, rx); } // Meta đã nhận gói, chưa kịp báo lại
+    if (mineNow() !== emoji) {
+      const how = st.reqAck > Date.now() - 6000 ? 'Meta đã nhận gói nhưng không áp dụng' : 'Meta không trả lời gói';
+      return { error: `Cảm xúc chưa lên Business Suite (${how}). Cách sửa: tự thả 1 cảm xúc bất kỳ cho 1 tin trong cột Meta (Ctrl+Shift+M) — app học đúng gói của Business Suite, lần sau thả trong app sẽ lên. ${learned.react ? '(đã có mẫu học: gửi Downloads/GetHelps-debug/ls-gui-mau.json cho người hỗ trợ)' : ''}` };
+    }
     return { ok: true, messages: lsMessages(pid, uid), source: 'ls' };
   }
   return { react, lookupProfile, listThreads, readThread: args => readThread(args).then(r => withRcpt(args, r)), sendThread: args => sendThread(args).then(r => withRcpt(args, r)), composePost, hiddenStatus };

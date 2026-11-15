@@ -531,7 +531,7 @@
     const mineNow = (m.re || []).find(x => x.mine)?.e, emoji = mineNow === e && !c.zalo ? '' : e;
     const before = m.re; m.re = [...(m.re || []).filter(x => !x.mine), ...(emoji ? [{ e: emoji, mine: true }] : [])]; if (S.conv === c && c.bsLast) drawBs(c, c.bsLast, { silent: true });
     const r = await window.metaDesktop.reactThread({ pageId: String(c.page.id), uid: c.uid, mid: m.mid, ts: m.ts, emoji }).catch(err => ({ error: err.message }));
-    if (r?.error) { m.re = before; if (S.conv === c && c.bsLast) drawBs(c, c.bsLast, { silent: true }); return toast(r.error, 6000); }
+    if (r?.error) { m.re = before; if (S.conv === c && c.bsLast) drawBs(c, c.bsLast, { silent: true }); return toast(r.error, 15000); }
     if (S.conv === c && r?.messages?.length) drawBs(c, r, { silent: true });
   }
   function setReply(c, m) {
