@@ -948,7 +948,7 @@
               return h('div', { className: 'snip-row' }, h('div', { className: 'snippet', textContent: c.snippet || '' }),
                 chips.length ? h('div', { className: 'tags' }, ...chips, more.length ? h('span', { className: 'lbl more', title: more.map(x => x.textContent).join(' · '), textContent: '+' + more.length }) : null) : null);
             })()));
-      }) : [empty(S.plat === 'zalo' && !S.convs.some(c => platOf(c) === 'zalo') ? 'Chưa có tin Zalo: đăng nhập Zalo ở cột Zalo (Ctrl+Shift+Z), app đang được làm phần đọc tin Zalo.' : S.convs.length ? 'Không có hội thoại khớp bộ lọc.' : 'Chưa có tin nhắn.')]));
+      }) : [empty(S.plat === 'zalo' && !S.convs.some(c => platOf(c) === 'zalo') ? (S.zErr === 'login' ? 'Chưa đăng nhập Zalo trong app: mở cột Zalo (Ctrl+Shift+Z) và quét mã QR.' : S.zErr && S.zErr !== 'loading' ? 'Chưa đọc được Zalo: ' + S.zErr : 'Đang mở Zalo Web để đọc tin… (lần đầu mất khoảng 10–20 giây)') : S.convs.length ? 'Không có hội thoại khớp bộ lọc.' : 'Chưa có tin nhắn.')]));
   }
   function resetThread() {
     S.reply = null; drawReply(); closePop();
@@ -1281,9 +1281,11 @@
   App.inbox.zaloLoad = async (deep = false) => {
     if (!window.metaDesktop?.zaloList || (!deep && Date.now() - zLoaded < 60e3)) return;
     zLoaded = Date.now();
-    const r = await window.metaDesktop.zaloList({ deep }).catch(() => null);
-    if (r?.rows) App.inbox.zaloList(r.rows); else zLoaded = 0;
+    const r = await window.metaDesktop.zaloList({ deep }).catch(e => ({ error: e.message }));
+    S.zErr = r?.rows ? '' : r?.error || 'lỗi';
+    if (r?.rows) App.inbox.zaloList(r.rows); else { zLoaded = Date.now() - 45e3; if (App.current() === 'inbox' && S.plat === 'zalo') drawList(); } // thử lại sau ~15 giây
   };
+  setInterval(() => { if (App.current() === 'inbox' && !document.hidden && !S.zconvs.length) App.inbox.zaloLoad().catch(() => {}); }, 15e3);
   App.inbox.bsListChanged = async pageId => {
     if (!bsFirst()) return;
     const p = App.selected().find(x => String(x.id) === String(pageId)); if (!p) return;

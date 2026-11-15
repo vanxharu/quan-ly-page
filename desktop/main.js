@@ -370,10 +370,20 @@ app.whenReady().then(async () => {
     onList: rows => pageView.webContents.executeJavaScript(`window.App?.inbox?.zaloList?.(${JSON.stringify(rows)})`).catch(() => {}),
     onThread: id => pageView.webContents.executeJavaScript(`window.App?.inbox?.bsChanged?.(${JSON.stringify('zalo:' + id)}, null)`).catch(() => {}) });
   zaloView.webContents.on('console-message', (ev, ...a) => zalo.onConsole(ev?.message ?? a[1]));
+  // Zalo Web vừa tải xong: chờ danh sách hiện (đăng nhập xong) rồi gửi danh sách cho Hộp thư + bắt đầu nghe tin mới.
+  let zaloBoot = 0;
+  const bootZalo = async () => { const run = ++zaloBoot;
+    for (let i = 0; i < 60 && run === zaloBoot; i++) { await new Promise(r => setTimeout(r, i ? 3000 : 1500));
+      const r = await zalo.list({ deep: true }).catch(() => null);
+      if (r?.rows) { pageView.webContents.executeJavaScript(`window.App?.inbox?.zaloList?.(${JSON.stringify(r.rows)})`).catch(() => {}); return; } } };
+  zaloView.webContents.on('did-finish-load', () => { if (zaloView.webContents.getURL().startsWith('https://chat.zalo.me')) bootZalo(); });
   // Đã đăng nhập Zalo lần trước → mở sẵn Zalo Web (ẩn) khi bật app để Hộp thư có tin Zalo ngay.
   zaloSes.cookies.get({ domain: 'zalo.me' }).then(cs => { if (cs.some(c => /^zpw_sek$/.test(c.name)) && !zaloView.webContents.getURL()) zaloView.webContents.loadURL('https://chat.zalo.me/').catch(() => {}); }).catch(() => {});
   ipcMain.handle('thread-react', (e, args) => !fromPage(e) ? { error: 'denied' } : args?.pageId === 'zalo' ? zalo.react(args) : auto.react(args || {}));
-  ipcMain.handle('zalo-list', (e, args) => fromPage(e) ? zalo.list(args || {}) : { error: 'denied' });
+  ipcMain.handle('zalo-list', async (e, args) => { if (!fromPage(e)) return { error: 'denied' };
+    // Chưa mở Zalo Web (vd lần trước chưa đăng nhập, hoặc phiên chưa được nhận ra): mở ẩn rồi báo Hộp thư chờ.
+    if (!zaloView.webContents.getURL().startsWith('https://chat.zalo.me')) { zaloView.webContents.loadURL('https://chat.zalo.me/').catch(() => {}); return { error: 'loading' }; }
+    return zalo.list(args || {}); });
   ipcMain.handle('meta-thread-read', (e, args) => !fromPage(e) ? { error: 'denied' } : args?.pageId === 'zalo' ? zalo.read(args) : auto.readThread(args || {}));
   ipcMain.handle('meta-thread-send', (e, args) => !fromPage(e) ? { error: 'denied' } : args?.pageId === 'zalo' ? zalo.send(args) : auto.sendThread(args || {}));
   ipcMain.handle('meta-threads', (e, args) => fromPage(e) ? auto.listThreads(args || {}) : { error: 'denied' });
