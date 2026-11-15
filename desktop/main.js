@@ -216,10 +216,11 @@ app.whenReady().then(async () => {
     bar.setBounds(cur ? { x: width - w, y: 0, width: w, height: BAR } : { x: width, y: 0, width: 0, height: 0 });
     // Zalo ẩn vẫn phải "đang hiện" với kích thước thật (Zalo Web chỉ vẽ dòng/tin đang thấy, khung 0×0 hay ngoài cửa sổ thì không chạy):
     // đặt nó NẰM DƯỚI trang chính (bị trang chính che kín); mở cột Zalo thì đưa lên trên cùng.
-    const zTop = cur === 'zalo';
-    if (zaloView.__top !== zTop) { zaloView.__top = zTop; try { if (zTop) mainWindow.contentView.addChildView(zaloView); else mainWindow.contentView.addChildView(zaloView, 0); } catch {} }
+    // Zalo ẩn: nằm TRÊN CÙNG nhưng ngay ngoài mép phải cửa sổ (không ai thấy) — vẫn "đang hiện" nên chạy, vẽ và nhận gõ phím bình thường
+    // (nằm dưới trang chính thì trình duyệt coi là bị che, bỏ qua gõ phím → không gửi được tin).
+    if (!zaloView.__top) { zaloView.__top = true; try { mainWindow.contentView.addChildView(zaloView); } catch {} }
     for (const [name, v] of [['studio', panelView], ['meta', metaView], ['zalo', zaloView], ['svc', svcView]]) v.setBounds(cur === name ? { x: width - w, y: BAR, width: w, height: height - BAR }
-      : name === 'zalo' ? { x: 0, y: 0, width: Math.min(820, Math.max(400, width - w)), height } : { x: width, y: 0, width: 0, height: 0 });
+      : name === 'zalo' ? { x: width + 20, y: 0, width: 800, height: Math.max(600, height) } : { x: width, y: 0, width: 0, height: 0 });
     const title = cur === 'meta' ? 'Hộp thư Meta' : cur === 'studio' ? 'Studio AI' : cur === 'zalo' ? 'Zalo' : cur === 'svc' ? 'Dịch vụ' : '';
     if (title && bar.webContents.__title !== title) { bar.webContents.__title = title; bar.webContents.loadFile(path.join(__dirname, 'bar.html'), { query: { t: title } }); }
   };
@@ -458,8 +459,9 @@ app.whenReady().then(async () => {
     // Nhập chữ / bấm phím THẬT vào Zalo qua giao thức trình duyệt (CDP): Zalo nằm ẩn dưới trang chính nên không có tiêu điểm,
     // giả lập "đang được chọn" (Emulation.setFocusEmulationEnabled) rồi Input.insertText / Input.dispatchKeyEvent — không cướp tiêu điểm của bạn.
     // Trong lúc gửi: mở cột Zalo (để trang Zalo được chọn thật, nhận chữ / Enter), gửi xong trả lại cột đang mở trước đó.
-    beginInput: async () => { zaloInput = { prev: side, page: pageView.webContents.isFocused() }; if (side !== 'zalo') show('zalo', true); await new Promise(r => setTimeout(r, 450)); zaloView.webContents.focus(); },
-    endInput: () => { const p = zaloInput; zaloInput = null; if (!p) return; setTimeout(() => { if (p.prev !== 'zalo') { if (p.prev) show(p.prev, true); else show('zalo', false); } if (p.page) pageView.webContents.focus(); }, 600); },
+    // Trong lúc gửi: cho trang Zalo (ẩn ngoài mép cửa sổ) nhận tiêu điểm thật vài giây, gửi xong trả tiêu điểm về trang chính. Không mở cột Zalo.
+    beginInput: async () => { zaloInput = { page: pageView.webContents.isFocused() }; zaloView.webContents.focus(); await new Promise(r => setTimeout(r, 150)); },
+    endInput: () => { const p = zaloInput; zaloInput = null; if (p?.page) setTimeout(() => pageView.webContents.focus(), 300); },
     typeText: async text => { const d = await zaloDbg(); const parts = String(text).split('\n');
       for (let i = 0; i < parts.length; i++) { if (i) await zaloKey(d, 'Enter', 8); if (parts[i]) await d.sendCommand('Input.insertText', { text: parts[i] }); } },
     sendKey: async key => { try { await zaloKey(await zaloDbg(), key, 0); } catch { const w = zaloView.webContents; w.sendInputEvent({ type: 'keyDown', keyCode: key }); if (key === 'Enter') w.sendInputEvent({ type: 'char', keyCode: '\r' }); w.sendInputEvent({ type: 'keyUp', keyCode: key }); } },
