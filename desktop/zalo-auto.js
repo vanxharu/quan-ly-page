@@ -148,6 +148,8 @@ async function zPutText(text) {
 // Đặt con trỏ vào ô nhập (rỗng) để app gõ chữ thật (webContents.insertText) khi dán không ăn.
 function zFocusInput() { const ed = document.querySelector('#richInput'); if (!ed) return false; ed.focus(); const sel = window.getSelection(); sel.selectAllChildren(ed); document.execCommand('delete');
   const r = document.createRange(); r.selectNodeContents(ed); r.collapse(false); sel.removeAllRanges(); sel.addRange(r); return document.activeElement === ed; }
+function zInputDiag() { const ed = document.querySelector('#richInput'), a = document.activeElement;
+  return `ô nhập: ${ed ? 'có' : 'KHÔNG CÓ'}${ed ? ` (${ed.getAttribute('contenteditable')}, ${Math.round(ed.getBoundingClientRect().width)}px)` : ''} · đang chọn: ${a ? (a.id || a.tagName) : '-'} · trang có tiêu điểm: ${document.hasFocus() ? 'có' : 'không'} · khách đang mở: ${document.querySelector('#ava_chat_box_view img[data-ava-uid]')?.getAttribute('data-ava-uid') || '-'} · ô chat khác: ${[...document.querySelectorAll('[contenteditable="true"]')].map(e => e.id || e.className.slice(0, 20)).join(',') || '-'}`; }
 function zInputLen() { return (document.querySelector('#richInput')?.innerText || '').trim().length; }
 // Thả ảnh vào khung tin ("Gửi nhanh" của Zalo Web: thả là gửi luôn).
 async function zDropImage(b64, type, name) {
@@ -225,8 +227,11 @@ function createZaloAuto({ wc, sendKey, typeText = null, onList = () => {}, onThr
     if (text) {
       let len = await run(zPutText, text).catch(() => -1);
       // Dán không ăn (trang Zalo ẩn không có tiêu điểm…): gõ chữ thật vào ô nhập như bàn phím.
-      if (len <= 0 && typeText && await run(zFocusInput).catch(() => false)) { await typeText(text); await sleep(250); len = await run(zInputLen).catch(() => 0); }
-      if (len <= 0) return { error: 'Không nhập được chữ vào ô chat Zalo (mở cột Zalo, bấm vào ô chat một lần rồi thử lại).' };
+      for (const mode of ['paste', 'type']) { if (len > 0 || !typeText) break;
+        if (!(await run(zFocusInput).catch(() => false))) break;
+        await typeText(text, mode); await sleep(300); len = await run(zInputLen).catch(() => 0); stat.lastInput = mode + ':' + len; }
+      if (len <= 0) { const dg = await run(zInputDiag).catch(e => 'lỗi đọc: ' + e.message); stat.lastSendDiag = dg;
+        return { error: 'Không nhập được chữ vào ô chat Zalo · ' + dg }; }
       await sleep(120); sendKey('Enter');
       let ok = false; for (let i = 0; i < 40 && !ok; i++) { await sleep(150); const c = await run(zMineCount).catch(() => before); ok = c.n > before.n;
         if (!ok && i === 14) await run(zClickSend).catch(() => {}); } // Enter không ăn: bấm nút Gửi
@@ -270,4 +275,4 @@ function createZaloAuto({ wc, sendKey, typeText = null, onList = () => {}, onThr
   return { list, read, send, react, onConsole, ready, status: () => ({ ...stat }) };
 }
 
-module.exports = { createZaloAuto, _page: { zFocusInput, zInputLen, zReacts, zReact, zReplyTo, zState, zList, zListAll, zCurrent, zOpen, zRead, zPutText, zDropImage, zClickSend, zMineCount, zWatch } };
+module.exports = { createZaloAuto, _page: { zInputDiag, zFocusInput, zInputLen, zReacts, zReact, zReplyTo, zState, zList, zListAll, zCurrent, zOpen, zRead, zPutText, zDropImage, zClickSend, zMineCount, zWatch } };
