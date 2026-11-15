@@ -379,14 +379,20 @@
   const tagsOf = text => { const out = [], seen = new Set(); for (const [re, label, cls] of TAGS) if (re.test(text) && !seen.has(label)) { seen.add(label); out.push([label, cls]); } return out; };
   // items: [{ value, label, sub, platform, group, tags: [[label, cls]], price, warn, always, kids: [{ value, label, price }] }]
   // collapsible: đã chọn thì thu thành 1 dòng (bấm "Đổi" để mở danh sách), chọn xong tự thu lại.
+  // Loại dịch vụ của 1 mục: "Facebook › Tăng like bài viết" → "Tăng like bài viết"; gói "TikTok · Tăng theo dõi · Việt" → "Tăng theo dõi".
+  const typeOf = i => i.type || (String(i.group || '').includes('›') ? String(i.group).split('›').pop().trim() : '');
+  // Đoán loại từ lời khách / tên: follow, like, view, bình luận, chia sẻ, thành viên nhóm, mắt live…
+  const TYPE_HINTS = [[/follow|theo dõi|sub|đăng ký/i, /follow|theo dõi|sub|đăng ký/i], [/mắt|live|livestream/i, /mắt|live/i], [/view|lượt xem|\bxem\b/i, /view|xem/i],
+    [/bình luận|comment|cmt/i, /bình luận|comment|cmt/i], [/chia sẻ|share/i, /chia sẻ|share/i], [/thành viên|mem/i, /thành viên|mem/i], [/like page|thích trang/i, /like page|fanpage|trang/i], [/like|thích|tim|cảm xúc/i, /like|thích|tim|cảm xúc/i]];
   function cardPicker({ items, value = '', onPick, plat = '', height = 320, placeholder = 'Tìm…', collapsible = false }) {
-    let cur = value, pf = items.some(i => i.platform === plat) ? plat : '', q = '', open = !collapsible;
+    let cur = value, pf = items.some(i => i.platform === plat) ? plat : '', tf = '', q = '', open = !collapsible;
     const find = v => { for (const i of items) { if (i.value === v) return [i, null]; const k = i.kids?.find(k => k.value === v); if (k) return [i, k]; } return [null, null]; };
-    const chips = h('div', { className: 'cp-chips' }), list = h('div', { className: 'cp-list', style: `max-height:${height}px` });
+    const chips = h('div', { className: 'cp-chips' }), types = h('div', { className: 'cp-chips cp-types' }), list = h('div', { className: 'cp-list', style: `max-height:${height}px` });
     const searchIn = h('input', { type: 'search', placeholder, oninput: e => { q = e.target.value; draw(); } });
-    const panel = h('div', { className: 'cp-panel' }, searchIn, chips, list), summary = h('div', { className: 'cp-sum-wrap' });
+    const step = (n, t, el) => h('div', { className: 'cp-step' }, h('span', { className: 'cp-step-no', textContent: n }), h('span', { className: 'cp-step-t', textContent: t }), el);
+    const panel = h('div', { className: 'cp-panel' }, searchIn, step('1', 'Nền tảng', chips), step('2', 'Loại', types), step('3', 'Gói / máy chủ', list)), summary = h('div', { className: 'cp-sum-wrap' });
     const plats = [...new Set(items.map(i => i.platform).filter(Boolean))];
-    const chip = (p, label, n) => h('button', { type: 'button', className: 'cp-chip' + (pf === p ? ' on' : ''), onclick: () => { pf = p; draw(); } },
+    const chip = (p, label, n) => h('button', { type: 'button', className: 'cp-chip' + (pf === p ? ' on' : ''), onclick: () => { pf = p; if (tf && !items.some(i => (!pf || i.platform === pf) && typeOf(i) === tf)) tf = ''; draw(); } },
       p ? platBadge(p, 16) : null, h('span', { textContent: label }), h('small', { textContent: n }));
     const choose = v => { cur = v; if (collapsible) open = false; draw(); onPick(v); };
     // Số lượt đã bán gói: gói hay dùng (top 5, từ 2 lượt) có ★ + số, gói khác chỉ số nhỏ.
@@ -402,7 +408,12 @@
       panel.hidden = collapsible && !open && !!ci;
       if (panel.hidden) return;
       chips.replaceChildren(chip('', 'Tất cả', items.filter(i => !i.always).length), ...plats.map(p => chip(p, p, items.filter(i => i.platform === p).length)));
-      const f = norm(q), shown = items.filter(i => i.always || ((!pf || i.platform === pf) && (!f || norm(`${i.label} ${i.sub || ''} ${i.group || ''} ${(i.kids || []).map(k => k.label + ' ' + k.value).join(' ')}`).includes(f))));
+      // Bước 2: loại dịch vụ của nền tảng đang chọn (ẩn nếu chỉ có 1 loại).
+      const inPlat = items.filter(i => !i.always && (!pf || i.platform === pf)), tl = [...new Set(inPlat.map(typeOf).filter(Boolean))];
+      types.parentElement.hidden = tl.length < 2;
+      types.replaceChildren(h('button', { type: 'button', className: 'cp-chip' + (!tf ? ' on' : ''), onclick: () => { tf = ''; draw(); } }, h('span', { textContent: 'Tất cả loại' }), h('small', { textContent: inPlat.length })),
+        ...tl.map(t => h('button', { type: 'button', className: 'cp-chip' + (tf === t ? ' on' : ''), onclick: () => { tf = t; draw(); } }, h('span', { textContent: t }), h('small', { textContent: inPlat.filter(i => typeOf(i) === t).length }))));
+      const f = norm(q), shown = items.filter(i => i.always || ((!pf || i.platform === pf) && (!tf || typeOf(i) === tf) && (!f || norm(`${i.label} ${i.sub || ''} ${i.group || ''} ${(i.kids || []).map(k => k.label + ' ' + k.value).join(' ')}`).includes(f))));
       let last = null; const out = [];
       for (const i of shown) {
         if (!i.always && i.group && i.group !== last) { out.push(h('div', { className: 'cp-group' }, platBadge(i.platform, 14), h('span', { textContent: i.group }))); last = i.group; }
@@ -421,7 +432,11 @@
       list.querySelector('.cp-card.on')?.scrollIntoView?.({ block: 'nearest' });
     };
     draw();
-    return { el: h('div', { className: 'cp' }, summary, panel), set: v => { cur = v; draw(); }, setPlat: p => { if (items.some(i => i.platform === p)) { pf = p; draw(); } } };
+    // Tự chọn loại theo lời khách: chỉ khi có đúng loại khớp trong nền tảng đang chọn.
+    const setType = text => { const hit = TYPE_HINTS.find(([re]) => re.test(String(text || ''))); if (!hit) return;
+      const tl = [...new Set(items.filter(i => !i.always && (!pf || i.platform === pf)).map(typeOf).filter(Boolean))], t = tl.find(x => hit[1].test(x)); if (t && t !== tf) { tf = t; draw(); } };
+    return { el: h('div', { className: 'cp' }, summary, panel), set: v => { cur = v; draw(); }, setType,
+      setPlat: p => { if (items.some(i => i.platform === p) && p !== pf) { pf = p; if (tf && !items.some(i => i.platform === pf && typeOf(i) === tf)) tf = ''; draw(); } } };
   }
   const serverItem = x => { const [st, cls] = stateOf(x);
     return { value: x.id, label: x.name, sub: `MC ${x.id} · ${Number(x.min).toLocaleString('vi-VN')}–${Number(x.max).toLocaleString('vi-VN')}`, platform: x.platform || '', group: [x.platform, x.category].filter(Boolean).join(' › '),
@@ -517,6 +532,7 @@
     const pkgItems = [{ value: '', label: 'Chọn máy chủ trực tiếp', sub: 'Không dùng gói, chọn máy chủ Baostar bên dưới', always: true },
       ...pkgs.map(pk => { const svc = list.find(x => x.id === String(pk.serviceId)), plat = svc?.platform || (PLAT[pk.name.split(' · ')[0]] ? pk.name.split(' · ')[0] : '');
         return { value: pk.id, label: plat ? pk.name.replace(plat + ' · ', '') : pk.name, sub: svc ? `Gốc: MC ${svc.id} · ${m2(svc.unitCost)}/đv` : 'Chưa gắn máy chủ gốc', platform: plat, group: plat,
+          type: svc?.category || (plat ? pk.name.replace(plat + ' · ', '') : pk.name).split(' · ')[0],
           tags: tagsOf(pk.name), price: pk.kind === 'fixed' ? `${Number(pk.qty).toLocaleString('vi-VN')} = ${money(pk.price)}` : `${m2(pk.unitPrice)}/đv`, warn: svc && stateOf(svc)[1] === 'err' ? 'Gốc bảo trì' : !svc ? 'Thiếu máy chủ' : '' }; })];
     const uses = new Map(), bump = id => id && uses.set(id, (uses.get(id) || 0) + 1);
     for (const o of await DB.get(ORDERS, []).catch(() => [])) if (o.source === 'service') bump(o.packageId);
@@ -645,6 +661,9 @@
     // Gợi ý từ lời khách + lặp lại đơn trước (đầu khung).
     const quick = h('div', { className: 'svc-quick' });
     const guess = guessOrder(ctx.messages);
+    // Tự chọn sẵn loại dịch vụ theo lời khách gần đây (vd "tăng follow" → loại Follow); bạn vẫn đổi được.
+    { const said = (ctx.messages || []).filter(m => m.isCustomer).slice(-6).map(m => m.text || '').join(' \n ');
+      if (said) setTimeout(() => { try { pkgPick.setType(said); svcPick.setType(said); } catch {} }, 0); }
     const applyGuess = () => {
       if (!guess) return false;
       const plat = linkPlat(), cands = pkgs.filter(pk => guess.match.test(norm(pk.name)) && (!plat || !pkgItems.find(i => i.value === pk.id)?.platform || norm(pkgItems.find(i => i.value === pk.id).platform) === norm(plat)));
@@ -1613,8 +1632,9 @@
     const usd = h('input', { type: 'number', min: 1000, step: 100, value: s.usdRate || 27000, title: 'API Baostar trả số dư theo USD: app nhân với tỉ giá này để ra số dư VND' });
     const key = h('input', { type: 'password', value: s.apiKey, placeholder: 'Dán API key (web dịch vụ › Tạo web con và API › Tích hợp API)', autocomplete: 'off' });
     const priceBox = h('div', { className: 'svc-prices scroll' });
-    const filt = { q: '', plat: '', state: '', limit: 100 };
-    const platSel = h('select', { style: 'width:auto', onchange: e => { filt.plat = e.target.value; filt.limit = 100; drawPrices(); } });
+    const filt = { q: '', plat: '', type: '', state: '', limit: 100 };
+    const platSel = h('select', { style: 'width:auto', onchange: e => { filt.plat = e.target.value; filt.type = ''; filt.limit = 100; drawPrices(); } });
+    const typeSel = h('select', { style: 'width:auto', title: 'Loại dịch vụ', onchange: e => { filt.type = e.target.value; filt.limit = 100; drawPrices(); } });
     const stateSel = h('select', { style: 'width:auto', onchange: e => { filt.state = e.target.value; filt.limit = 100; drawPrices(); } },
       ...[['', 'Mọi trạng thái'], ['ok', 'Đang chạy'], ['err', 'Bảo trì'], ['nofill', 'Chưa có giá của tôi'], ['fast', 'Nhanh'], ['slow', 'Chậm']].map(([v, t]) => h('option', { value: v, textContent: t })));
     const markup = h('input', { type: 'number', min: 0, step: 'any', value: s.markup ?? 600, style: 'width:80px', title: '% lãi trên giá gốc' });
@@ -1659,7 +1679,9 @@
       list = [...list].sort((a, b) => a.groupIndex - b.groupIndex || a.pos - b.pos || (a.parent ? 1 : 0) - (b.parent ? 1 : 0) || Number(a.id) - Number(b.id));
       const plats = [...new Set(list.map(x => x.platform).filter(Boolean))];
       if (platSel.options.length !== plats.length + 1) platSel.replaceChildren(h('option', { value: '', textContent: 'Mọi nền tảng' }), ...plats.map(p => h('option', { value: p, textContent: p, selected: p === filt.plat })));
-      const ok = x => (!f || norm(x.name + ' ' + x.category + ' ' + x.id + ' ' + noteLines(x.notes).join(' ')).includes(f)) && (!filt.plat || x.platform === filt.plat)
+      { const tl = [...new Set(list.filter(x => !filt.plat || x.platform === filt.plat).map(x => x.category).filter(Boolean))];
+        typeSel.replaceChildren(h('option', { value: '', textContent: 'Mọi loại' }), ...tl.map(t => h('option', { value: t, textContent: t, selected: t === filt.type }))); typeSel.hidden = tl.length < 2; }
+      const ok = x => (!f || norm(x.name + ' ' + x.category + ' ' + x.id + ' ' + noteLines(x.notes).join(' ')).includes(f)) && (!filt.plat || x.platform === filt.plat) && (!filt.type || x.category === filt.type)
         && (!filt.state || (filt.state === 'nofill' ? prices[x.id] == null : filt.state === 'fast' || filt.state === 'slow' ? speedOf(x).kind === filt.state : stateOf(x)[1] === filt.state));
       const kidsOf = new Map(); for (const x of list) if (x.parent) (kidsOf.get(x.parent) || kidsOf.set(x.parent, []).get(x.parent)).push(x);
       const heads = list.filter(x => !x.parent || !list.some(y => y.id === x.parent));
@@ -1780,7 +1802,7 @@
       h('p', { className: 'hint', textContent: `Giá gốc lấy từ web ${webOrigin(s) || 'dịch vụ'} theo tài khoản đang đăng nhập ở cột Dịch vụ (Mở web dịch vụ ↗). Chưa đăng nhập thì là giá cấp Khách hàng. Bấm tên dịch vụ để xem ghi chú gốc.` }),
       h('div', { className: 'row', style: 'gap:8px;flex-wrap:wrap;margin-bottom:8px' },
         h('input', { type: 'search', placeholder: 'Tìm tên, mã, ghi chú…', style: 'flex:1;min-width:200px', oninput: e => { filt.q = e.target.value; filt.limit = 100; drawPrices(); } }),
-        platSel, stateSel),
+        platSel, typeSel, stateSel),
       h('div', { className: 'row', style: 'gap:8px;flex-wrap:wrap;margin-bottom:8px;align-items:center' },
         h('span', { className: 'hint', textContent: 'Giá của tôi = gốc +' }), markup, h('span', { className: 'hint', textContent: '% (giá 1.000 đv làm tròn lên chục nghìn)' }),
         h('button', { type: 'button', className: 'btn btn-soft btn-sm', textContent: 'Điền cho dịch vụ chưa có giá', onclick: () => applyMarkup(true) }),
