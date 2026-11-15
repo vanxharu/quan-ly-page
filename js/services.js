@@ -224,6 +224,13 @@
   }
   const estCost = (svc, qty) => svc ? (svc.unitCost || 0) * qty : 0;
   const num = v => Number(String(v ?? '').replace(/[^0-9.\-]/g, ''));
+  // Số tiền có thể ghi kiểu Việt "2.450.000" / "12.448" (dấu chấm ngăn nghìn), kiểu Anh "2,450,000.50" hoặc số thường "2450000.0000".
+  const money0 = v => { if (typeof v === 'number') return v; let t = String(v ?? '').replace(/[^0-9.,\-]/g, '');
+    if (/^-?\d{1,3}(\.\d{3})+(,\d+)?$/.test(t)) t = t.replace(/\./g, '').replace(',', '.');
+    else if (/^-?\d{1,3}(,\d{3})+(\.\d+)?$/.test(t)) t = t.replace(/,/g, '');
+    else if (/^-?\d+,\d{1,2}$/.test(t)) t = t.replace(',', '.');
+    else t = t.replace(/,/g, '');
+    return Number(t); };
   const m2 = v => `${(Number(v) || 0).toLocaleString('vi-VN', { maximumFractionDigits: 2 })}đ`;
   const pct = (sell, cost) => cost > 0 ? ` (${Math.round((sell - cost) / cost * 100)}%)` : '';
   const orderOf = o => ({ sell: (o.items?.[0]?.price || 0) * (o.items?.[0]?.qty || 0), cost: (o.items?.[0]?.cost || 0) * (o.items?.[0]?.qty || 0) });
@@ -917,7 +924,7 @@
       btn.textContent = busy ? 'Đang tạo đơn…' : ls.some(l => l.error && !l.done) ? `Thử lại ${ok} đơn` : `Tạo ${ok} đơn Baostar`;
       btn.disabled = busy || checking || !ok;
     };
-    call('balance').then(b => { const v = num(b?.balance ?? b); balance = Number.isFinite(v) ? v : 'không rõ'; draw(); }).catch(e => { balance = e.message; draw(); });
+    call('balance').then(b => { const raw = b?.balance ?? b?.data?.balance ?? b?.money ?? b?.amount ?? b, v = money0(raw); balance = Number.isFinite(v) ? v : 'không rõ (' + JSON.stringify(b).slice(0, 80) + ')'; draw(); }).catch(e => { balance = e.message; draw(); });
     const orderFor = (x, l, r, q, ls) => {
       const n = Number(l.qty), cost = l.costManual && String(x.id) === String(l.serviceId) ? Number(l.cost) : estCost(x, n);
       const share = q.sell ? (Number(l.sell) || 0) / q.sell : 1 / ls.length;
@@ -1236,7 +1243,7 @@
             (o.refillable || refillOk.has(String(o.serviceId))) && o.status !== 'cancelled' ? h('button', { type: 'button', className: 'btn btn-ghost btn-sm', title: 'Yêu cầu Baostar bảo hành (bù số lượng tụt)', textContent: '🛡', onclick: () => requestRefill(o) }) : null,
             h('button', { type: 'button', className: 'btn btn-ghost btn-sm', title: o.progressSentAt ? 'Đã báo tiến độ lúc ' + fmtTime(o.progressSentAt) : 'Báo tiến độ cho khách', textContent: '📊', onclick: async () => { await refreshStatus([o]).catch(() => {}); const f = (o.payCode && o.groupSize > 1 && await groupOf(o.payCode)) || (await DB.get(ORDERS, [])).find(y => y.id === o.id) || o; invoiceDialog(f, 'progress'); } })))); }))) : h('div', { className: 'empty', textContent: 'Chưa có đơn dịch vụ trong khoảng này. Tạo đơn từ Hộp thư (nút "＋ Tạo đơn dịch vụ") hoặc nút ＋ Tạo đơn.' }));
       drawSettings(s, this);
-      if (s.apiKey) call('balance').then(b => { $('svBalance').textContent = `Số dư: ${num(b?.balance ?? b).toLocaleString('vi-VN')} ${b?.currency || ''}`; }).catch(e => { $('svBalance').textContent = e.message; });
+      if (s.apiKey) call('balance').then(b => { const raw = b?.balance ?? b?.data?.balance ?? b?.money ?? b?.amount ?? b; $('svBalance').textContent = `Số dư: ${money0(raw).toLocaleString('vi-VN')} ${b?.currency || 'VND'}`; $('svBalance').title = 'API trả: ' + JSON.stringify(b).slice(0, 200); }).catch(e => { $('svBalance').textContent = e.message; });
       else $('svBalance').textContent = 'Chưa nhập API key';
     }
   });
