@@ -15,7 +15,7 @@
   const dropQuote = async id => { await DB.set(QUOTES, (await quotes()).filter(x => x.id !== id)); ping(); };
   const expired = q => q.state === 'quote' && Date.now() > (q.expiresAt || Infinity);
   const newPayCode = () => 'DV' + Array.from(crypto.getRandomValues(new Uint8Array(6)), b => 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'[b % 31]).join('');
-  const DEFAULTS = { home: 'https://smm.baostar.net', apiUrl: 'https://smm.baostar.net/api/v2', apiKey: '', prices: {} };
+  const DEFAULTS = { home: 'https://smm.baostar.net', apiUrl: 'https://smm.baostar.net/api/v2', apiKey: '', prices: {}, usdRate: 27000 };
   // dichvu.baostar.net là hệ thống khác; key API thuộc smm.baostar.net → tự đổi cài đặt cũ.
   const settings = async () => { const s = { ...DEFAULTS, ...(await DB.get(SET, {})) };
     if (/^https?:\/\/dichvu\.baostar\.net/i.test(s.home)) { s.home = DEFAULTS.home; await DB.set(SET, s); }
@@ -225,15 +225,20 @@
   const estCost = (svc, qty) => svc ? (svc.unitCost || 0) * qty : 0;
   const num = v => Number(String(v ?? '').replace(/[^0-9.\-]/g, ''));
   // Số tiền có thể ghi kiểu Việt "2.450.000" / "12.448" (dấu chấm ngăn nghìn), kiểu Anh "2,450,000.50" hoặc số thường "2450000.0000".
-  // Số dư VND: ưu tiên số web hiện ("Số dư: 50,475"); API Baostar trả số dư theo tiền khác (vd 2 = USD) nên chỉ dùng khi là VND.
+  // Số dư VND lấy từ API. Baostar trả số dư theo USD → đổi theo tỉ giá Baostar công bố (mặc định 27.000đ/USD, sửa trong Cài đặt dịch vụ).
+  // API lỗi mới đọc số dư trên trang web.
   async function vndBalance() {
-    const s = await settings();
+    const s = await settings(), rate = Number(s.usdRate) || 27000;
+    try {
+      const b = await call('balance'), raw = b?.balance ?? b?.data?.balance ?? b?.money ?? b?.amount ?? b, cur = String(b?.currency || '').toUpperCase(), v = money0(raw);
+      if (Number.isFinite(v)) {
+        const usd = cur === 'USD' || (!cur && v < 5000); // không ghi tiền mà số nhỏ (vd 1.87) → USD
+        return usd ? { v: Math.round(v * rate), src: 'api', note: `API: ${raw} USD × ${rate.toLocaleString('vi-VN')}đ` } : { v, src: 'api', note: `API: ${raw} ${cur || 'VND'}` };
+      }
+    } catch (e) { if (!window.metaDesktop?.svcWebBalance) throw e; }
     if (window.metaDesktop?.svcWebBalance && s.home) { const w = await window.metaDesktop.svcWebBalance({ origin: s.home }).catch(() => null);
-      if (w?.raw) { const v = money0(w.raw); if (Number.isFinite(v)) return { v, src: 'web' }; } }
-    const b = await call('balance'), raw = b?.balance ?? b?.data?.balance ?? b?.money ?? b?.amount ?? b, cur = String(b?.currency || '').toUpperCase();
-    const v = money0(raw);
-    if (cur && !/^(VND|VNĐ|Đ)$/.test(cur)) return { v: NaN, why: `API trả số dư ${raw} ${cur} (không phải VND), mở cột Dịch vụ đăng nhập web để app đọc số dư VND` };
-    return { v, src: 'api' };
+      if (w?.raw) { const v = money0(w.raw); if (Number.isFinite(v)) return { v, src: 'web', note: 'Đọc từ trang web dịch vụ (API lỗi)' }; } }
+    return { v: NaN, why: 'Không đọc được số dư' };
   }
   const money0 = v => { if (typeof v === 'number') return v; let t = String(v ?? '').replace(/[^0-9.,\-]/g, '');
     if (/^-?\d{1,3}(\.\d{3})+(,\d+)?$/.test(t)) t = t.replace(/\./g, '').replace(',', '.');
@@ -862,7 +867,7 @@
     const extras = [];
     const isExtra = l => extras.some(x => x.id === l.id);
     const eff = l => { const e = edits.get(l.id); return !e || l.done ? l : { ...l, ...e, ...(e.qty != null && Number(e.qty) !== Number(l.qty) ? { costManual: false } : {}) }; };
-    let balance = null, busy = false;
+    let balance = null, balNote = '', busy = false;
     const sid = l => alt.get(l.id) || String(l.serviceId);
     const svcOf = l => list.find(x => x.id === sid(l));
     const lines = () => [...linesOf(q).map(eff), ...extras.filter(x => !linesOf(q).some(y => y.id === x.id))];
@@ -927,14 +932,14 @@
       const rows = [
         [checking ? '…' : bad.length ? '✗' : '✓', checking ? 'Đang kiểm tra trạng thái máy chủ mới nhất trên web…' : bad.length ? `${bad.length} dòng chưa tạo được (xem dòng đỏ, bấm Đổi máy chủ)` : `${pending.length} đơn sẵn sàng tạo`, !checking && !!bad.length],
         [nowCost > quotedCost * 1.001 ? '!' : '✓', `Giá gốc bây giờ ≈ ${money(nowCost)} (lúc báo giá ${money(quotedCost)}) · lãi cả báo giá ≈ ${money(sell - sumOf(ls.filter(l => l.done), 'cost') - nowCost)}`, sell - nowCost < 0],
-        [typeof balance === 'number' ? (balance >= nowCost ? '✓' : '✗') : '…', typeof balance === 'number' ? `Số dư Baostar ${money(balance)}${balance < nowCost ? ` · thiếu ${money(nowCost - balance)} cho ${pending.length} đơn` : ''}` : balance ? 'Không đọc được số dư: ' + balance : 'Đang đọc số dư…', typeof balance === 'number' && balance < nowCost],
+        [typeof balance === 'number' ? (balance >= nowCost ? '✓' : '✗') : '…', typeof balance === 'number' ? `Số dư Baostar ${money(balance)}${balNote ? ` (${balNote})` : ''}${balance < nowCost ? ` · thiếu ${money(nowCost - balance)} cho ${pending.length} đơn` : ''}` : balance ? 'Không đọc được số dư: ' + balance : 'Đang đọc số dư…', typeof balance === 'number' && balance < nowCost],
         ['💰', `Đã thu ${money(q.paidAmount)} / ${money(q.sell)}${q.payNote ? ' · ' + q.payNote : ''}`, false]];
       checks.replaceChildren(...rows.map(([ic, t, b]) => h('div', { className: b ? 'neg' : '' }, h('strong', { textContent: ic + ' ' }), t)));
       const ok = pending.filter(l => !lineCheck(l)).length;
       btn.textContent = busy ? 'Đang tạo đơn…' : ls.some(l => l.error && !l.done) ? `Thử lại ${ok} đơn` : `Tạo ${ok} đơn Baostar`;
       btn.disabled = busy || checking || !ok;
     };
-    vndBalance().then(r => { balance = Number.isFinite(r.v) ? r.v : (r.why || 'không rõ'); draw(); }).catch(e => { balance = e.message; draw(); });
+    vndBalance().then(r => { balance = Number.isFinite(r.v) ? r.v : (r.why || 'không rõ'); balNote = r.note || ''; draw(); }).catch(e => { balance = e.message; draw(); });
     const orderFor = (x, l, r, q, ls) => {
       const n = Number(l.qty), cost = l.costManual && String(x.id) === String(l.serviceId) ? Number(l.cost) : estCost(x, n);
       const share = q.sell ? (Number(l.sell) || 0) / q.sell : 1 / ls.length;
@@ -1253,7 +1258,7 @@
             (o.refillable || refillOk.has(String(o.serviceId))) && o.status !== 'cancelled' ? h('button', { type: 'button', className: 'btn btn-ghost btn-sm', title: 'Yêu cầu Baostar bảo hành (bù số lượng tụt)', textContent: '🛡', onclick: () => requestRefill(o) }) : null,
             h('button', { type: 'button', className: 'btn btn-ghost btn-sm', title: o.progressSentAt ? 'Đã báo tiến độ lúc ' + fmtTime(o.progressSentAt) : 'Báo tiến độ cho khách', textContent: '📊', onclick: async () => { await refreshStatus([o]).catch(() => {}); const f = (o.payCode && o.groupSize > 1 && await groupOf(o.payCode)) || (await DB.get(ORDERS, [])).find(y => y.id === o.id) || o; invoiceDialog(f, 'progress'); } })))); }))) : h('div', { className: 'empty', textContent: 'Chưa có đơn dịch vụ trong khoảng này. Tạo đơn từ Hộp thư (nút "＋ Tạo đơn dịch vụ") hoặc nút ＋ Tạo đơn.' }));
       drawSettings(s, this);
-      if (s.apiKey) vndBalance().then(r => { $('svBalance').textContent = Number.isFinite(r.v) ? `Số dư: ${r.v.toLocaleString('vi-VN')}đ` : r.why; $('svBalance').title = r.src === 'web' ? 'Đọc từ trang web dịch vụ' : 'Đọc từ API'; }).catch(e => { $('svBalance').textContent = e.message; });
+      if (s.apiKey) vndBalance().then(r => { $('svBalance').textContent = Number.isFinite(r.v) ? `Số dư: ${r.v.toLocaleString('vi-VN')}đ` : r.why; $('svBalance').title = r.note || ''; }).catch(e => { $('svBalance').textContent = e.message; });
       else $('svBalance').textContent = 'Chưa nhập API key';
     }
   });
@@ -1279,6 +1284,7 @@
   function drawSettings(s, tab) {
     const box = $('svSettings'); if (box.contains(document.activeElement)) return; // đang gõ thì không vẽ lại
     const home = h('input', { type: 'text', inputMode: 'url', value: s.home }), api = h('input', { type: 'text', inputMode: 'url', value: s.apiUrl });
+    const usd = h('input', { type: 'number', min: 1000, step: 100, value: s.usdRate || 27000, title: 'API Baostar trả số dư theo USD: app nhân với tỉ giá này để ra số dư VND' });
     const key = h('input', { type: 'password', value: s.apiKey, placeholder: 'Dán API key (web dịch vụ › Tạo web con và API › Tích hợp API)', autocomplete: 'off' });
     const priceBox = h('div', { className: 'svc-prices scroll' });
     const filt = { q: '', plat: '', state: '', limit: 100 };
@@ -1435,11 +1441,12 @@
       h('div', { className: 'form-grid' },
         h('label', { className: 'field' }, 'Trang chủ web dịch vụ', home),
         h('label', { className: 'field' }, 'URL API', api),
-        h('label', { className: 'field' }, 'API key', key)),
+        h('label', { className: 'field' }, 'API key', key),
+        h('label', { className: 'field' }, 'Tỉ giá USD của Baostar (đ)', usd)),
       h('div', { className: 'row', style: 'gap:8px;margin-top:10px' },
         h('button', { className: 'btn btn-primary btn-sm', textContent: 'Lưu', onclick: async () => {
           for (const [el, label] of [[home, 'Trang chủ'], [api, 'URL API']]) if (!/^https:\/\//i.test(el.value.trim())) return toast(label + ' phải bắt đầu bằng https://', 5000);
-          await saveSettings({ home: home.value.trim(), apiUrl: api.value.trim(), apiKey: key.value.trim() }); await DB.set(CACHE, null); toast('Đã lưu cài đặt dịch vụ.'); tab.refresh();
+          await saveSettings({ home: home.value.trim(), apiUrl: api.value.trim(), apiKey: key.value.trim(), usdRate: Number(usd.value) || 27000 }); await DB.set(CACHE, null); toast('Đã lưu cài đặt dịch vụ.'); tab.refresh();
         } }),
         h('button', { className: 'btn btn-ghost btn-sm', textContent: 'Tải lại danh sách dịch vụ', onclick: async () => { try { await services(true); catMsg.textContent = catalogMsg; drawPrices(); toast('Đã tải danh sách dịch vụ.'); } catch (e) { toast(e.message, 6000); } } }),
         h('button', { className: 'btn btn-ghost btn-sm', textContent: '↻ Đọc lại web dịch vụ (ghi chú, bảo trì, giá)', title: 'Đọc trang web của URL API bằng phiên đăng nhập ở cột Dịch vụ', onclick: reloadWeb }), catMsg),
