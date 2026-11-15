@@ -398,7 +398,9 @@ app.whenReady().then(async () => {
         const NUM = /([\\d][\\d.,]*\\s?(?:[KkMmBb]|N|Tr)?)\\s*/.source;
         g('followers', new RegExp(NUM + '(?:Followers?|người theo dõi)', 'i'));
         g('following', new RegExp(NUM + '(?:Following|Đang theo dõi|đang follow)', 'i'));
-        g('likes', new RegExp(NUM + '(?:Likes?|lượt thích|Thích|lượt tim)', 'i'));
+        g('likes', new RegExp(NUM + '(?:Likes?|lượt thích|Thích|lượt tim|lượt bày tỏ cảm xúc|cảm xúc|reactions?)', 'i'));
+        // Facebook: "Bạn và 45 người khác" / "Lan và 45 người khác" → 46
+        if (out.likes == null) { const m = t.match(/và\\s+([\\d][\\d.,]*\\s?(?:[KkMm]|N|Tr)?)\\s+người khác|and\\s+([\\d][\\d.,]*[KkMm]?)\\s+others/i); if (m) { const v = n(m[1] || m[2]); if (v != null) out.likes = v + 1; } }
         g('views', new RegExp(NUM + '(?:views?|lượt xem)', 'i'));
         g('comments', new RegExp(NUM + '(?:comments?|bình luận)', 'i'));
         return out; })()`).catch(() => ({}));

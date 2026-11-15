@@ -790,7 +790,7 @@
     const fit = (t, maxW, f) => { x.font = f; t = String(t); if (x.measureText(t).width <= maxW) return t; while (t.length > 1 && x.measureText(t + '…').width > maxW) t = t.slice(0, -1); return t + '…'; };
     const items = multi(o) ? o.lines.map(l => ({ name: l.displayName, link: l.link || o.link, ord: l.order || l })) : [{ name: o.displayName || o.serviceName || 'Dịch vụ', link: o.link, ord: o }];
     const info = it => { const q = qtyOf(it.ord), d = doneOf(it.ord), st = it.ord.status === 'done' || kind === 'done' && !multi(o) ? 'done' : /pending/i.test(it.ord.svcStatus || '') ? 'wait' : 'run';
-      const start = it.ord.startCount != null ? num(it.ord.startCount) : null, real = o._real && items.length === 1 ? o._real.v : null;
+      const start = it.ord.startCount != null ? num(it.ord.startCount) : it.ord.baseCount ?? null, real = o._real && items.length === 1 ? o._real.v : null;
       // Số thật trên trang (đã chụp) mới hơn số Baostar báo: đã lên = số thật − số ban đầu.
       const dd = st === 'done' ? q : real != null && start != null ? Math.min(q, Math.max(d ?? 0, real - start)) : d;
       const pct = st === 'done' ? 100 : dd != null && q ? Math.min(100, Math.round(dd / q * 100)) : 0; return { q, d: dd, pct, st, start, real }; };
@@ -843,14 +843,20 @@
   const metricOf = name => /follow|theo dõi/i.test(name) ? 'followers' : /view|lượt xem|mắt/i.test(name) ? 'views' : /bình luận|comment|cmt/i.test(name) ? 'comments' : /share|chia sẻ/i.test(name) ? 'shares' : /like|tim|thích|cảm xúc/i.test(name) ? 'likes' : '';
   // Đơn "đã chỉnh theo số thật": còn lại = tổng − (số thật − số ban đầu) (không thấp hơn số Baostar đã báo).
   const LABEL = { followers: 'follower', following: 'following', likes: 'lượt thích', views: 'lượt xem', comments: 'bình luận', shares: 'chia sẻ' };
+  // Lưu số gốc (trước khi chạy) vào đơn: lần báo tiến độ sau dùng làm "ban đầu" nếu Baostar chưa có số bắt đầu.
+  async function saveBase(o, real) {
+    const all = await DB.get(ORDERS, []), ids = o.groupIds || [o.id]; let ch = false;
+    for (const x of all) if (ids.includes(x.id) && x.baseCount == null) { x.baseCount = real.v; x.baseKey = real.key; x.baseAt = Date.now(); ch = true; }
+    if (ch) await DB.set(ORDERS, all);
+  }
   function withReal(o, real) {
-    if (!real || multi(o) || o.startCount == null) return null;
-    const q = qtyOf(o), start = num(o.startCount), d = doneOf(o) ?? 0, dd = Math.min(q, Math.max(d, real.v - start));
+    if (!real || multi(o) || (o.startCount == null && o.baseCount == null)) return null;
+    const q = qtyOf(o), start = o.startCount != null ? num(o.startCount) : o.baseCount, d = doneOf(o) ?? 0, dd = Math.min(q, Math.max(d, real.v - start));
     return { ...o, remains: q - dd, _real: real };
   }
   async function invoiceImage(o, inv, kind, { snap = true } = {}) {
     const link = o.link || o.lines?.find(l => l.link)?.link || '';
-    const want = snap && link && ['quote', 'progress', 'done'].includes(kind) && window.metaDesktop?.svcSnap;
+    const want = snap && link && ['quote', 'progress', 'done', 'paid', 'new'].includes(kind) && window.metaDesktop?.svcSnap;
     const sn = want ? await window.metaDesktop.svcSnap({ url: link }).catch(() => null) : null;
     // Chụp được số thật → phiếu tiến độ dùng số thật (Baostar báo tiến độ thường chậm hơn trang thật).
     const key = metricOf(o.displayName || o.serviceName || ''), real = sn?.metrics && key && Number.isFinite(sn.metrics[key]) ? { key, v: sn.metrics[key] } : null;
@@ -865,7 +871,8 @@
     const y0 = card.height - 20;
     x.fillStyle = '#fff'; x.beginPath(); x.roundRect(pad / 2, y0, W - pad, cap + sh + pad / 2, 36); x.fill();
     x.fillStyle = '#6c5ce7'; x.font = '800 30px "Plus Jakarta Sans","Inter","Segoe UI",Arial,sans-serif'; x.textAlign = 'center';
-    x.fillText(`📸 Ảnh thực tế lúc ${new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })} ${new Date().toLocaleDateString('vi-VN')}`, W / 2, y0 + 46);
+    const when = `${new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })} ${new Date().toLocaleDateString('vi-VN')}`;
+    x.fillText(['paid', 'new', 'quote'].includes(kind) ? `📸 Ảnh gốc trước khi chạy · ${when}${real ? ` · ${real.v.toLocaleString('vi-VN')} ${LABEL[real.key] || ''}` : ''}` : `📸 Ảnh thực tế lúc ${when}`, W / 2, y0 + 46);
     const sx = (W - sw) / 2, sy = y0 + cap;
     x.save(); x.beginPath(); x.roundRect(sx, sy, sw, sh, 24); x.clip(); x.drawImage(shot, sx, sy, sw, sh); x.restore();
     x.strokeStyle = '#e5e7eb'; x.lineWidth = 3; x.beginPath(); x.roundRect(sx, sy, sw, sh, 24); x.stroke();
@@ -964,12 +971,18 @@
     const img = h('img', { alt: 'Ảnh hoá đơn', className: 'svc-inv-img' }), hint = h('div', { className: 'hint' }), withImg = h('input', { type: 'checkbox', checked: true });
     let image = '';
     // Vẽ phiếu ngay; rồi chụp "ảnh thực tế" link khách (vài giây) và ghép vào nếu được.
-    const snapNow = async () => { if (!window.metaDesktop?.svcSnap || !['quote', 'progress', 'done'].includes(kind) || !(o.link || o.lines?.some(l => l.link))) return;
+    const snapNow = async () => { if (!window.metaDesktop?.svcSnap || !['quote', 'progress', 'done', 'paid', 'new'].includes(kind) || !(o.link || o.lines?.some(l => l.link))) return;
       const keep = hint.textContent; hint.textContent = (keep ? keep + ' ' : '') + '📸 Đang chụp ảnh thực tế của link khách…';
       const r = await invoiceImage(o, inv, kind).catch(() => null);
       if (r?.snapped) { image = r.dataUrl; img.src = image; hint.textContent = keep + (keep ? ' ' : '') + '📸 Đã ghép ảnh thực tế.';
         // Tin chữ chưa sửa tay → viết lại theo số thật trên trang (vd "đã lên 17/500", "Số thật trên trang: 63 follower").
-        const o2 = withReal(o, r.real);
+        const o2 = ['paid', 'new', 'quote'].includes(kind) ? null : withReal(o, r.real);
+        if (r.real && !o2 && ['paid', 'new', 'quote'].includes(kind) && text.value === text.dataset.orig) {
+          // Báo đã nhận tiền / xác nhận đơn: ghi SỐ GỐC (số trên trang trước khi chạy) để khách đối chiếu, lưu vào đơn.
+          const line = `• Số gốc trước khi chạy (${new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}): ${r.real.v.toLocaleString('vi-VN')} ${LABEL[r.real.key] || ''}`, t0 = text.value, cut = t0.indexOf('\n\n');
+          text.value = cut > 0 ? t0.slice(0, cut) + '\n' + line + t0.slice(cut) : t0 + '\n' + line; text.dataset.orig = text.value; hint.textContent += ' Đã thêm số gốc.';
+          saveBase(o, r.real).catch(() => {});
+        }
         if (o2 && text.value === text.dataset.orig) { const line = `• Số thật trên trang lúc ${new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}: ${r.real.v.toLocaleString('vi-VN')} ${LABEL[r.real.key] || ''}`, t0 = invoiceText(o2, inv, kind), cut = t0.indexOf('\n\n');
           text.value = cut > 0 ? t0.slice(0, cut) + '\n' + line + t0.slice(cut) : t0 + '\n' + line; text.dataset.orig = text.value; hint.textContent += ' Tin chữ đã cập nhật theo số thật.'; } }
       else hint.textContent = keep + (keep ? ' ' : '') + `📸 Không chụp được ảnh thực tế (${r?.snapError || 'lỗi'}), gửi ảnh phiếu thôi.`; };
