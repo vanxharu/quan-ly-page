@@ -419,3 +419,9 @@ td.num.neg{font-weight:700}
 [data-panel=inbox] .ib-plat[aria-pressed=true]{border-color:var(--primary);background:var(--primary-soft);color:var(--text-primary)}
 [data-panel=inbox] .ib-src{display:flex;align-items:center;gap:6px}
 [data-panel=inbox] .ib-src>span{font-size:11px;color:var(--text-muted);margin-right:auto}
+
+/* Logo nền tảng dịch vụ */
+.plat-badge.img{object-fit:contain;background:transparent;border-radius:24%}
+.svc-name-cell{display:inline-flex;align-items:center;gap:6px}
+.svc-chip .plat-badge,.msg-link-btn .plat-badge,.ord-main .plat-badge{vertical-align:-3px;margin-right:4px;display:inline-flex}
+.ord-main .plat-badge{margin-right:6px}

@@ -472,7 +472,8 @@
     if (!links.length) return null;
     return h('div', { className: 'msg-links' }, ...links.map(l => h('button', { type: 'button', className: 'msg-link-btn', title: 'Tạo đơn với link: ' + l,
       onclick: () => App.services.createDialog({ page: c.page, key: c.key, name: c.other.name || '', messages: S.messages, dock: true }, l) },
-      '🧾 Tạo đơn', h('span', { textContent: ' · ' + l.replace(/^https?:\/\/(www\.|m\.)?/, '').slice(0, 32) + (l.length > 44 ? '…' : '') }))));
+      '🧾 Tạo đơn', h('span', { textContent: ' · ' }), App.services.linkPlatform?.(l) ? App.services.platBadge(App.services.linkPlatform(l), 14) : null,
+      h('span', { textContent: (App.services.linkPlatform?.(l) ? ' ' : '') + l.replace(/^https?:\/\/(www\.|m\.)?/, '').slice(0, 32) + (l.length > 44 ? '…' : '') }))));
   }
   function drawBs(c, r, { silent = false, older = false, keepTop = false } = {}) {
     watchThreadScroll();

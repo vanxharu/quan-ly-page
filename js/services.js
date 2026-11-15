@@ -245,7 +245,7 @@
     }
     return out.reverse(); // mới nhất trước
   }
-  const platformOf = link => /tiktok/i.test(link) ? 'tiktok' : /instagram/i.test(link) ? 'instagram' : /youtu/i.test(link) ? 'youtube' : /shopee/i.test(link) ? 'shopee' : /t\.me|telegram/i.test(link) ? 'telegram' : /facebook|fb\.(com|watch|me)/i.test(link) ? 'facebook' : '';
+  const platformOf = link => /tiktok/i.test(link) ? 'tiktok' : /instagram/i.test(link) ? 'instagram' : /youtu/i.test(link) ? 'youtube' : /shopee/i.test(link) ? 'shopee' : /t\.me|telegram/i.test(link) ? 'telegram' : /facebook|fb\.(com|watch|me)/i.test(link) ? 'facebook' : /threads\.(net|com)/i.test(link) ? 'threads' : /(^|\/\/|\.)(x|twitter)\.com/i.test(link) ? 'x' : /lazada/i.test(link) ? 'lazada' : '';
 
   // ── Tạo đơn (hộp thoại) ── ctx: { page, name, key } khi mở từ Hộp thư; link: link khách gửi.
   // Gói bán của tôi: { id, name, kind: 'fixed' (qty + price tổng) | 'unit' (unitPrice / đv), qty, price, unitPrice, serviceId }.
@@ -290,10 +290,19 @@
   // ── Bộ chọn dạng thẻ: lọc theo nền tảng (huy hiệu màu), tìm kiếm, nhóm nền tảng › loại, nhãn màu, giá nổi bật ──
   const PLAT = { Facebook: ['FB', '#1877f2'], TikTok: ['TT', '#0f172a'], Instagram: ['IG', '#d62976'], Youtube: ['YT', '#ff0000'], Shopee: ['SP', '#ee4d2d'],
     Google: ['GG', '#4285f4'], Telegram: ['TG', '#229ed9'], 'X-Twitter': ['X', '#000000'], Threads: ['TH', '#101010'], Lazada: ['LZ', '#0f146d'] };
-  const LINK_PLAT = { facebook: 'Facebook', tiktok: 'TikTok', instagram: 'Instagram', youtube: 'Youtube', shopee: 'Shopee', telegram: 'Telegram' };
+  const LINK_PLAT = { facebook: 'Facebook', tiktok: 'TikTok', instagram: 'Instagram', youtube: 'Youtube', shopee: 'Shopee', telegram: 'Telegram', threads: 'Threads', x: 'X-Twitter', lazada: 'Lazada' };
+  // Huy hiệu nền tảng: ảnh bạn tải trong Cài đặt dịch vụ › logo gắn sẵn trong app (img/platforms/svc/<tên>.png) › chữ tắt.
+  const platSlug = p => String(p || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
   const platBadge = (p, size = 26) => { const [ab, c] = PLAT[p] || [String(p || '?').slice(0, 2).toUpperCase(), '#64748b'];
+    const letters = () => h('span', { className: 'plat-badge', title: p || '', textContent: ab, style: `background:${c};width:${size}px;height:${size}px;font-size:${Math.round(size * 0.4)}px` });
     if (platIcons[p]) return h('img', { className: 'plat-badge img', src: platIcons[p], alt: p, title: p, style: `width:${size}px;height:${size}px` });
-    return h('span', { className: 'plat-badge', title: p || '', textContent: ab, style: `background:${c};width:${size}px;height:${size}px;font-size:${Math.round(size * 0.4)}px` }); };
+    if (!p || noLogo.has(platSlug(p))) return letters();
+    const img = h('img', { className: 'plat-badge img', src: `img/platforms/svc/${platSlug(p)}.png`, alt: p, title: p, draggable: false, style: `width:${size}px;height:${size}px` });
+    img.onerror = () => { noLogo.add(platSlug(p)); img.replaceWith(letters()); };
+    return img; };
+  const noLogo = new Set();
+  // Nền tảng của đơn / báo giá: theo link khách, không có thì theo tên gói "Facebook · …".
+  const platOfOrder = o => LINK_PLAT[platformOf(o?.link || o?.lines?.[0]?.link || '')] || (PLAT[String(o?.displayName || '').split(' · ')[0]] ? String(o.displayName).split(' · ')[0] : '');
   const TAGS = [[/\bvip\b/i, 'VIP', 'vip'], [/theo tháng|\d+\s*tháng/i, 'Theo tháng', 'month'], [/mua theo bài/i, 'Theo bài', 'month'], [/\b(việt|viet|vn)\b|việt nam/i, 'Việt', 'vn'],
     [/\b(tây|tay)\b/i, 'Tây', 'west'], [/không bảo hành|\bkbh\b/i, 'Không BH', 'nowarr'], [/bảo hành \d+|bảo hành 30|bh \d+/i, 'Bảo hành', 'warr'], [/cực nhanh|siêu tốc|siêu nhanh/i, 'Nhanh', 'fast']];
   const tagsOf = text => { const out = [], seen = new Set(); for (const [re, label, cls] of TAGS) if (re.test(text) && !seen.has(label)) { seen.add(label); out.push([label, cls]); } return out; };
@@ -559,8 +568,7 @@
     const step = (n, t) => h('div', { className: 'svc-step' }, h('b', { textContent: String(n) }), t);
     const linkChips = h('div', { className: 'svc-chips', hidden: !chatLinks.length });
     const drawChips = () => linkChips.replaceChildren(h('span', { className: 'hint', textContent: 'Link khách gửi:' }), ...chatLinks.slice(0, 6).map(l => h('button', { type: 'button', className: 'svc-chip' + (l === linkIn.value.trim() ? ' on' : ''), title: l,
-      textContent: (LINK_PLAT[platformOf(l)] ? LINK_PLAT[platformOf(l)] + ' · ' : '') + l.replace(/^https?:\/\/(www\.|m\.)?/, '').slice(0, 34) + (l.length > 44 ? '…' : ''),
-      onclick: () => { linkIn.value = l; linkIn.oninput(); } })));
+      onclick: () => { linkIn.value = l; linkIn.oninput(); } }, LINK_PLAT[platformOf(l)] ? platBadge(LINK_PLAT[platformOf(l)], 14) : null, h('span', { textContent: l.replace(/^https?:\/\/(www\.|m\.)?/, '').slice(0, 34) + (l.length > 44 ? '…' : '') }))));
     const qtyQuick = h('div', { className: 'svc-chips' }, h('span', { className: 'hint', textContent: 'Nhanh:' }), ...[100, 500, 1000, 2000, 5000, 10000].map(n => h('button', { type: 'button', className: 'svc-chip', textContent: n >= 1000 ? n / 1000 + 'K' : String(n),
       onclick: () => { if (qty.readOnly) return; qty.value = n; qty.oninput(); } })));
     // Gợi ý từ lời khách + lặp lại đơn trước (đầu khung).
@@ -1073,14 +1081,14 @@
       // Khách vừa gửi ảnh / báo đã chuyển khoản → nút Đã nhận tiền nổi bật (bạn vẫn tự kiểm tra tài khoản rồi mới xác nhận).
       const payHint = hint && q.state === 'quote' && !expired(q);
       if (payHint) { const b = btn('✅ Đã nhận tiền', () => paymentDialog(q)); b.classList.add('ord-pulse');
-        return h('div', { className: 'ord-bar pay hinted' }, h('span', { className: 'ord-main' }, h('strong', { textContent: '#' + q.payCode }), ` · ${money(amountDue(q) || q.sell)} `,
+        return h('div', { className: 'ord-bar pay hinted' }, h('span', { className: 'ord-main' }, platOfOrder(q) ? platBadge(platOfOrder(q), 16) : null, h('strong', { textContent: '#' + q.payCode }), ` · ${money(amountDue(q) || q.sell)} `,
           h('span', { className: 'ord-hint', textContent: hint.why === 'pic' ? '📷 Khách vừa gửi ảnh, có thể là chuyển khoản: kiểm tra tài khoản' : '💬 Khách báo đã chuyển khoản: kiểm tra tài khoản' })),
           !q.sentAt ? btn('📤', () => invoiceDialog(q, 'quote'), 'btn-ghost') : null, b); }
       const act = q.state === 'paid' ? btn('🚀 Tạo đơn', () => confirmCreate(q))
         : expired(q) ? btn('⏱ Gia hạn 24h', async () => { q.expiresAt = Date.now() + QUOTE_TTL; await saveQuote(q); App.tabs.services?.refresh?.(); }, 'btn-soft')
         : !q.sentAt ? btn('📤 Gửi báo giá', () => invoiceDialog(q, 'quote'))
         : btn('✅ Đã nhận tiền', () => paymentDialog(q));
-      return h('div', { className: 'ord-bar ' + st.kind }, h('span', { className: 'ord-main' }, h('strong', { textContent: '#' + q.payCode }), ` · ${q.displayName} · `, h('strong', { textContent: money(amountDue(q) || q.sell) }),
+      return h('div', { className: 'ord-bar ' + st.kind }, h('span', { className: 'ord-main' }, platOfOrder(q) ? platBadge(platOfOrder(q), 16) : null, h('strong', { textContent: '#' + q.payCode }), ` · ${q.displayName} · `, h('strong', { textContent: money(amountDue(q) || q.sell) }),
         h('span', { className: 'ord-state', textContent: label + (q.state === 'quote' && q.sentAt && !expired(q) ? ' · đã gửi' : '') })),
         q.state === 'quote' && q.sentAt && !expired(q) ? btn('📤', () => invoiceDialog(q, 'quote'), 'btn-ghost') : null, act); }
     const os = st.orders, o = os[0], code = o.payCode || '', done = os.filter(x => x.svcStatus && /progress|processing/i.test(x.svcStatus)).length;
@@ -1159,7 +1167,7 @@
           h('td', {}, h('strong', { textContent: q.payCode })),
           h('td', {}, fmtTime(q.at), h('div', { className: 'hint', textContent: 'hạn ' + fmtTime(q.expiresAt) })),
           h('td', {}, q.customer?.name || '—', h('div', { className: 'hint', textContent: App.pageById(q.pageKey)?.name || q.pageName || '' })),
-          h('td', {}, (q.renewOf ? '🔁 ' : '') + q.displayName, h('div', { className: 'hint', textContent: multi(q) ? q.lines.map(l => `${l.done ? '✓' : l.error ? '✗' : '·'} MC ${l.serviceId} × ${Number(l.qty).toLocaleString('vi-VN')}`).join(' · ') : 'MC ' + q.serviceId + (q.termMonths ? ` · ${q.termMonths} tháng` : '') })),
+          h('td', {}, h('span', { className: 'svc-name-cell' }, platOfOrder(q) ? platBadge(platOfOrder(q), 18) : null, h('span', { textContent: (q.renewOf ? '🔁 ' : '') + q.displayName })), h('div', { className: 'hint', textContent: multi(q) ? q.lines.map(l => `${l.done ? '✓' : l.error ? '✗' : '·'} MC ${l.serviceId} × ${Number(l.qty).toLocaleString('vi-VN')}`).join(' · ') : 'MC ' + q.serviceId + (q.termMonths ? ` · ${q.termMonths} tháng` : '') })),
           h('td', {}, q.link ? h('button', { type: 'button', className: 'btn btn-ghost btn-sm', title: q.link, textContent: '📋 Copy', onclick: () => navigator.clipboard.writeText(q.link).then(() => toast('Đã copy link.')) }) : ''),
           h('td', { textContent: qtyOf(q).toLocaleString('vi-VN') }),
           h('td', {}, money(q.sell), q.paidAmount ? h('div', { className: 'hint', textContent: 'đã nhận ' + money(q.paidAmount) }) : null),
@@ -1209,7 +1217,7 @@
         h('tbody', {}, ...list.map(o => { const { sell, cost } = orderOf(o); return h('tr', {},
           h('td', { textContent: fmtTime(o.at) }),
           h('td', {}, o.customer?.name || '—', h('div', { className: 'hint', textContent: App.pageById(o.pageKey)?.name || '' })),
-          h('td', {}, o.displayName || o.serviceName || '', h('div', { className: 'hint', textContent: `#${o.providerOrderId}${o.displayName ? ' · MC ' + o.serviceId : ''}` })),
+          h('td', {}, h('span', { className: 'svc-name-cell' }, platOfOrder(o) ? platBadge(platOfOrder(o), 18) : null, h('span', { textContent: o.displayName || o.serviceName || '' })), h('div', { className: 'hint', textContent: `#${o.providerOrderId}${o.displayName ? ' · MC ' + o.serviceId : ''}` })),
           h('td', {}, o.link ? h('button', { type: 'button', className: 'btn btn-ghost btn-sm', title: o.link, textContent: '📋 Copy', onclick: () => navigator.clipboard.writeText(o.link).then(() => toast('Đã copy link.')) }) : ''),
           h('td', { textContent: (o.items?.[0]?.qty || 0).toLocaleString('vi-VN') }),
           h('td', { textContent: money(sell) }), vsCell(o), h('td', { textContent: money(cost) + (o.charge ? '' : ' ≈') }),
@@ -1437,5 +1445,5 @@
     if (s.apiKey) drawPrices(); else priceBox.replaceChildren(h('p', { className: 'hint', textContent: 'Nhập API key rồi Lưu để tải danh sách dịch vụ.' }));
     drawPkgs(); drawInvoiceSettings(s); drawIcons();
   }
-  App.services = { createDialog, closeDock, orderStates, orderBar, inboxBox, refreshStatus, linksIn, call, openWeb, mapStatus, catalogProgress, noteLines, speedOf, invoiceDialog, invoiceText, paymentDialog, confirmCreate, quotes, renewQuote, vipTick, termOf, requestRefill, refreshRefills };
+  App.services = { platBadge, linkPlatform: l => LINK_PLAT[platformOf(l)] || '', createDialog, closeDock, orderStates, orderBar, inboxBox, refreshStatus, linksIn, call, openWeb, mapStatus, catalogProgress, noteLines, speedOf, invoiceDialog, invoiceText, paymentDialog, confirmCreate, quotes, renewQuote, vipTick, termOf, requestRefill, refreshRefills };
 })();
