@@ -183,7 +183,7 @@ function zWatch(tag) {
   return true;
 }
 
-function createZaloAuto({ wc, sendKey, typeText = null, onList = () => {}, onThread = () => {}, log = () => {} }) {
+function createZaloAuto({ wc, sendKey, typeText = null, beginInput = async () => {}, endInput = () => {}, onList = () => {}, onThread = () => {}, log = () => {} }) {
   // Trạng thái để chẩn đoán (thanh trạng thái + Downloads/GetHelps-debug/zalo.json).
   const stat = { state: 'closed', url: '', rows: 0, kept: 0, err: '', listAt: 0, events: 0, watch: false };
   // Hàm chạy trong trang kèm hàm phụ (zReacts dùng trong zRead).
@@ -220,6 +220,10 @@ function createZaloAuto({ wc, sendKey, typeText = null, onList = () => {}, onThr
   });
   const send = args => queue(async () => {
     const e = await open(args.uid); if (e) return e;
+    // Zalo chỉ nhận chữ khi trang thật sự được chọn: hiện cột Zalo trong lúc gửi (vài giây) rồi trả lại như cũ.
+    await beginInput(); try { return await send0(args); } finally { endInput(); }
+  });
+  const send0 = async args => {
     const text = String(args.text || '').trim(), image = String(args.image || '');
     const before = await run(zMineCount).catch(() => ({ n: 0, pics: 0 }));
     let replyWarn = '';
@@ -246,7 +250,7 @@ function createZaloAuto({ wc, sendKey, typeText = null, onList = () => {}, onThr
     }
     await sleep(300);
     return { ok: true, ...(replyWarn ? { warn: replyWarn } : {}), ...(await run(zRead, false).catch(() => null) || {}) };
-  });
+  };
   const EMO = ['👍', '❤️', '😆', '😮', '😢', '😡'];
   const react = args => queue(async () => {
     const e = await open(args.uid); if (e) return e;

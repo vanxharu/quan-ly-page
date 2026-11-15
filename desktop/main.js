@@ -446,6 +446,7 @@ app.whenReady().then(async () => {
   worker.webContents.setAudioMuted(true);
   worker.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   ipcMain.handle('meta-lookup', (e, args) => fromPage(e) ? auto.lookupProfile(args || {}) : { error: 'denied' });
+  let zaloInput = null;
   const zaloDbg = async () => { const d = zaloView.webContents.debugger; if (!d.isAttached()) d.attach('1.3');
     await d.sendCommand('Emulation.setFocusEmulationEnabled', { enabled: true }).catch(() => {}); return d; };
   const zaloKey = async (d, key, modifiers = 0) => { const k = key === 'Enter' ? { key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13 } : { key, code: key };
@@ -456,6 +457,9 @@ app.whenReady().then(async () => {
   const zalo = createZaloAuto({ wc: () => zaloView.webContents,
     // Nhập chữ / bấm phím THẬT vào Zalo qua giao thức trình duyệt (CDP): Zalo nằm ẩn dưới trang chính nên không có tiêu điểm,
     // giả lập "đang được chọn" (Emulation.setFocusEmulationEnabled) rồi Input.insertText / Input.dispatchKeyEvent — không cướp tiêu điểm của bạn.
+    // Trong lúc gửi: mở cột Zalo (để trang Zalo được chọn thật, nhận chữ / Enter), gửi xong trả lại cột đang mở trước đó.
+    beginInput: async () => { zaloInput = { prev: side, page: pageView.webContents.isFocused() }; if (side !== 'zalo') show('zalo', true); await new Promise(r => setTimeout(r, 450)); zaloView.webContents.focus(); },
+    endInput: () => { const p = zaloInput; zaloInput = null; if (!p) return; setTimeout(() => { if (p.prev !== 'zalo') { if (p.prev) show(p.prev, true); else show('zalo', false); } if (p.page) pageView.webContents.focus(); }, 600); },
     typeText: async text => { const d = await zaloDbg(); const parts = String(text).split('\n');
       for (let i = 0; i < parts.length; i++) { if (i) await zaloKey(d, 'Enter', 8); if (parts[i]) await d.sendCommand('Input.insertText', { text: parts[i] }); } },
     sendKey: async key => { try { await zaloKey(await zaloDbg(), key, 0); } catch { const w = zaloView.webContents; w.sendInputEvent({ type: 'keyDown', keyCode: key }); if (key === 'Enter') w.sendInputEvent({ type: 'char', keyCode: '\r' }); w.sendInputEvent({ type: 'keyUp', keyCode: key }); } },
