@@ -14,15 +14,16 @@
   color-scheme:light;
 }
 body.dark-mode{
-  --primary:#c0b4ff;--primary-hover:#d5cbff;--primary-soft:#2c2d49;--primary-border:#62598c;--primary-glow:#b0a0f52b;
+  --primary:#c0b4ff;--primary-hover:#d5cbff;--primary-soft:#2a2540;--primary-border:#62598c;--primary-glow:#b0a0f52b;
   --action-bg:#6852d0;--action-hover:#7660df;--action-text:#fff;
   --accent:#83d7bd;--accent-soft:#1d3935;
-  --bg-primary:#101721;--bg-card:#1b2635;--bg-input:#111c2a;--bg-hover:#26364a;--bg-sidebar:#151f2d;--bg-thread:#121d2b;
-  --border:#344459;--border-subtle:#2a394c;--input-border:#60758f;
-  --text-primary:#eff4fb;--text-secondary:#c2cede;--text-muted:#a4b4c9;
+  /* Đen trung tính kiểu Outlook (không ánh xanh) */
+  --bg-primary:#0a0a0a;--bg-card:#1c1c1c;--bg-input:#141414;--bg-hover:#2a2a2a;--bg-sidebar:#141414;--bg-thread:#111111;
+  --border:#303030;--border-subtle:#262626;--input-border:#4a4a4a;
+  --text-primary:#f3f3f3;--text-secondary:#c4c4c4;--text-muted:#999999;
   --ok-bg:#1d382f;--ok-text:#9de3ba;--err-bg:#402630;--err-text:#ffb9c4;--pending-bg:#3d3021;--pending-text:#ffda9c;
-  --success:#75d5a1;--seg-active:#2b3a4e;--glass-bg:#1b2635;
-  --message-out:#2d3451;--message-out-border:#555781;
+  --success:#75d5a1;--seg-active:#2a2a2a;--glass-bg:#1c1c1c;
+  --message-out:#2b2840;--message-out-border:#4a4566;
   --shadow-xs:0 1px 3px #00000024;--shadow-sm:0 8px 26px #00000038;
   --brand-gradient:linear-gradient(135deg,#8066df,#6852d0);
   color-scheme:dark;
