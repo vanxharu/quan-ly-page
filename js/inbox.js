@@ -1256,7 +1256,7 @@
     if (!Array.isArray(rows)) return;
     const st = await settings().catch(() => ({}));
     const old = new Map(S.zconvs.map(c => [c.id, c])), out = [], now = Date.now();
-    rows.filter(zKeep).forEach((r, i) => {
+    rows.filter(zKeep).slice(0, 10).forEach((r, i) => { // tối đa 10 khách Zalo mới nhất
       const id = 'bs:zalo:' + r.id, prev = old.get(id), mine = /^(bạn|you)\s*:/i.test(r.snippet);
       const changed = !prev || prev.snippet !== r.snippet;
       const at = !changed && prev ? prev.lastAt : zTime(r.time, now) - i; // tin cuối không đổi: giữ mốc cũ (Zalo ghi "4 phút" trôi theo giờ)
@@ -1275,7 +1275,7 @@
       out.push(c);
     });
     // Dòng Zalo không còn trong khung đang thấy (danh sách ảo) vẫn giữ lại.
-    for (const c of S.zconvs) if (!out.some(x => x.id === c.id)) out.push(c);
+    for (const c of S.zconvs) if (!out.some(x => x.id === c.id) && out.length < 10) out.push(c);
     zFirst = false; S.zconvs = out;
     S.convs = [...new Map([...S.convs.filter(c => !c.zalo), ...out].map(c => [c.id, c])).values()].sort((a, b) => new Date(b.updated_time) - new Date(a.updated_time));
     if (App.current() === 'inbox') drawList();

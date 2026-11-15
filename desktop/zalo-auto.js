@@ -36,7 +36,7 @@ async function zListAll(max) {
   const seen = new Map(), add = () => { for (const r of window.__gaZList()) if (!seen.has(r.id)) seen.set(r.id, r); };
   window.__gaZList = window.__gaZList || (() => []);
   add();
-  for (let i = 0; i < 30 && seen.size < max && sc.scrollTop + sc.clientHeight < sc.scrollHeight - 4; i++) {
+  for (let i = 0; i < 8 && seen.size < max && sc.scrollTop + sc.clientHeight < sc.scrollHeight - 4; i++) {
     sc.scrollTop += Math.max(200, sc.clientHeight * 0.7); await new Promise(r => setTimeout(r, 250)); add();
   }
   await new Promise(r => setTimeout(r, 250)); add();
@@ -199,7 +199,7 @@ function createZaloAuto({ wc, sendKey, onList = () => {}, onThread = () => {}, l
   const list = ({ deep = false } = {}) => queue(async () => {
     const s = await ready(); if (s !== 'ready') return err(s);
     await run(`() => { window.__gaZList = ${zList}; }`).catch(() => {});
-    const rows = deep ? await run(zListAll, 60).catch(e => { stat.err = 'zListAll: ' + e.message; return null; }) : await run(zList).catch(e => { stat.err = 'zList: ' + e.message; return null; });
+    const rows = deep ? await run(zListAll, 20).catch(e => { stat.err = 'zListAll: ' + e.message; return null; }) : await run(zList).catch(e => { stat.err = 'zList: ' + e.message; return null; });
     if (!rows) return { error: 'Không đọc được danh sách Zalo.' };
     stat.rows = rows.length; stat.listAt = Date.now(); stat.err = '';
     stat.sample = rows.slice(0, 40).map(r => `${r.name.slice(0, 14)}${r.group ? ' [nhóm]' : ''}${r.oa ? ' [OA]' : ''}`);
