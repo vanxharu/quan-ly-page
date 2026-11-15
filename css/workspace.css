@@ -407,3 +407,15 @@ td.num.neg{font-weight:700}
 [data-panel=inbox] .rc.seen{overflow:hidden}
 [data-panel=inbox] .rc.seen .avatar,[data-panel=inbox] .rc.seen img{width:14px!important;height:14px!important;font-size:7px}
 [data-panel=inbox] .rc-note{text-align:right;font-size:10px;color:var(--text-muted);margin:-6px 32px 6px 0}
+
+/* Logo nền tảng */
+.plat{display:inline-flex;align-items:center;justify-content:center;flex:none;border-radius:50%;overflow:hidden}
+.plat img{width:100%;height:100%;object-fit:contain;display:block}
+.plat-ch{width:100%;height:100%;border-radius:50%;color:#fff;font-weight:700;display:flex;align-items:center;justify-content:center;line-height:1}
+.avwrap .pl{position:absolute;right:-3px;bottom:-3px;border:2px solid var(--bg-card);background:var(--bg-card);box-sizing:content-box}
+.avwrap .pg{right:auto;left:-3px}
+[data-panel=inbox] .ib-plats{display:inline-flex;gap:3px;align-items:center}
+[data-panel=inbox] .ib-plat{height:26px;min-width:26px;padding:0 6px;border-radius:8px;border:1px solid var(--border);background:transparent;color:var(--text-secondary);font-size:11px;display:inline-flex;align-items:center;justify-content:center;cursor:pointer}
+[data-panel=inbox] .ib-plat[aria-pressed=true]{border-color:var(--primary);background:var(--primary-soft);color:var(--text-primary)}
+[data-panel=inbox] .ib-src{display:flex;align-items:center;gap:6px}
+[data-panel=inbox] .ib-src>span{font-size:11px;color:var(--text-muted);margin-right:auto}

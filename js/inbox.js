@@ -146,13 +146,16 @@
           h('div', { className: 'ib-toolbar' },
             h('div', { className: 'chips', id: 'ibFilter' }, ...[['all', 'Tất cả'], ['unread', 'Chưa đọc'], ['unanswered', 'Chưa trả lời'], ['today', 'Hôm nay']].map(([f, t]) =>
               h('button', { className: 'chip', dataset: { f }, textContent: t, 'aria-pressed': String(f === S.filter), onclick: () => { S.filter = f; drawList(); } }))),
+            h('div', { className: 'ib-plats', id: 'ibPlat', role: 'group', 'aria-label': 'Lọc theo nền tảng' }, ...['all', 'messenger', 'zalo'].map(k =>
+              h('button', { type: 'button', className: 'ib-plat', dataset: { p: k }, title: k === 'all' ? 'Mọi nền tảng' : 'Chỉ ' + PLAT[k].name, 'aria-pressed': String((S.plat || 'all') === k),
+                onclick: () => { S.plat = k; local.set('inboxPlat', k); drawList(); } }, k === 'all' ? 'Tất cả' : platLogo(k, 16)))),
             h('select', { id: 'ibLabel', 'aria-label': 'Lọc theo nhãn', onchange: () => drawList() }),
             h('details', { className: 'ib-menu' },
               h('summary', { title: 'Thêm', 'aria-label': 'Thêm' }, '⋯'),
               h('div', { className: 'ib-menu-pop' },
-                window.metaDesktop?.listThreads ? h('label', {}, 'Nguồn tin', h('select', { 'aria-label': 'Nguồn tin nhắn', title: 'Business Suite: đọc như hộp thư Meta, trả lời được cả tin quá 7 ngày (trong cột Meta). API: đọc và trả lời ngay trong app.',
-                  onchange: e => { local.set('inboxSource', e.target.value); S.convs = []; S.more.clear(); load(false, { force: true }); } },
-                  h('option', { value: 'bs', textContent: 'Business Suite', selected: bsFirst() }), h('option', { value: 'api', textContent: 'API', selected: !bsFirst() }))) : null,
+                window.metaDesktop?.listThreads ? h('div', { className: 'ib-src', title: 'Nguồn đọc tin Messenger · Business Suite: đọc như hộp thư Meta, trả lời được cả tin quá 7 ngày. API: đọc và trả lời qua API.' },
+                  h('span', {}, 'Nguồn tin'), ...['bs', 'api'].map(v => h('button', { type: 'button', className: 'ib-plat', title: PLAT[v].name, 'aria-label': PLAT[v].name, 'aria-pressed': String(v === 'bs' ? bsFirst() : !bsFirst()),
+                    onclick: e => { if ((v === 'bs') === bsFirst()) return; local.set('inboxSource', v); e.currentTarget.parentElement.querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', String(b === e.currentTarget))); S.convs = []; S.more.clear(); load(false, { force: true }); } }, platLogo(v, 18)))) : null,
                 window.metaDesktop?.openZalo ? h('button', { type: 'button', title: 'Mở Zalo Web (Zalo cá nhân) ở cột phải · Ctrl+Shift+Z', onclick: () => window.metaDesktop.openZalo() }, 'Mở Zalo') : null,
                 window.metaDesktop?.resetZalo ? h('button', { type: 'button', title: 'Zalo Web treo "Đang đăng nhập…": xoá phiên Zalo trong app rồi quét QR lại', onclick: () => { if (confirm('Đăng nhập lại Zalo?\n\nApp xoá phiên Zalo Web trong app (không ảnh hưởng Zalo trên điện thoại), bạn quét mã QR lại.')) window.metaDesktop.resetZalo(true); } }, 'Đăng nhập lại Zalo') : null,
                 window.metaDesktop?.lookupProfile ? h('button',{type:'button',textContent:'Lấy avatar khách',title:'Đọc avatar + UID khách từ Business Suite (từng khách, tối đa 30)',onclick:e=>lookupList(e.currentTarget)}) : null,
@@ -776,11 +779,23 @@
       }
     }
   }
-  // Ảnh khách kèm ảnh Page nhỏ ở góc (như Business Suite).
+  // Logo nền tảng (file bạn gửi, đặt ở img/platforms/). Chưa có file → huy hiệu chữ cái đơn giản.
+  const PLAT = { messenger: { name: 'Messenger', file: 'messenger', ch: 'M', color: '#7b61ff' }, zalo: { name: 'Zalo', file: 'zalo', ch: 'Z', color: '#2f80ed' },
+    bs: { name: 'Business Suite', file: 'business-suite', ch: 'B', color: '#5b6b8c' }, api: { name: 'API', file: 'api', ch: 'A', color: '#3b9b7a' } };
+  const platOf = c => c?.platform || 'messenger';
+  function platLogo(key, size = 16) {
+    const p = PLAT[key] || PLAT.messenger, box = h('span', { className: 'plat', title: p.name, style: `width:${size}px;height:${size}px` });
+    const letter = () => box.replaceChildren(h('span', { className: 'plat-ch', style: `background:${p.color};font-size:${Math.round(size * .6)}px`, textContent: p.ch }));
+    const exts = ['svg', 'png', 'webp'], img = h('img', { alt: p.name, src: `img/platforms/${p.file}.${exts[0]}`, draggable: false });
+    let i = 0; img.onerror = () => { if (++i < exts.length) img.src = `img/platforms/${p.file}.${exts[i]}`; else letter(); };
+    box.append(img); return box;
+  }
+  // Ảnh khách: logo nền tảng ở góc phải dưới, ảnh Page nhỏ ở góc trái dưới.
   const custAvatar = (c, size = 36) => {
-    const pg = App.avatar(c.page.name, App.pageAvatarUrl(c.page), Math.round(size * .42));
+    const pg = App.avatar(c.page.name, App.pageAvatarUrl(c.page), Math.round(size * .38));
     pg.classList.add('pg'); pg.title = c.page.name;
-    return h('span', { className: 'avwrap' }, App.avatar(c.other.name, S.pics.get(pictureKey(c)), size, () => retryPicture(c, S.pics.get(pictureKey(c)))), pg);
+    const pl = platLogo(platOf(c), Math.round(size * .44)); pl.classList.add('pl');
+    return h('span', { className: 'avwrap' }, App.avatar(c.other.name, S.pics.get(pictureKey(c)), size, () => retryPicture(c, S.pics.get(pictureKey(c)))), pg, pl);
   };
   function drawHead(c) {
     if ($('ibOrderBtn')) $('ibOrderBtn').disabled = !c;
@@ -818,7 +833,9 @@
     drawLabelFilter();
     const q = norm($('ibSearch').value), lab = $('ibLabel').value, today = new Date().toDateString();
     [...$('ibFilter').children].forEach(c => c.setAttribute('aria-pressed', String(c.dataset.f === S.filter)));
-    const list = S.convs.filter(c =>
+    S.plat ||= local.get('inboxPlat') || 'all';
+    [...($('ibPlat')?.children || [])].forEach(b => b.setAttribute('aria-pressed', String(b.dataset.p === S.plat)));
+    const list = S.convs.filter(c => (S.plat === 'all' || platOf(c) === S.plat) &&
       (S.filter !== 'unread' || c.unread_count) && (S.filter !== 'unanswered' || c.fromCustomer) &&
       (S.filter !== 'today' || new Date(c.updated_time).toDateString() === today) &&
       (!lab || (S.crm?.[c.key]?.labels || []).includes(lab)) &&
@@ -852,7 +869,7 @@
               return h('div', { className: 'snip-row' }, h('div', { className: 'snippet', textContent: c.snippet || '' }),
                 chips.length ? h('div', { className: 'tags' }, ...chips, more.length ? h('span', { className: 'lbl more', title: more.map(x => x.textContent).join(' · '), textContent: '+' + more.length }) : null) : null);
             })()));
-      }) : [empty(S.convs.length ? 'Không có hội thoại khớp bộ lọc.' : 'Chưa có tin nhắn.')]));
+      }) : [empty(S.plat === 'zalo' && !S.convs.some(c => platOf(c) === 'zalo') ? 'Chưa có tin Zalo: đăng nhập Zalo ở cột Zalo (Ctrl+Shift+Z), app đang được làm phần đọc tin Zalo.' : S.convs.length ? 'Không có hội thoại khớp bộ lọc.' : 'Chưa có tin nhắn.')]));
   }
   function resetThread() {
     S.draftReady = false; S.image = ''; S.tpl = null;
