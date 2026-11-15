@@ -786,7 +786,7 @@
   function platLogo(key, size = 16) {
     const p = PLAT[key] || PLAT.bs, box = h('span', { className: 'plat', title: p.name, style: `width:${size}px;height:${size}px` });
     const letter = () => box.replaceChildren(h('span', { className: 'plat-ch', style: `background:${p.color};font-size:${Math.round(size * .6)}px`, textContent: p.ch }));
-    const exts = ['svg', 'png', 'webp'], img = h('img', { alt: p.name, src: `img/platforms/${p.file}.${exts[0]}`, draggable: false });
+    const exts = ['png', 'svg', 'webp'], img = h('img', { alt: p.name, src: `img/platforms/${p.file}.${exts[0]}`, draggable: false });
     let i = 0; img.onerror = () => { if (++i < exts.length) img.src = `img/platforms/${p.file}.${exts[i]}`; else letter(); };
     box.append(img); return box;
   }
