@@ -269,11 +269,11 @@ app.whenReady().then(async () => {
     const stuck = await zaloView.webContents.executeJavaScript(`/Đang đăng nhập|Logging in/i.test(document.body?.innerText || '') && !document.querySelector('canvas, img[src*="qr"], [class*="qr" i]')`).catch(() => false);
     if (!stuck) { zaloFix = 0; return; }
     if (zaloFix >= 2) return; // đã thử 2 lần: để bạn bấm "Đăng nhập lại Zalo"
-    if (zaloFix === 1 && side !== 'zalo') return; // xoá hẳn phiên (phải quét QR) chỉ khi bạn đang mở cột Zalo
+    if (side !== 'zalo') { watchZalo(); return; } // Zalo đang ẩn: không tự tải lại trang, chờ bạn mở cột Zalo
     await resetZalo(zaloFix++ === 1); watchZalo();
   }, 25000); };
   zaloView.webContents.on('did-finish-load', () => { if (zaloView.webContents.getURL().startsWith('https://chat.zalo.me')) watchZalo(); });
-  const openZalo = () => { if (!zaloView.webContents.getURL().startsWith('https://chat.zalo.me')) zaloView.webContents.loadURL('https://chat.zalo.me/').catch(() => {}); show('zalo', true); };
+  const openZalo = () => { if (!/^https:\/\/([a-z0-9-]+\.)*zalo\.me\//.test(zaloView.webContents.getURL())) zaloView.webContents.loadURL('https://chat.zalo.me/').catch(() => {}); show('zalo', true); };
   ipcMain.on('zalo-reset', (e, full) => { if (!fromPage(e)) return; zaloFix = 0; resetZalo(!!full); show('zalo', true); });
   ipcMain.on('open-zalo', e => { if (fromPage(e)) openZalo(); });
   // Mở web dịch vụ ở cột phải (trang chủ do người dùng đặt trong tab Dịch vụ; chỉ https).
@@ -382,7 +382,9 @@ app.whenReady().then(async () => {
       if (r?.rows) { pageView.webContents.executeJavaScript(`window.App?.inbox?.zaloList?.(${JSON.stringify(r.rows)})`).catch(() => {}); return; } } };
   zaloView.webContents.on('did-finish-load', () => { if (zaloView.webContents.getURL().startsWith('https://chat.zalo.me')) bootZalo(); });
   // Đã đăng nhập Zalo lần trước → mở sẵn Zalo Web (ẩn) khi bật app để Hộp thư có tin Zalo ngay.
-  zaloSes.cookies.get({ domain: 'zalo.me' }).then(cs => { if (cs.some(c => /^zpw_sek$/.test(c.name)) && !zaloView.webContents.getURL()) zaloView.webContents.loadURL('https://chat.zalo.me/').catch(() => {}); }).catch(() => {});
+  // Zalo luôn mở (ẩn dưới trang chính) từ lúc bật app; chỉ mở MỘT lần, đọc / gửi tin không bao giờ tải lại trang.
+  if (!zaloView.webContents.getURL()) zaloView.webContents.loadURL('https://chat.zalo.me/').catch(() => {});
+  zaloView.webContents.on('render-process-gone', () => setTimeout(() => zaloView.webContents.loadURL('https://chat.zalo.me/').catch(() => {}), 3000)); // Zalo bị đóng bất thường: mở lại
   ipcMain.handle('thread-react', (e, args) => !fromPage(e) ? { error: 'denied' } : args?.pageId === 'zalo' ? zalo.react(args) : auto.react(args || {}));
   ipcMain.handle('zalo-list', async (e, args) => { if (!fromPage(e)) return { error: 'denied' };
     // Chưa mở Zalo Web: mở ẩn rồi báo Hộp thư chờ. Đang tải thì KHÔNG tải lại (tải lại liên tục làm Zalo không bao giờ mở xong).
