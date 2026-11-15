@@ -16,6 +16,7 @@ contextBridge.exposeInMainWorld('metaDesktop', {
   openService: url => ipcRenderer.send('open-svc', url),
   svcApi: args => ipcRenderer.invoke('svc-api', args),
   svcCatalog: args => ipcRenderer.invoke('svc-catalog', args),
+  svcWebBalance: args => ipcRenderer.invoke('svc-web-balance', args),
   svcImage: url => ipcRenderer.invoke('svc-image', String(url)),
   vaultGet: id => ipcRenderer.invoke('vault-get', String(id)),
   vaultSet: (id, data) => ipcRenderer.invoke('vault-set', String(id), data),

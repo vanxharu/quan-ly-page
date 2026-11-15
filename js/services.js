@@ -225,6 +225,16 @@
   const estCost = (svc, qty) => svc ? (svc.unitCost || 0) * qty : 0;
   const num = v => Number(String(v ?? '').replace(/[^0-9.\-]/g, ''));
   // Số tiền có thể ghi kiểu Việt "2.450.000" / "12.448" (dấu chấm ngăn nghìn), kiểu Anh "2,450,000.50" hoặc số thường "2450000.0000".
+  // Số dư VND: ưu tiên số web hiện ("Số dư: 50,475"); API Baostar trả số dư theo tiền khác (vd 2 = USD) nên chỉ dùng khi là VND.
+  async function vndBalance() {
+    const s = await settings();
+    if (window.metaDesktop?.svcWebBalance && s.home) { const w = await window.metaDesktop.svcWebBalance({ origin: s.home }).catch(() => null);
+      if (w?.raw) { const v = money0(w.raw); if (Number.isFinite(v)) return { v, src: 'web' }; } }
+    const b = await call('balance'), raw = b?.balance ?? b?.data?.balance ?? b?.money ?? b?.amount ?? b, cur = String(b?.currency || '').toUpperCase();
+    const v = money0(raw);
+    if (cur && !/^(VND|VNĐ|Đ)$/.test(cur)) return { v: NaN, why: `API trả số dư ${raw} ${cur} (không phải VND), mở cột Dịch vụ đăng nhập web để app đọc số dư VND` };
+    return { v, src: 'api' };
+  }
   const money0 = v => { if (typeof v === 'number') return v; let t = String(v ?? '').replace(/[^0-9.,\-]/g, '');
     if (/^-?\d{1,3}(\.\d{3})+(,\d+)?$/.test(t)) t = t.replace(/\./g, '').replace(',', '.');
     else if (/^-?\d{1,3}(,\d{3})+(\.\d+)?$/.test(t)) t = t.replace(/,/g, '');
@@ -924,7 +934,7 @@
       btn.textContent = busy ? 'Đang tạo đơn…' : ls.some(l => l.error && !l.done) ? `Thử lại ${ok} đơn` : `Tạo ${ok} đơn Baostar`;
       btn.disabled = busy || checking || !ok;
     };
-    call('balance').then(b => { const raw = b?.balance ?? b?.data?.balance ?? b?.money ?? b?.amount ?? b, v = money0(raw); balance = Number.isFinite(v) ? v : 'không rõ (' + JSON.stringify(b).slice(0, 80) + ')'; draw(); }).catch(e => { balance = e.message; draw(); });
+    vndBalance().then(r => { balance = Number.isFinite(r.v) ? r.v : (r.why || 'không rõ'); draw(); }).catch(e => { balance = e.message; draw(); });
     const orderFor = (x, l, r, q, ls) => {
       const n = Number(l.qty), cost = l.costManual && String(x.id) === String(l.serviceId) ? Number(l.cost) : estCost(x, n);
       const share = q.sell ? (Number(l.sell) || 0) / q.sell : 1 / ls.length;
@@ -1243,7 +1253,7 @@
             (o.refillable || refillOk.has(String(o.serviceId))) && o.status !== 'cancelled' ? h('button', { type: 'button', className: 'btn btn-ghost btn-sm', title: 'Yêu cầu Baostar bảo hành (bù số lượng tụt)', textContent: '🛡', onclick: () => requestRefill(o) }) : null,
             h('button', { type: 'button', className: 'btn btn-ghost btn-sm', title: o.progressSentAt ? 'Đã báo tiến độ lúc ' + fmtTime(o.progressSentAt) : 'Báo tiến độ cho khách', textContent: '📊', onclick: async () => { await refreshStatus([o]).catch(() => {}); const f = (o.payCode && o.groupSize > 1 && await groupOf(o.payCode)) || (await DB.get(ORDERS, [])).find(y => y.id === o.id) || o; invoiceDialog(f, 'progress'); } })))); }))) : h('div', { className: 'empty', textContent: 'Chưa có đơn dịch vụ trong khoảng này. Tạo đơn từ Hộp thư (nút "＋ Tạo đơn dịch vụ") hoặc nút ＋ Tạo đơn.' }));
       drawSettings(s, this);
-      if (s.apiKey) call('balance').then(b => { const raw = b?.balance ?? b?.data?.balance ?? b?.money ?? b?.amount ?? b; $('svBalance').textContent = `Số dư: ${money0(raw).toLocaleString('vi-VN')} ${b?.currency || 'VND'}`; $('svBalance').title = 'API trả: ' + JSON.stringify(b).slice(0, 200); }).catch(e => { $('svBalance').textContent = e.message; });
+      if (s.apiKey) vndBalance().then(r => { $('svBalance').textContent = Number.isFinite(r.v) ? `Số dư: ${r.v.toLocaleString('vi-VN')}đ` : r.why; $('svBalance').title = r.src === 'web' ? 'Đọc từ trang web dịch vụ' : 'Đọc từ API'; }).catch(e => { $('svBalance').textContent = e.message; });
       else $('svBalance').textContent = 'Chưa nhập API key';
     }
   });

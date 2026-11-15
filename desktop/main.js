@@ -341,6 +341,19 @@ app.whenReady().then(async () => {
       .finally(() => { svcCatalogRun = null; });
     return svcCatalogRun;
   });
+  // Số dư đúng như web hiện (VND): API Baostar trả số dư theo tiền khác (vd USD) nên đọc thẳng "Số dư: 50,475" trên trang web.
+  ipcMain.handle('svc-web-balance', async (e, { origin } = {}) => {
+    if (!fromPage(e)) return { error: 'denied' };
+    let o; try { o = new URL(origin); } catch { return { error: 'bad origin' }; }
+    if (o.protocol !== 'https:') return { error: 'https' };
+    for (const p of ['/', '/home', '/dashboard']) {
+      try { const r = await svcSes.fetch(o.origin + p, { headers: { accept: 'text/html' } }); if (!r.ok) continue;
+        const text = (await r.text()).replace(/<script[\s\S]*?<\/script>/gi, ' ').replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ');
+        const m = text.match(/Số dư\s*:?\s*([\d.,]+)\s*(đ|vnđ|vnd)?/i); if (m) return { raw: m[1] };
+        if (/đăng nhập|login/i.test(text) && !/đăng xuất|logout/i.test(text)) return { error: 'login' }; } catch {}
+    }
+    return { error: 'not-found' };
+  });
   const openMetaInbox = url => {
     if (!/^https:\/\/business\.facebook\.com\/latest\/inbox/.test(url)) return;
     if (metaView.webContents.getURL() !== url) metaView.webContents.loadURL(url);
