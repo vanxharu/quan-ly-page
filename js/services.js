@@ -1500,8 +1500,27 @@
       if (stale.length) { qs = qs.filter(x => !stale.includes(x)); await DB.set(QUOTES, qs); }
       const waiting = qs.filter(x => x.state === 'quote' && !expired(x));
       drawQuotes(qs); drawVip(await DB.get(ORDERS, []), qs);
-      $('svKpis').replaceChildren(...[['Chờ thanh toán', `${waiting.length} · ${money(waiting.reduce((t, x) => t + amountDue(x), 0))}`], ['Đã thu, chưa tạo đơn', qs.filter(x => x.state === 'paid').length], ['Đơn', all.length], ['Đang chạy', running], ['So với giá gói', (d => (d > 0 ? '+' : '') + money(d))(all.reduce((t, o) => t + (vsList(o) || 0), 0))], ['Doanh thu (đã thu)', money(sum.revenue)], ['Giá gốc', money(sum.cost)], ['Lời', money(sum.profit) + (sum.revenue ? ` (${Math.round(sum.profit / sum.revenue * 100)}%)` : '')]]
-        .map(([l, v]) => h('div', { className: 'kpi' }, h('div', { className: 'label', textContent: l }), h('div', { className: 'value', textContent: v }))));
+      // Thẻ số liệu có biểu tượng + màu; doanh thu / lời / số đơn so với kỳ trước cùng độ dài (▲ tăng xanh, ▼ giảm đỏ).
+      const prevFrom = from ? from - (Date.now() - from) : 0;
+      const prev = from ? (await DB.get(ORDERS, [])).filter(o => o.source === 'service' && o.at >= prevFrom && o.at < from && o.status !== 'cancelled' && o.status !== 'returned') : null;
+      const pRev = prev ? prev.reduce((t, o) => t + orderSell(o), 0) : 0, pCost = prev ? prev.reduce((t, o) => t + orderOf(o).cost, 0) : 0;
+      const delta = (cur, old) => { if (!prev) return null; if (!old) return cur ? { up: true, txt: 'mới' } : null; const p = Math.round((cur - old) / Math.abs(old) * 100); return { up: p >= 0, txt: (p >= 0 ? '+' : '') + p + '%' }; };
+      const vs = all.reduce((t, o) => t + (vsList(o) || 0), 0), margin = sum.revenue ? Math.round(sum.profit / sum.revenue * 100) : 0;
+      const K = [
+        { l: 'Chờ thanh toán', v: `${waiting.length} · ${money(waiting.reduce((t, x) => t + amountDue(x), 0))}`, i: '⏳', tone: waiting.length ? 'amber' : 'muted' },
+        { l: 'Đã thu, chưa tạo đơn', v: String(qs.filter(x => x.state === 'paid').length), i: '💰', tone: qs.some(x => x.state === 'paid') ? 'red' : 'muted', sub: qs.some(x => x.state === 'paid') ? 'cần tạo đơn ngay' : '' },
+        { l: 'Đơn', v: String(all.length), i: '🧾', tone: 'violet', d: delta(live.length, prev?.length || 0) },
+        { l: 'Đang chạy', v: String(running), i: '🚀', tone: 'blue' },
+        { l: 'Doanh thu (đã thu)', v: money(sum.revenue), i: '💵', tone: 'teal', d: delta(sum.revenue, pRev) },
+        { l: 'Giá gốc', v: money(sum.cost), i: '📦', tone: 'muted' },
+        { l: 'Lời', v: money(sum.profit), i: sum.profit >= 0 ? '📈' : '📉', tone: sum.profit >= 0 ? 'green' : 'red', sub: sum.revenue ? `biên lời ${margin}%` : '', d: delta(sum.profit, pRev - pCost), big: true },
+        { l: 'So với giá gói', v: (vs > 0 ? '+' : '') + money(vs), i: vs >= 0 ? '🏷️' : '🔻', tone: vs > 0 ? 'green' : vs < 0 ? 'orange' : 'muted', sub: vs < 0 ? 'bán rẻ hơn giá gói' : vs > 0 ? 'bán cao hơn giá gói' : '' }];
+      const per = { '7d': '7 ngày trước', '30d': '30 ngày trước', month: 'tháng trước' }[period] || '';
+      $('svKpis').replaceChildren(...K.map(k => h('div', { className: `kpi svc-kpi tone-${k.tone}${k.big ? ' big' : ''}` },
+        h('div', { className: 'svc-kpi-top' }, h('span', { className: 'svc-kpi-ico', textContent: k.i }), h('div', { className: 'label', textContent: k.l })),
+        h('div', { className: 'value', textContent: k.v }),
+        h('div', { className: 'svc-kpi-foot' }, k.d ? h('span', { className: 'svc-delta ' + (k.d.up ? 'up' : 'down'), title: 'So với ' + per, textContent: (k.d.up ? '▲ ' : '▼ ') + k.d.txt }) : null,
+          k.d && per ? h('span', { className: 'hint', textContent: ' kỳ trước' }) : null, k.sub ? h('span', { className: 'hint', textContent: (k.d ? ' · ' : '') + k.sub }) : null))));
       $('svOrders').replaceChildren(list.length ? h('table', {},
         h('thead', {}, h('tr', {}, ...['Tạo lúc', 'Khách / Page', 'Dịch vụ', 'Link', 'SL', 'Giá bán', 'So với giá gói', 'Giá gốc', 'Lời', 'Trạng thái', 'Hoàn thành', 'Gửi khách'].map(t => h('th', { textContent: t })))),
         h('tbody', {}, ...list.map(o => { const { sell, cost } = orderOf(o); return h('tr', {},

@@ -463,3 +463,19 @@ td.num.neg{font-weight:700}
 [data-panel=inbox] .nudge-head{font-size:12px}
 [data-panel=inbox] .nudge-text{font-size:11px;line-height:1.55;white-space:pre-wrap;color:var(--text-secondary);max-height:84px;overflow:auto}
 [data-panel=inbox] .nudge-acts{display:flex;gap:6px;flex-wrap:wrap}
+
+/* Thẻ số liệu Dịch vụ */
+.svc-kpi{position:relative;overflow:hidden;display:flex;flex-direction:column;gap:2px;border-left:0!important}
+.kpis .kpi.svc-kpi::before{content:'';position:absolute;top:16px;bottom:16px;left:0;width:4px;border-radius:0 4px 4px 0;background:var(--k)}
+.svc-kpi::after{content:'';position:absolute;right:-30px;top:-30px;width:90px;height:90px;border-radius:50%;background:var(--k);opacity:.08}
+.svc-kpi-top{display:flex;align-items:center;gap:8px}
+.svc-kpi-ico{width:30px;height:30px;border-radius:9px;display:inline-flex;align-items:center;justify-content:center;font-size:16px;background:color-mix(in srgb,var(--k) 16%,transparent);flex:none}
+.kpis .svc-kpi .value{color:var(--k);font-size:24px;margin-top:6px}
+.svc-kpi.tone-muted .value{color:var(--text-primary)}
+.svc-kpi-foot{min-height:18px;font-size:11px;margin-top:2px}
+.svc-delta{font-weight:800;padding:1px 6px;border-radius:999px;font-size:11px}
+.svc-delta.up{color:#10b981;background:#10b98120}
+.svc-delta.down{color:#ef4444;background:#ef444420}
+.svc-kpi.tone-violet{--k:#8b7cf6}.svc-kpi.tone-blue{--k:#3b82f6}.svc-kpi.tone-teal{--k:#14b8a6}.svc-kpi.tone-green{--k:#10b981}
+.svc-kpi.tone-red{--k:#ef4444}.svc-kpi.tone-amber{--k:#f59e0b}.svc-kpi.tone-orange{--k:#f97316}.svc-kpi.tone-muted{--k:#94a3b8}
+.svc-kpi.big{background:linear-gradient(135deg,color-mix(in srgb,var(--k) 14%,var(--bg-card)),var(--bg-card))}
