@@ -744,7 +744,7 @@
     const done = o.startCount != null && o.remains != null ? ` · đã lên ${Math.max(0, q - Number(o.remains)).toLocaleString('vi-VN')}/${q.toLocaleString('vi-VN')}` : '';
     return st + done + (o.completedAt ? ` · xong lúc ${fmtTime(o.completedAt)}` : ''); };
   const KIND_TITLE = { quote: '🧾 BÁO GIÁ', paid: '✅ ĐÃ NHẬN THANH TOÁN · ĐƠN ĐANG CHẠY', progress: '📊 CẬP NHẬT ĐƠN', new: '✅ XÁC NHẬN ĐƠN HÀNG' };
-  const KIND_HEAD = { quote: 'BÁO GIÁ · CHỜ THANH TOÁN', paid: 'ĐÃ NHẬN THANH TOÁN · ĐƠN ĐANG CHẠY', progress: 'CẬP NHẬT TIẾN ĐỘ ĐƠN HÀNG', new: 'XÁC NHẬN ĐƠN HÀNG' };
+  const KIND_HEAD = { done: 'HOÀN THÀNH ĐƠN HÀNG ✓', quote: 'BÁO GIÁ · CHỜ THANH TOÁN', paid: 'ĐÃ NHẬN THANH TOÁN · ĐƠN ĐANG CHẠY', progress: 'CẬP NHẬT TIẾN ĐỘ ĐƠN HÀNG', new: 'XÁC NHẬN ĐƠN HÀNG' };
   // Đơn nhiều dịch vụ: từng dòng (tên · số lượng · tiền), link riêng nếu khác link chung, đơn đã tạo thì kèm tiến độ.
   const multi = o => (o.lines?.length || 0) > 1;
   const lineText = (o, l, i) => `${i + 1}. ${l.displayName} · ${Number(l.qty).toLocaleString('vi-VN')}${Number(l.sell) ? ` · ${money(l.sell)}` : ''}${l.link && l.link !== o.link ? ` · ${l.link}` : ''}${l.order ? ` · ${progressLine(l.order)}` : ''}`;
@@ -909,6 +909,7 @@
       const add = Number(amt.value) || 0, total = (q.paidAmount || 0) + add;
       Object.assign(q, { paidAmount: total, paidAt: Date.now(), state, payNote: [q.payNote, note.value.trim(), extra].filter(Boolean).join(' · ') });
       await saveQuote(q); dlg.close(); App.tabs.services?.refresh?.();
+      if (state === 'paid') addNudge(q.customerKey, 'paid', q.id).catch(() => {});
       if (state === 'paid') confirmCreate(q); else { toast(`Đã ghi nhận ${money(add)}. Còn thiếu ${money(amountDue(q))}.`, 6000); invoiceDialog(q, 'quote'); }
     };
     const draw = () => {
@@ -1117,7 +1118,12 @@
   }
 
   // ── Trạng thái ── Đơn chưa xong: hỏi web (tối đa 100 đơn/lần). Hoàn thành lần đầu → ghi thời gian hoàn thành; charge → giá gốc thật.
+  const nudgeQ = [];
+  const flushNudges = async () => { const seen = new Set(); while (nudgeQ.length) { const [k, kind, ref] = nudgeQ.shift(); if (seen.has(k + kind + ref)) continue; seen.add(k + kind + ref); await addNudge(k, kind, ref).catch(() => {}); } };
   async function refreshStatus(only) {
+    try { return await refreshStatus0(only); } finally { await flushNudges(); }
+  }
+  async function refreshStatus0(only) {
     const all = await DB.get(ORDERS, []);
     const open = (only || all).filter(o => o.source === 'service' && o.providerOrderId && !FINAL.test(o.svcStatus || ''));
     if (!open.length) return 0;
@@ -1144,6 +1150,14 @@
         if (next.status === 'cancelled' && o.status !== 'cancelled' && !o.cancelAlertAt) { next.cancelAlertAt = Date.now(); App.notify?.('⚠ Baostar huỷ/hoàn tiền đơn: ' + who, `Khách đã trả ${money(o.paidAmount || orderSell(o))}. Tạo lại đơn hoặc hoàn tiền cho khách.`); }
         if (/^partial$/i.test(next.svcStatus) && !o.partialAlertAt) { next.partialAlertAt = Date.now(); App.notify?.('⚠ Đơn chạy thiếu: ' + who, `Còn thiếu ${num(next.remains).toLocaleString('vi-VN')}. Baostar hoàn phần thiếu; cân nhắc bù hoặc hoàn tiền khách.`); }
         if (FINAL.test(next.svcStatus) && !o.completedAt && next.status === 'done') next.completedAt = Date.now();
+        // Gợi ý nhắn khách theo bước đơn (mỗi bước 1 lần / đơn; đơn nhiều dịch vụ cùng mã TT gộp 1 tin hoàn thành).
+        const nd = { ...(o.nudged || {}) }, ref = o.payCode && o.groupSize > 1 ? 'pc:' + o.payCode : o.id, d = doneOf(next), q = qtyOf(o);
+        if (o.customerKey) {
+          if (/in progress|processing/i.test(next.svcStatus || '') && !nd.start) { nd.start = Date.now(); nudgeQ.push([o.customerKey, 'start', ref]); }
+          if (d != null && q && d >= q / 2 && next.status !== 'done' && !nd.half) { nd.half = Date.now(); nudgeQ.push([o.customerKey, 'half', ref]); }
+          if (next.status === 'done' && /completed/i.test(next.svcStatus || '') && !nd.done) { nd.done = Date.now(); nd.half ||= 1; nudgeQ.push([o.customerKey, 'done', ref]); }
+          next.nudged = nd;
+        }
         if (JSON.stringify(next) !== JSON.stringify(o)) { next.updatedAt = Date.now(); Object.assign(o, next); changed++; }
       }
       await DB.set(ORDERS, fresh); if (changed) ping();
@@ -1151,7 +1165,14 @@
     return changed;
   }
   // Theo dõi ngầm 3 phút/lần khi có đơn chưa xong (chỉ khi đã nhập API key).
-  setInterval(async () => { try { if (!(await settings()).apiKey) return; const a = await refreshStatus().catch(() => 0), b = await refreshRefills(); if ((a || b) && App.current() === 'services') App.tabs.services.refresh(); } catch {} }, 3 * 60e3);
+  setInterval(async () => { try {
+      // Hỏi thăm 1 ngày sau hoàn thành (đơn hoàn thành trong 3 ngày gần đây, chưa hỏi).
+      const os = await DB.get(ORDERS, []); let ch = false;
+      for (const o of os) if (o.source === 'service' && o.customerKey && o.completedAt && o.status === 'done' && Date.now() - o.completedAt > 864e5 && Date.now() - o.completedAt < 3 * 864e5 && !o.nudged?.follow) {
+        o.nudged = { ...(o.nudged || {}), follow: Date.now() }; ch = true; nudgeQ.push([o.customerKey, 'follow', o.payCode && o.groupSize > 1 ? 'pc:' + o.payCode : o.id]); }
+      if (ch) { await DB.set(ORDERS, os); await flushNudges(); }
+    } catch {}
+    try { if (!(await settings()).apiKey) return; const a = await refreshStatus().catch(() => 0), b = await refreshRefills(); if ((a || b) && App.current() === 'services') App.tabs.services.refresh(); } catch {} }, 3 * 60e3);
 
   // ── Hộp thư: link khách gửi + nút tạo đơn ── (gắn dưới khung CRM của hội thoại)
   function inboxBox(ctx) {
@@ -1168,6 +1189,70 @@
 
   // ── Trạng thái đơn của từng khách (Hộp thư): báo giá chờ thanh toán / đã thu chưa tạo đơn / đơn đang chạy ──
   // Mỗi khách lấy việc cần làm gấp nhất: đã thu chưa tạo đơn > chờ thanh toán > đang chạy.
+  // ── Gợi ý nhắn khách (bấm 1 lần): đơn bắt đầu chạy · đạt 50% · khách hỏi tiến độ · hoàn thành (+ ảnh phiếu, cảm ơn)
+  //    · đã nhận tiền (cảm ơn) · 1 ngày sau hoàn thành (hỏi thăm). Hiện trên ô soạn tin của khách đó trong Hộp thư.
+  const NUDGES = 'svcNudgesV1';
+  const NUDGE_TITLE = { start: '🚀 Báo đơn bắt đầu chạy', half: '📊 Báo đơn đã lên 50%', ask: '💬 Khách hỏi tiến độ', done: '✅ Báo hoàn thành + cảm ơn', paid: '🙏 Cảm ơn đã thanh toán', follow: '❤️ Hỏi thăm sau 1 ngày' };
+  const nudges = () => DB.get(NUDGES, []).catch(() => []);
+  async function addNudge(key, kind, ref, uniq = '') {
+    if (!key) return;
+    const all = (await nudges()).filter(n => Date.now() - n.at < 3 * 864e5);
+    const id = `${kind}:${ref}${uniq}`; if (all.some(n => n.id === id && n.key === key)) return;
+    // Tin mới thay gợi ý cũ cùng đơn (vd đã hoàn thành thì bỏ gợi ý "50%" chưa gửi).
+    const keep = all.filter(n => !(n.key === key && n.ref === ref && ['start', 'half', 'ask'].includes(n.kind) && ['half', 'done', 'ask'].includes(kind)));
+    keep.push({ id, key, kind, ref, at: Date.now() }); await DB.set(NUDGES, keep);
+    App.inbox?.orderChanged?.();
+  }
+  async function dropNudge(id, key) { await DB.set(NUDGES, (await nudges()).filter(n => !(n.id === id && n.key === key))); App.inbox?.orderChanged?.(); }
+  const shortSvc = o => String(o.displayName || o.serviceName || 'dịch vụ').replace(/\s*·\s*\d[\d.,]*\s*$/, '');
+  const doneOf = o => o.startCount != null && o.remains != null ? Math.max(0, qtyOf(o) - num(o.remains)) : null;
+  // Nội dung tin: viết lúc hiện (luôn lấy số mới nhất của đơn).
+  async function nudgeText(n) {
+    const orders = await DB.get(ORDERS, []), group = n.ref && String(n.ref).startsWith('pc:') ? orders.filter(o => o.payCode === String(n.ref).slice(3)) : orders.filter(o => o.id === n.ref);
+    const o = group[0], qs = n.kind === 'paid' ? (await quotes()).find(q => q.id === n.ref) : null;
+    if (n.kind === 'paid') return qs ? { text: `Dạ em đã nhận được ${money(qs.paidAmount || qs.sell)} của mình rồi ạ 🙏 Cảm ơn mình đã tin tưởng shop! Em lên đơn ${shortSvc(qs)} cho mình ngay đây ạ.` } : null;
+    if (!o) return null;
+    const q = qtyOf(o), d = doneOf(o), name = shortSvc(o), link = o.link ? `\n• Link: ${o.link}` : '';
+    const prog = () => d != null ? `đã lên ${d.toLocaleString('vi-VN')}/${q.toLocaleString('vi-VN')} (${Math.min(100, Math.round(d / q * 100))}%)` : 'đang chạy';
+    if (n.kind === 'start') return { text: `Dạ đơn ${name} của mình đã bắt đầu chạy rồi ạ 🚀${link}\n• Số ban đầu: ${o.startCount != null ? num(o.startCount).toLocaleString('vi-VN') : '—'}\n• Số lượng tăng: ${q.toLocaleString('vi-VN')}\nEm sẽ báo mình khi đơn hoàn thành ạ.` };
+    if (n.kind === 'half') return { text: `Dạ đơn ${name} của mình ${prog()} rồi ạ 💪 Hệ thống vẫn đang chạy tiếp, xong em báo mình liền ạ.` };
+    if (n.kind === 'ask') return { text: o.status === 'done' ? `Dạ đơn ${name} của mình đã hoàn thành rồi ạ ✅ Mình kiểm tra lại giúp em nha.`
+      : /pending/i.test(o.svcStatus || '') || d == null ? `Dạ đơn ${name} của mình đang chờ hệ thống xử lý, thường bắt đầu chạy trong ít phút ạ. Em theo dõi và báo mình ngay khi lên ạ 🙏`
+      : `Dạ đơn ${name} của mình ${prog()} ạ, hệ thống vẫn đang chạy tiếp ạ. Mình chờ thêm chút giúp em nha 🙏` };
+    if (n.kind === 'done') {
+      const start = o.startCount != null ? num(o.startCount) : null;
+      const text = `Dạ đơn ${name} của mình đã HOÀN THÀNH ✅${link}\n• Đã tăng: ${q.toLocaleString('vi-VN')}${start != null ? ` (từ ${start.toLocaleString('vi-VN')} → ${(start + q).toLocaleString('vi-VN')})` : ''}\nMình kiểm tra giúp em nha. Cảm ơn mình đã tin tưởng và ủng hộ shop ạ 🙏❤️`;
+      let image = ''; try { const inv = (await settings()).invoice || {}; image = (await invoiceImage(group.length > 1 && o.payCode ? await groupOf(o.payCode) : o, inv, 'done')).dataUrl; } catch {}
+      return { text, image };
+    }
+    if (n.kind === 'follow') return { text: `Dạ đơn ${name} hôm qua mình thấy ổn không ạ? Có gì cần hỗ trợ thêm mình cứ nhắn em nha. Lần sau cần tăng tương tác mình nhớ ủng hộ shop tiếp nhé ạ ❤️` };
+    return null;
+  }
+  // Thẻ gợi ý trên ô soạn tin của khách đang mở.
+  async function nudgeCard(key) {
+    const list = (await nudges()).filter(n => n.key === key).sort((a, b) => b.at - a.at); if (!list.length) return null;
+    let n = null, m = null;
+    for (const x of list) { m = await nudgeText(x); if (m) { n = x; break; } await dropNudge(x.id, key); } // đơn đã xoá: bỏ gợi ý
+    if (!n) return null;
+    const send = async auto => { const r = await App.inbox.compose({ key, text: m.text, image: m.image || '', autoSend: auto });
+      if (r === true) { await dropNudge(n.id, key); if (auto) toast('Đã gửi: ' + NUDGE_TITLE[n.kind].replace(/^\S+ /, ''), 4000); } else toast(r, 6000); };
+    return h('div', { className: 'nudge-card' },
+      h('div', { className: 'nudge-head' }, h('strong', { textContent: '📣 Gợi ý: ' + NUDGE_TITLE[n.kind] }), list.length > 1 ? h('span', { className: 'hint', textContent: ` · còn ${list.length - 1} gợi ý` }) : null),
+      h('div', { className: 'nudge-text', textContent: m.text + (m.image ? '\n[+ ảnh phiếu hoàn thành]' : '') }),
+      h('div', { className: 'nudge-acts' },
+        h('button', { type: 'button', className: 'btn btn-sm btn-primary', textContent: 'Gửi', onclick: () => send(true) }),
+        h('button', { type: 'button', className: 'btn btn-sm btn-ghost', textContent: 'Sửa trước khi gửi', onclick: () => send(false) }),
+        h('button', { type: 'button', className: 'btn btn-sm btn-ghost', textContent: 'Bỏ qua', onclick: () => dropNudge(n.id, key) })));
+  }
+  // Khách hỏi tiến độ ("lên chưa", "sao chưa chạy", "bao giờ xong"…) mà đang có đơn: cập nhật trạng thái rồi gợi ý tin trả lời.
+  const ASK_RE = /(lên|chạy|tăng|xong|hoàn thành|nhận)\s*(chưa|chưa ạ|chưa vậy|chưa shop|chưa ad)|sao chưa (lên|chạy|tăng|thấy)|bao giờ (xong|lên|chạy)|đơn (sao|tới đâu|thế nào)|chưa thấy (lên|tăng|chạy)|khi nào (xong|lên|chạy)/i;
+  async function askCheck(key, text) {
+    if (!key || !ASK_RE.test(String(text || ''))) return false;
+    const os = (await DB.get(ORDERS, [])).filter(o => o.source === 'service' && o.customerKey === key && Date.now() - o.at < 7 * 864e5).sort((a, b) => b.at - a.at);
+    const o = os.find(x => x.status !== 'done' && x.status !== 'cancelled') || os[0]; if (!o) return false;
+    await refreshStatus([o]).catch(() => {});
+    await addNudge(key, 'ask', o.payCode && o.groupSize > 1 ? 'pc:' + o.payCode : o.id, ':' + Math.floor(Date.now() / 60e3)); return true;
+  }
   async function orderStates() {
     const map = new Map(), rank = { paid: 3, pay: 2, run: 1 };
     const put = (key, st) => { if (key && (!map.has(key) || rank[st.kind] > rank[map.get(key).kind])) map.set(key, st); };
@@ -1553,5 +1638,5 @@
     if (s.apiKey) drawPrices(); else priceBox.replaceChildren(h('p', { className: 'hint', textContent: 'Nhập API key rồi Lưu để tải danh sách dịch vụ.' }));
     drawPkgs(); drawInvoiceSettings(s); drawIcons();
   }
-  App.services = { platBadge, linkPlatform: l => LINK_PLAT[platformOf(l)] || '', createDialog, closeDock, orderStates, orderBar, inboxBox, refreshStatus, linksIn, call, openWeb, mapStatus, catalogProgress, noteLines, speedOf, invoiceDialog, invoiceText, paymentDialog, confirmCreate, quotes, renewQuote, vipTick, termOf, requestRefill, refreshRefills };
+  App.services = { nudgeCard, askCheck, platBadge, linkPlatform: l => LINK_PLAT[platformOf(l)] || '', createDialog, closeDock, orderStates, orderBar, inboxBox, refreshStatus, linksIn, call, openWeb, mapStatus, catalogProgress, noteLines, speedOf, invoiceDialog, invoiceText, paymentDialog, confirmCreate, quotes, renewQuote, vipTick, termOf, requestRefill, refreshRefills };
 })();

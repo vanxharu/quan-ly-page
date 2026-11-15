@@ -627,7 +627,9 @@
     S.orderMap = await App.services.orderStates().catch(() => S.orderMap);
     const box = $('ibOrder'); if (!box) return;
     const bar = S.conv ? App.services.orderBar(S.orderMap?.get(S.conv.key), S.payHint?.get(S.conv.key)) : null;
-    box.hidden = !bar; box.replaceChildren(...(bar ? [bar] : []));
+    const key = S.conv?.key, nudge = key && App.services.nudgeCard ? await App.services.nudgeCard(key).catch(() => null) : null;
+    if (S.conv?.key !== key) return;
+    box.hidden = !bar && !nudge; box.replaceChildren(...[nudge, bar].filter(Boolean));
     if (App.current() === 'inbox') drawList();
   }
   App.inbox.orderChanged = () => drawOrder().catch(() => {});
@@ -1268,6 +1270,7 @@
       if (changed && prev && !zFirst && !mine && !viewing && !r.muted && st.webNotify && InboxRules.notifyAllowed(st, 'zalo'))
         App.notify(`💬 ${r.name} · Zalo`, r.snippet || 'Tin nhắn mới');
       if (changed && prev && S.conv?.id === id && !S.sending) openBs(S.conv, { silent: true }).catch(() => {});
+      if (changed && prev && !zFirst && !mine) App.services?.askCheck?.(c.key || App.crmKey('zalo', r.name), r.snippet).catch(() => {});
       out.push(c);
     });
     // Dòng Zalo không còn trong khung đang thấy (danh sách ảo) vẫn giữ lại.
@@ -1320,6 +1323,7 @@
         row.updated_time = new Date(info.ts).toISOString(); row.lastAt = info.ts; row.timeText = '';
         const viewing = S.conv?.id === row.id && App.current() === 'inbox' && !document.hidden;
         if (!info.mine && fresh) prefetchHot(row);
+        if (!info.mine && recent && info.text) App.services?.askCheck?.(row.key, info.text).catch(() => {});
         if (!info.mine && fresh && (info.pic || /^Đã gửi một ảnh/.test(info.text) || PAY_SAID.test(info.text || ''))) notePay(row.key, info.pic || /^Đã gửi một ảnh/.test(info.text) ? 'pic' : 'text');
         if (info.mine) { row.unread_count = 0; unreadHold.delete(row.id); } // Page đã trả lời → hết chờ
         else if (viewing) { row.unread_count = 0; markAppRead(row.id, info.ts); }
