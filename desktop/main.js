@@ -349,7 +349,12 @@ app.whenReady().then(async () => {
     for (const p of ['/', '/home', '/dashboard']) {
       try { const r = await svcSes.fetch(o.origin + p, { headers: { accept: 'text/html' } }); if (!r.ok) continue;
         const text = (await r.text()).replace(/<script[\s\S]*?<\/script>/gi, ' ').replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ');
-        const m = text.match(/Số dư\s*:?\s*([\d.,]+)\s*(đ|vnđ|vnd)?/i); if (m) return { raw: m[1] };
+        // Trang có thể có nhiều chỗ "Số dư" (khung mẫu = 0 do JS điền sau): ưu tiên chỗ ngay sau "Username", không thì số lớn nhất.
+        const all = [...text.matchAll(/Số dư\s*:?\s*([\d.,]+)/gi)].map(m => ({ raw: m[1], ctx: text.slice(Math.max(0, m.index - 60), m.index + 40).trim(), user: /Username|Tài khoản/i.test(text.slice(Math.max(0, m.index - 80), m.index)) }));
+        if (all.length) { const n = v => Number(String(v).replace(/[.,](?=\d{3}\b)/g, '').replace(',', '.')) || 0;
+          const pick = all.find(a => a.user && n(a.raw) > 0) || [...all].sort((a, b) => n(b.raw) - n(a.raw))[0];
+          if (n(pick.raw) > 0) return { raw: pick.raw, all: all.slice(0, 5), path: p };
+          if (!all.some(a => n(a.raw) > 0)) return { error: 'web-zero', all: all.slice(0, 5), path: p }; }
         if (/đăng nhập|login/i.test(text) && !/đăng xuất|logout/i.test(text)) return { error: 'login' }; } catch {}
     }
     return { error: 'not-found' };

@@ -252,7 +252,7 @@
         if (cur === 'USD') {
           // API chỉ có 2 số lẻ USD (1.87 ≈ 50.490đ, lệch tới ±135đ) → lấy đúng số VND trên web nếu đọc được, không thì hiện "≈".
           const w = window.metaDesktop?.svcWebBalance && s.home ? await window.metaDesktop.svcWebBalance({ origin: s.home }).catch(() => null) : null, wv = w?.raw ? money0(w.raw) : NaN;
-          if (Number.isFinite(wv)) return { v: wv, src: 'web', note: `Số dư trên web: ${wv.toLocaleString('vi-VN')}đ · API: ${raw} USD × ${rate.toLocaleString('vi-VN')}đ ≈ ${Math.round(v * rate).toLocaleString('vi-VN')}đ` };
+          if (Number.isFinite(wv) && wv > 0) return { v: wv, src: 'web', note: `Số dư trên web: ${wv.toLocaleString('vi-VN')}đ · API: ${raw} USD × ${rate.toLocaleString('vi-VN')}đ ≈ ${Math.round(v * rate).toLocaleString('vi-VN')}đ` };
           return { v: Math.round(v * rate), approx: true, src: 'api', note: `API: ${raw} USD × ${rate.toLocaleString('vi-VN')}đ (gần đúng; đăng nhập web ở cột Dịch vụ để có số chính xác)` };
         }
         return { v, src: 'api', note: `API trả: ${JSON.stringify(b).slice(0, 120)}` };
@@ -261,6 +261,27 @@
     if (window.metaDesktop?.svcWebBalance && s.home) { const w = await window.metaDesktop.svcWebBalance({ origin: s.home }).catch(() => null);
       if (w?.raw) { const v = money0(w.raw); if (Number.isFinite(v)) return { v, src: 'web', note: 'Đọc từ trang web dịch vụ (API lỗi)' }; } }
     return { v: NaN, why: 'Không đọc được số dư' };
+  }
+  // Kiểm tra số dư: gọi API thật (như tài liệu, và xin VND), hiện NGUYÊN VĂN JSON Baostar trả (API key che bớt) + số đọc được trên web.
+  async function balanceCheck() {
+    const s = await settings(), out = h('pre', { className: 'svc-raw', textContent: 'Đang gọi API Baostar…' });
+    const dlg = h('dialog', { className: 'svc-dialog', onclose: () => dlg.remove() }, h('h3', { className: 'card-title', textContent: '💰 Kiểm tra số dư Baostar' }),
+      h('p', { className: 'hint', textContent: 'Đây là đúng dữ liệu Baostar trả về cho API key trong Cài đặt dịch vụ. Bấm "Sao chép" để gửi người hỗ trợ.' }), out,
+      h('div', { className: 'row', style: 'gap:8px;justify-content:flex-end;margin-top:10px' },
+        h('button', { type: 'button', className: 'btn btn-ghost', textContent: 'Sao chép', onclick: () => navigator.clipboard.writeText(out.textContent).then(() => toast('Đã sao chép.')) }),
+        h('button', { type: 'button', className: 'btn btn-primary', textContent: 'Đóng', onclick: () => dlg.close() })));
+    document.body.append(dlg); dlg.showModal();
+    const lines = [`API: ${s.apiUrl} · key …${String(s.apiKey || '').slice(-4)}`];
+    const raw = async body => { try { const r = window.metaDesktop?.svcApi ? await window.metaDesktop.svcApi({ url: s.apiUrl, body: { key: s.apiKey, ...body } })
+        : await fetch(s.apiUrl, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ key: s.apiKey, ...body }) }).then(async x => ({ status: x.status, json: await x.json() }));
+      return r.error ? 'Lỗi: ' + r.error : `HTTP ${r.status} · ` + JSON.stringify(r.json); } catch (e) { return 'Lỗi: ' + e.message; } };
+    lines.push('', '① action=balance (đúng tài liệu):', await raw({ action: 'balance' }));
+    out.textContent = lines.join('\n');
+    lines.push('', '② action=balance + currency=VND:', await raw({ action: 'balance', currency: 'VND' }));
+    out.textContent = lines.join('\n');
+    if (window.metaDesktop?.svcWebBalance && s.home) { const w = await window.metaDesktop.svcWebBalance({ origin: s.home }).catch(e => ({ error: e.message }));
+      lines.push('', '③ Số dư trên web (' + s.home + '):', w?.raw ? w.raw + 'đ' : 'không đọc được (' + (w?.error || '?') + ')', ...(w?.all || []).map(a => `   · "${a.ctx}"`)); }
+    out.textContent = lines.join('\n');
   }
   const money0 = v => { if (typeof v === 'number') return v; let t = String(v ?? '').replace(/[^0-9.,\-]/g, '');
     if (/^-?\d{1,3}(\.\d{3})+(,\d+)?$/.test(t)) t = t.replace(/\./g, '').replace(',', '.');
@@ -1263,7 +1284,7 @@
         h('div', { className: 'toolbar' },
           h('div', { className: 'chips', id: 'svPeriod' }), h('span', { className: 'grow' }),
           h('button', { type: 'button', className: 'svc-balance', id: 'svBalance', title: 'Bấm để xem nguyên văn API Baostar trả về', textContent: '💰 Số dư: …',
-            onclick: e => { const n = e.currentTarget.dataset.note; if (n) { navigator.clipboard?.writeText(n).catch(() => {}); toast(n + ' (đã sao chép)', 15000); } } }),
+            onclick: () => balanceCheck() }),
           h('button', { className: 'btn btn-ghost', textContent: '↻ Cập nhật trạng thái', onclick: async () => { try { const n = await refreshStatus(), r = await refreshRefills(); toast(`Đã cập nhật ${n} đơn${r ? `, ${r} yêu cầu bảo hành` : ''}.`); this.refresh(); } catch (e) { toast(e.message, 6000); } } }),
           h('button', { className: 'btn btn-ghost', textContent: '＋ Thêm đơn theo mã', title: 'Đơn đã tạo thẳng trên web dịch vụ: nhập mã đơn để app theo dõi giá gốc, trạng thái', onclick: () => importById() }),
           h('button', { className: 'btn btn-ghost', textContent: 'Mở web dịch vụ ↗', onclick: () => openWeb() }),
