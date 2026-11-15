@@ -297,10 +297,12 @@
     const letters = () => h('span', { className: 'plat-badge', title: p || '', textContent: ab, style: `background:${c};width:${size}px;height:${size}px;font-size:${Math.round(size * 0.4)}px` });
     if (platIcons[p]) return h('img', { className: 'plat-badge img', src: platIcons[p], alt: p, title: p, style: `width:${size}px;height:${size}px` });
     if (!p || noLogo.has(platSlug(p))) return letters();
-    const img = h('img', { className: 'plat-badge img', src: `img/platforms/svc/${platSlug(p)}.png`, alt: p, title: p, draggable: false, style: `width:${size}px;height:${size}px` });
-    img.onerror = () => { noLogo.add(platSlug(p)); img.replaceWith(letters()); };
+    const sl = platSlug(p), exts = logoExt.has(sl) ? [logoExt.get(sl)] : ['webp', 'png'];
+    const img = h('img', { className: 'plat-badge img', src: `img/platforms/svc/${sl}.${exts[0]}`, alt: p, title: p, draggable: false, style: `width:${size}px;height:${size}px` });
+    let i = 0; img.onload = () => logoExt.set(sl, exts[i]);
+    img.onerror = () => { if (++i < exts.length) { img.src = `img/platforms/svc/${sl}.${exts[i]}`; return; } noLogo.add(sl); img.replaceWith(letters()); };
     return img; };
-  const noLogo = new Set();
+  const noLogo = new Set(), logoExt = new Map(); // logo động (.webp) hoặc tĩnh (.png)
   // Nền tảng của đơn / báo giá: theo link khách, không có thì theo tên gói "Facebook · …".
   const platOfOrder = o => LINK_PLAT[platformOf(o?.link || o?.lines?.[0]?.link || '')] || (PLAT[String(o?.displayName || '').split(' · ')[0]] ? String(o.displayName).split(' · ')[0] : '');
   const TAGS = [[/\bvip\b/i, 'VIP', 'vip'], [/theo tháng|\d+\s*tháng/i, 'Theo tháng', 'month'], [/mua theo bài/i, 'Theo bài', 'month'], [/\b(việt|viet|vn)\b|việt nam/i, 'Việt', 'vn'],
