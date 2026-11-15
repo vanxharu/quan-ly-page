@@ -362,6 +362,31 @@ app.whenReady().then(async () => {
       return { ...(await read(w.webContents)), from: 'an' };
     } catch (err) { return { error: err.message }; } finally { if (!w.isDestroyed()) w.destroy(); }
   });
+  // Ảnh thực tế của link khách (trang TikTok, bài Facebook…): mở ẩn kiểu điện thoại, chờ trang hiện số liệu rồi chụp phần đầu.
+  // Facebook / Instagram dùng phiên Facebook trong app (xem được như bạn xem); trang khác dùng phiên riêng không đăng nhập.
+  const snapCache = new Map();
+  ipcMain.handle('svc-snap', async (e, { url } = {}) => {
+    if (!fromPage(e)) return { error: 'denied' };
+    let u; try { u = new URL(url); } catch { return { error: 'link không hợp lệ' }; }
+    if (!/^https?:$/.test(u.protocol)) return { error: 'link không hợp lệ' };
+    const hit = snapCache.get(u.href); if (hit && Date.now() - hit.at < 60e3) return { dataUrl: hit.dataUrl };
+    const fbLike = /(^|\.)(facebook\.com|fb\.watch|fb\.me|instagram\.com|threads\.(net|com))$/i.test(u.hostname);
+    const w = new BrowserWindow({ show: false, width: 430, height: 932, webPreferences: { partition: fbLike ? META : 'persist:snap', offscreen: true, sandbox: true, contextIsolation: true, backgroundThrottling: false } });
+    try {
+      w.webContents.setAudioMuted(true); w.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+      w.webContents.setUserAgent('Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1');
+      await Promise.race([w.loadURL(u.href), new Promise(r => setTimeout(r, 20e3))]).catch(() => {});
+      await new Promise(r => setTimeout(r, 4500)); // chờ trang điền số follow / like
+      // Đóng hộp "mở ứng dụng / đăng nhập" che trang (nếu có), cuộn lên đầu.
+      await w.webContents.executeJavaScript(`(() => { for (const b of document.querySelectorAll('[aria-label*="Close" i],[aria-label*="Đóng" i],[data-e2e*="close" i]')) try { b.click(); } catch (e) {} scrollTo(0, 0); })()`).catch(() => {});
+      await new Promise(r => setTimeout(r, 600));
+      const img = await w.webContents.capturePage({ x: 0, y: 0, width: 430, height: 620 });
+      if (img.isEmpty()) return { error: 'không chụp được trang' };
+      const dataUrl = 'data:image/jpeg;base64,' + img.toJPEG(82).toString('base64');
+      snapCache.set(u.href, { at: Date.now(), dataUrl }); if (snapCache.size > 30) snapCache.delete(snapCache.keys().next().value);
+      return { dataUrl };
+    } catch (err) { return { error: err.message }; } finally { if (!w.isDestroyed()) w.destroy(); }
+  });
   const openMetaInbox = url => {
     if (!/^https:\/\/business\.facebook\.com\/latest\/inbox/.test(url)) return;
     if (metaView.webContents.getURL() !== url) metaView.webContents.loadURL(url);

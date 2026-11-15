@@ -835,7 +835,27 @@
     x.fillText(kind === 'done' ? 'Cảm ơn quý khách đã tin tưởng ủng hộ shop! ❤️' : 'Shop sẽ báo ngay khi đơn hoàn thành · Cảm ơn quý khách!', W / 2, H - P / 2 - 24); x.textAlign = 'left';
     return { dataUrl: c.toDataURL('image/png'), qrMissing: false };
   }
-  async function invoiceImage(o, inv, kind) {
+  // Ghép "ảnh thực tế" (app chụp ngầm link của khách: trang TikTok, bài Facebook…) vào dưới ảnh phiếu: báo giá, tiến độ, hoàn thành.
+  async function invoiceImage(o, inv, kind, { snap = true } = {}) {
+    const res = await invoiceImage0(o, inv, kind);
+    const link = o.link || o.lines?.find(l => l.link)?.link || '';
+    if (!snap || !link || !['quote', 'progress', 'done'].includes(kind) || !window.metaDesktop?.svcSnap) return res;
+    const sn = await window.metaDesktop.svcSnap({ url: link }).catch(() => null);
+    if (!sn?.dataUrl) return { ...res, snapError: sn?.error || 'không chụp được' };
+    const [card, shot] = await Promise.all([loadImg(res.dataUrl), loadImg(sn.dataUrl)]); if (!card || !shot) return res;
+    const W = card.width, pad = 28 * 2, sw = Math.min(W - pad * 2, 430 * 2 * 1.1), sh = Math.round(shot.height * sw / shot.width), cap = 64;
+    const c = document.createElement('canvas'), x = c.getContext('2d'); c.width = W; c.height = card.height + cap + sh + pad;
+    x.fillStyle = '#f5f3ff'; x.fillRect(0, 0, c.width, c.height); x.drawImage(card, 0, 0);
+    const y0 = card.height - 20;
+    x.fillStyle = '#fff'; x.beginPath(); x.roundRect(pad / 2, y0, W - pad, cap + sh + pad / 2, 36); x.fill();
+    x.fillStyle = '#6c5ce7'; x.font = '800 30px "Plus Jakarta Sans","Inter","Segoe UI",Arial,sans-serif'; x.textAlign = 'center';
+    x.fillText(`📸 Ảnh thực tế lúc ${new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })} ${new Date().toLocaleDateString('vi-VN')}`, W / 2, y0 + 46);
+    const sx = (W - sw) / 2, sy = y0 + cap;
+    x.save(); x.beginPath(); x.roundRect(sx, sy, sw, sh, 24); x.clip(); x.drawImage(shot, sx, sy, sw, sh); x.restore();
+    x.strokeStyle = '#e5e7eb'; x.lineWidth = 3; x.beginPath(); x.roundRect(sx, sy, sw, sh, 24); x.stroke();
+    return { ...res, dataUrl: c.toDataURL('image/jpeg', 0.9), snapped: true };
+  }
+  async function invoiceImage0(o, inv, kind) {
     if (kind === 'progress' || kind === 'done') return progressImage(o, inv, kind);
     const page = App.pageById(o.pageKey), shop = page?.name || o.pageName || inv.shop || 'Cửa hàng';
     const [logo, qr] = await Promise.all([loadImg(App.pageAvatarUrl(page) || o.pageAvatar), hasPayBlock(kind) ? loadImg(qrUrl(inv, o)) : null]);
@@ -927,7 +947,13 @@
     const text = h('textarea', { rows: 11, value: invoiceText(o, inv, kind) });
     const img = h('img', { alt: 'Ảnh hoá đơn', className: 'svc-inv-img' }), hint = h('div', { className: 'hint' }), withImg = h('input', { type: 'checkbox', checked: true });
     let image = '';
-    const render = async () => { hint.textContent = 'Đang vẽ ảnh hoá đơn…'; const r = await invoiceImage(o, inv, kind); image = r.dataUrl; img.src = image;
+    // Vẽ phiếu ngay; rồi chụp "ảnh thực tế" link khách (vài giây) và ghép vào nếu được.
+    const snapNow = async () => { if (!window.metaDesktop?.svcSnap || !['quote', 'progress', 'done'].includes(kind) || !(o.link || o.lines?.some(l => l.link))) return;
+      const keep = hint.textContent; hint.textContent = (keep ? keep + ' ' : '') + '📸 Đang chụp ảnh thực tế của link khách…';
+      const r = await invoiceImage(o, inv, kind).catch(() => null);
+      if (r?.snapped) { image = r.dataUrl; img.src = image; hint.textContent = keep + (keep ? ' ' : '') + '📸 Đã ghép ảnh thực tế.'; }
+      else hint.textContent = keep + (keep ? ' ' : '') + `📸 Không chụp được ảnh thực tế (${r?.snapError || 'lỗi'}), gửi ảnh phiếu thôi.`; };
+    const render = async () => { hint.textContent = 'Đang vẽ ảnh hoá đơn…'; const r = await invoiceImage(o, inv, kind, { snap: false }); image = r.dataUrl; img.src = image; setTimeout(() => snapNow(), 0);
       hint.textContent = [r.qrMissing ? 'Không tải được mã QR (kiểm tra mạng hoặc số tài khoản); đơn vẫn có thông tin chuyển khoản.' : '', !inv.acc && hasPayBlock(kind) ? 'Chưa có thông tin thanh toán: thêm ở Dịch vụ › Cài đặt › Hoá đơn gửi khách.' : ''].filter(Boolean).join(' '); };
     const openKey = App.inbox?.openKey?.() || '', canSend = o.customerKey && openKey === o.customerKey;
     const sendBtn = h('button', { type: 'button', className: 'btn btn-primary', textContent: '📨 Gửi vào hội thoại', disabled: !canSend,
@@ -1266,23 +1292,31 @@
   const shortSvc = o => String(o.displayName || o.serviceName || 'dịch vụ').replace(/\s*·\s*\d[\d.,]*\s*$/, '');
   const doneOf = o => o.startCount != null && o.remains != null ? Math.max(0, qtyOf(o) - num(o.remains)) : null;
   // Nội dung tin: viết lúc hiện (luôn lấy số mới nhất của đơn).
-  async function nudgeText(n) {
+  async function nudgeText(n, withImage = false) {
     const orders = await DB.get(ORDERS, []), group = n.ref && String(n.ref).startsWith('pc:') ? orders.filter(o => o.payCode === String(n.ref).slice(3)) : orders.filter(o => o.id === n.ref);
     const o = group[0], qs = n.kind === 'paid' ? (await quotes()).find(q => q.id === n.ref) : null;
     if (n.kind === 'paid') return qs ? { text: `Dạ em đã nhận được ${money(qs.paidAmount || qs.sell)} của mình rồi ạ 🙏 Cảm ơn mình đã tin tưởng shop! Em lên đơn ${shortSvc(qs)} cho mình ngay đây ạ.` } : null;
     if (!o) return null;
     const q = qtyOf(o), d = doneOf(o), name = shortSvc(o), link = o.link ? `\n• Link: ${o.link}` : '';
     const prog = () => d != null ? `đã lên ${d.toLocaleString('vi-VN')}/${q.toLocaleString('vi-VN')} (${Math.min(100, Math.round(d / q * 100))}%)` : 'đang chạy';
+    const progImg = async () => { try { const inv = (await settings()).invoice || {}; return (await invoiceImage(group.length > 1 && o.payCode ? await groupOf(o.payCode) : o, inv, o.status === 'done' ? 'done' : 'progress')).dataUrl; } catch { return ''; } };
+    if (['start', 'half', 'ask'].includes(n.kind)) { const r = await nudgeText0(n, o, q, d, name, link, prog); return r ? { ...r, hasImage: true, image: withImage ? await progImg() : '' } : null; }
+    return nudgeText1(n, o, group, q, name, link, withImage);
+  }
+  function nudgeText0(n, o, q, d, name, link, prog) {
     if (n.kind === 'start') return { text: `Dạ đơn ${name} của mình đã bắt đầu chạy rồi ạ 🚀${link}\n• Số ban đầu: ${o.startCount != null ? num(o.startCount).toLocaleString('vi-VN') : '—'}\n• Số lượng tăng: ${q.toLocaleString('vi-VN')}\nEm sẽ báo mình khi đơn hoàn thành ạ.` };
     if (n.kind === 'half') return { text: `Dạ đơn ${name} của mình ${prog()} rồi ạ 💪 Hệ thống vẫn đang chạy tiếp, xong em báo mình liền ạ.` };
     if (n.kind === 'ask') return { text: o.status === 'done' ? `Dạ đơn ${name} của mình đã hoàn thành rồi ạ ✅ Mình kiểm tra lại giúp em nha.`
       : /pending/i.test(o.svcStatus || '') || d == null ? `Dạ đơn ${name} của mình đang chờ hệ thống xử lý, thường bắt đầu chạy trong ít phút ạ. Em theo dõi và báo mình ngay khi lên ạ 🙏`
       : `Dạ đơn ${name} của mình ${prog()} ạ, hệ thống vẫn đang chạy tiếp ạ. Mình chờ thêm chút giúp em nha 🙏` };
+    return null;
+  }
+  async function nudgeText1(n, o, group, q, name, link, withImage) {
     if (n.kind === 'done') {
       const start = o.startCount != null ? num(o.startCount) : null;
       const text = `Dạ đơn ${name} của mình đã HOÀN THÀNH ✅${link}\n• Đã tăng: ${q.toLocaleString('vi-VN')}${start != null ? ` (từ ${start.toLocaleString('vi-VN')} → ${(start + q).toLocaleString('vi-VN')})` : ''}\nMình kiểm tra giúp em nha. Cảm ơn mình đã tin tưởng và ủng hộ shop ạ 🙏❤️`;
-      let image = ''; try { const inv = (await settings()).invoice || {}; image = (await invoiceImage(group.length > 1 && o.payCode ? await groupOf(o.payCode) : o, inv, 'done')).dataUrl; } catch {}
-      return { text, image };
+      let image = ''; if (withImage) try { const inv = (await settings()).invoice || {}; image = (await invoiceImage(group.length > 1 && o.payCode ? await groupOf(o.payCode) : o, inv, 'done')).dataUrl; } catch {}
+      return { text, image, hasImage: true };
     }
     if (n.kind === 'follow') return { text: `Dạ đơn ${name} hôm qua mình thấy ổn không ạ? Có gì cần hỗ trợ thêm mình cứ nhắn em nha. Lần sau cần tăng tương tác mình nhớ ủng hộ shop tiếp nhé ạ ❤️` };
     return null;
@@ -1293,14 +1327,18 @@
     let n = null, m = null;
     for (const x of list) { m = await nudgeText(x); if (m) { n = x; break; } await dropNudge(x.id, key); } // đơn đã xoá: bỏ gợi ý
     if (!n) return null;
-    const send = async auto => { const r = await App.inbox.compose({ key, text: m.text, image: m.image || '', autoSend: auto });
+    // Ảnh (phiếu + ảnh thực tế chụp link khách) chỉ tạo khi bấm Gửi / Sửa: chụp mất vài giây.
+    const send = async (auto, btn) => { const old = btn?.textContent; if (btn) { btn.disabled = true; btn.textContent = m.hasImage ? '📸 Đang chụp ảnh…' : '…'; }
+      const full = m.hasImage ? await nudgeText(n, true).catch(() => m) || m : m;
+      if (btn) { btn.disabled = false; btn.textContent = old; }
+      const r = await App.inbox.compose({ key, text: full.text, image: full.image || '', autoSend: auto });
       if (r === true) { await dropNudge(n.id, key); if (auto) toast('Đã gửi: ' + NUDGE_TITLE[n.kind].replace(/^\S+ /, ''), 4000); } else toast(r, 6000); };
     return h('div', { className: 'nudge-card' },
       h('div', { className: 'nudge-head' }, h('strong', { textContent: '📣 Gợi ý: ' + NUDGE_TITLE[n.kind] }), list.length > 1 ? h('span', { className: 'hint', textContent: ` · còn ${list.length - 1} gợi ý` }) : null),
-      h('div', { className: 'nudge-text', textContent: m.text + (m.image ? '\n[+ ảnh phiếu hoàn thành]' : '') }),
+      h('div', { className: 'nudge-text', textContent: m.text + (m.hasImage ? '\n[+ ảnh phiếu' + (window.metaDesktop?.svcSnap ? ' + ảnh thực tế chụp link khách]' : ']') : '') }),
       h('div', { className: 'nudge-acts' },
-        h('button', { type: 'button', className: 'btn btn-sm btn-primary', textContent: 'Gửi', onclick: () => send(true) }),
-        h('button', { type: 'button', className: 'btn btn-sm btn-ghost', textContent: 'Sửa trước khi gửi', onclick: () => send(false) }),
+        h('button', { type: 'button', className: 'btn btn-sm btn-primary', textContent: 'Gửi', onclick: e => send(true, e.currentTarget) }),
+        h('button', { type: 'button', className: 'btn btn-sm btn-ghost', textContent: 'Sửa trước khi gửi', onclick: e => send(false, e.currentTarget) }),
         h('button', { type: 'button', className: 'btn btn-sm btn-ghost', textContent: 'Bỏ qua', onclick: () => dropNudge(n.id, key) })));
   }
   // Khách hỏi tiến độ ("lên chưa", "sao chưa chạy", "bao giờ xong"…) mà đang có đơn: cập nhật trạng thái rồi gợi ý tin trả lời.
