@@ -244,7 +244,10 @@
   async function vndBalance() {
     const s = await settings(), rate = Number(s.usdRate) || 27000;
     try {
-      const b = await call('balance'), raw = b?.balance ?? b?.data?.balance ?? b?.money ?? b?.amount ?? b, cur = String(b?.currency || '').toUpperCase(), v = money0(raw);
+      // Ưu tiên số dư VND: xin API trả theo VND (currency=VND); API vẫn trả tiền khác thì mới đổi / đọc web.
+      let b = await call('balance', { currency: 'VND' }).catch(() => null);
+      if (!b) b = await call('balance'); // web không nhận tham số currency → gọi như tài liệu
+      const raw = b?.balance ?? b?.data?.balance ?? b?.money ?? b?.amount ?? b, cur = String(b?.currency || '').toUpperCase(), v = money0(raw);
       if (Number.isFinite(v)) {
         if (cur === 'USD') {
           // API chỉ có 2 số lẻ USD (1.87 ≈ 50.490đ, lệch tới ±135đ) → lấy đúng số VND trên web nếu đọc được, không thì hiện "≈".
