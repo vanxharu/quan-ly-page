@@ -483,3 +483,8 @@ td.num.neg{font-weight:700}
 .bg-status .dot{display:inline-block!important;flex:none;width:9px!important;height:9px!important;border-radius:50%}
 .bg-status.ready .dot,.bg-status.fast .dot{background:#39ff7a!important;box-shadow:0 0 0 3px #39ff7a33,0 0 8px #39ff7acc!important;animation:bgGlow 2s ease-in-out infinite}
 @keyframes bgGlow{0%,100%{box-shadow:0 0 0 3px #39ff7a33,0 0 6px #39ff7a99}50%{box-shadow:0 0 0 4px #39ff7a22,0 0 12px #39ff7aff}}
+/* Giao diện tối kiểu Outlook: đen trung tính (không ánh xanh tím), các lớp nền xám đậm nhẹ dần */
+body.dark-mode{--bg-primary:#0a0a0a;--bg-card:#1c1c1c;--bg-input:#141414;--bg-hover:#2a2a2a;--seg-active:#2a2a2a;
+  --text-primary:#f3f3f3;--text-secondary:#b8b8b8;--text-muted:#8c8c8c;--border:#303030;--border-subtle:#262626;--glass-bg:#1c1c1cf5;
+  --primary-soft:#2a2540;--primary-border:#4a4166;--shadow-xs:0 1px 2px #0008;--shadow-sm:0 2px 8px #000a}
+body.dark-mode .tone-gray{background:#2a2a2a;color:#d4d4d4}
