@@ -177,7 +177,7 @@ async function putImage(dbg, objectId, image, base) {
   return r?.result?.value === 1;
 }
 
-function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMeta = () => () => {}, metaShown = () => true, notify = () => {}, progress = () => {}, threadChanged = () => {}, listChanged = () => {} }) {
+function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMeta = () => () => {}, metaShown = () => true, notify = () => {}, progress = () => {}, threadChanged = () => {}, listChanged = () => {}, receiptChanged = () => {} }) {
   // Hội thoại đang mở trong khung ẩn có tin mới/đổi → báo ngay cho Hộp thư (không phải chờ chu kỳ đọc lại).
   // Trang ẩn theo dõi khung tin bằng MutationObserver và in một dấu hiệu ra console; ở đây bắt dấu hiệu đó.
   const watchThread = wc => wc.executeJavaScript(`(() => { try { window.__gaObs?.disconnect(); } catch {}
@@ -228,7 +228,7 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
   //  deleteThenInsertThread: 0 giờ hoạt động · 1 đã đọc tới · 2 tin cuối · 4 ảnh · 7 thread · 10 thư mục · 18 Page
   //  deleteThenInsertContact: 0 id · 2 ảnh · 9 tên   ·  insertNewMessageRange: 0 thread (đã tải 1 đoạn tin của hội thoại)
   const lsStores = new Map(); // pageId -> { threads, contacts, msgs: Map(uid -> Map(mid -> tin)), loaded:Set(uid), at }
-  const lsStore = pageId => { pageId = String(pageId); let st = lsStores.get(pageId); if (!st) lsStores.set(pageId, st = { threads: new Map(), contacts: new Map(), msgs: new Map(), loaded: new Set(), at: 0 }); return st; };
+  const lsStore = pageId => { pageId = String(pageId); let st = lsStores.get(pageId); if (!st) lsStores.set(pageId, st = { threads: new Map(), contacts: new Map(), msgs: new Map(), loaded: new Set(), rcpt: new Map(), at: 0 }); return st; };
   const lsVal = x => Array.isArray(x) ? (x[0] === 19 ? x[1] : x[0] === 9 ? null : x) : x;
   const lsMsg = (st, uid, mid) => { let m = st.msgs.get(uid); if (!m) st.msgs.set(uid, m = new Map()); let x = m.get(mid); if (!x) m.set(mid, x = { mid, ts: 0, text: '', mine: false, pic: '' }); return x; };
   // Lấy các gói Lightspeed { step: [...] } từ bất kỳ dạng bọc nào: gói WebSocket {"payload":"…"}, phản hồi GraphQL
@@ -246,7 +246,11 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
   function lsIngest(pageId, raw) {
     if (!/payload/.test(raw)) return null;
     const ps = lsPayloads(raw); if (!ps.length) return null;
-    const st = lsStore(pageId), pid = String(pageId), threads = new Set(); let list = false, seen = 0;
+    const st = lsStore(pageId), pid = String(pageId), threads = new Set(), rc = new Set(); let list = false, seen = 0;
+    // Mốc khách đã nhận / đã xem (ms). addParticipantIdToGroupThread: 0 thread · 1 người · 2 đã xem tới · 3 đã nhận tới;
+    // updateReadReceipt / updateDeliveryReceipt: 0 mốc · 1 thread · 2 người. Chỉ lấy của chính khách (người = thread), bỏ của Page.
+    const setRc = (uid, k, at) => { at = Number(at) || 0; if (!/^\d+$/.test(uid) || uid === pid || !at) return; let x = st.rcpt.get(uid); if (!x) st.rcpt.set(uid, x = { read: 0, dlv: 0 });
+      if (at > x[k]) { x[k] = at; if (k === 'read' && at > x.dlv) x.dlv = at; rc.add(uid); } };
     for (const p of ps) (function walk(a) {
       if (!Array.isArray(a)) return;
       if (a[0] === 5 && typeof a[1] === 'string') {
@@ -267,6 +271,10 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
             st.threads.set(uid, { uid, at: Number(v[0]) || 0, read: Number(v[1]) || 0, snippet: String(v[2] || ''), pic: /^https/.test(v[4] || '') ? v[4] : '', folder: String(v[10] || '') }); list = true; seen++; }
         } else if (n === 'deleteThenInsertContact') {
           const id = String(v[0] || ''); if (/^\d+$/.test(id) && v[9]) st.contacts.set(id, { name: String(v[9]), pic: /^https/.test(v[2] || '') ? v[2] : '' });
+        } else if (n === 'addParticipantIdToGroupThread') {
+          const uid = String(v[0] || ''); if (String(v[1]) === uid) { setRc(uid, 'read', v[2]); setRc(uid, 'dlv', v[3]); }
+        } else if (n === 'updateReadReceipt' || n === 'updateDeliveryReceipt') {
+          const uid = String(v[1] || ''); if (String(v[2]) === uid) setRc(uid, n === 'updateReadReceipt' ? 'read' : 'dlv', v[0]);
         } else if (n === 'insertNewMessageRange') {
           // Đoạn tin thật sự (tin đầu khác tin cuối) = đã tải hội thoại; danh sách hội thoại cũng gửi "đoạn" 1 tin cuối, không tính.
           const uid = String(v[0] || ''); if (/^\d+$/.test(uid) && v[3] && v[4] && v[3] !== v[4]) { st.loaded.add(uid); threads.add(uid); }
@@ -281,7 +289,7 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
       if (ms && t && ms.ts > t.at) { t.at = ms.ts; t.snippet = (ms.mine ? 'Bạn: ' : '') + (ms.text || (ms.pic ? 'Đã gửi một ảnh.' : '')); if (!ms.mine) t.read = 1; list = true; } // read=1 (< giờ tin) = chưa đọc
     }
     if (threads.size || list) st.at = Date.now();
-    return { threads, list };
+    return { threads, list, rc };
   }
   // Tin của một hội thoại từ dữ liệu gốc → định dạng như readMessages (mốc giờ khi cách nhau > 30 phút).
   const lsMessages = (pageId, uid) => {
@@ -308,7 +316,10 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
       const info = m ? { ts: m.ts, mid: m.mid, streak: lsStreak(st, uid), mine: m.mine, pic: m.pic || '', text: m.text || (m.pic ? 'Đã gửi một ảnh.' : ''), name: st.contacts.get(uid)?.name || '' } : null;
       try { threadChanged(`${pageId}:${uid}`, info); } catch {}
     }
+    for (const uid of r.rc) { try { receiptChanged(`${pageId}:${uid}`, st.rcpt.get(uid)); } catch {} }
   };
+  const lsRcpt = (pageId, uid) => lsStores.get(String(pageId))?.rcpt.get(String(uid)) || null;
+  const withRcpt = (args, r) => r && typeof r === 'object' && Array.isArray(r.messages) ? { ...r, rcpt: lsRcpt(args.pageId, args.uid) } : r;
   // Trạng thái các khung ẩn → Downloads/GetHelps-debug/trang-thai.json (30 giây/lần) để chẩn đoán khi chậm/kẹt.
   setInterval(() => {
     try {
@@ -1141,6 +1152,6 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
     return Promise.all(ids.map(async id => ({ page: id, read: await one(slots.get(id), false), send: makeWorker ? await one(sendSlots.get(id), true) : 'none',
       busy: !!slots.get(id)?.queue.runningSince, frames: lsStore(id).frames || 0 })));
   };
-  return { lookupProfile, listThreads, readThread, sendThread, composePost, hiddenStatus };
+  return { lookupProfile, listThreads, readThread: args => readThread(args).then(r => withRcpt(args, r)), sendThread: args => sendThread(args).then(r => withRcpt(args, r)), composePost, hiddenStatus };
 }
 module.exports = { readThreads, createMetaAuto, extractProfile, findTarget };

@@ -354,6 +354,7 @@ app.whenReady().then(async () => {
   const auto = createMetaAuto({ worker, makeWorker, composer, metaView, showMeta: showMetaTemp, metaShown: () => side === 'meta',
     progress: data => pageView.webContents.executeJavaScript(`window.App?.composeProgress?.(${JSON.stringify(data)})`).catch(() => {}),
     notify: msg => pageView.webContents.executeJavaScript(`typeof toast === 'function' && toast(${JSON.stringify(msg)}, 30000)`).catch(() => {}),
+    receiptChanged: (id, rc) => pageView.webContents.executeJavaScript(`window.App?.inbox?.bsReceipt?.(${JSON.stringify(String(id))}, ${JSON.stringify(rc || null)})`).catch(() => {}),
     threadChanged: (id, info) => pageView.webContents.executeJavaScript(`window.App?.inbox?.bsChanged?.(${JSON.stringify(String(id))}, ${JSON.stringify(info || null)})`).catch(() => {}),
     listChanged: pageId => pageView.webContents.executeJavaScript(`window.App?.inbox?.bsListChanged?.(${JSON.stringify(String(pageId))})`).catch(() => {}) });
   worker.webContents.setAudioMuted(true);

@@ -478,7 +478,7 @@
     const all = r.messages || [];
     { const tail = []; for (let i = all.length - 1; i >= 0 && tail.length < 8; i--) { const m = all[i]; if (m.sep) continue; if (m.mine) break; tail.push(m); }
       if (tail.some(m => m.pic)) notePay(c.key, 'pic'); else if (tail.some(m => PAY_SAID.test(m.text || ''))) notePay(c.key, 'text'); else if (S.payHint.has(c.key) && all.some(m => m.mine)) { S.payHint.delete(c.key); drawOrder().catch(() => {}); } }
-    c.bsLast = r;
+    c.bsLast = r; if (r.rcpt) c.rcpt = r.rcpt;
     if (!silent && !older && !keepTop) c.bsShow = BS_STEP;
     let start = Math.max(0, all.length - (c.bsShow || BS_STEP));
     if (start > 0 && all[start - 1]?.sep) start--; // giữ mốc giờ đi kèm tin đầu
@@ -487,12 +487,13 @@
     thread.replaceChildren(
       h('div', { style: 'text-align:center;margin:4px 0' }, h('button', { type: 'button', className: 'btn btn-ghost btn-sm', textContent: hiddenOld ? `Xem tin cũ hơn (${hiddenOld})` : 'Tải tin cũ hơn', onclick: () => bsOlder(c) })),
       ...msgs.map((m, i) => m.sep ? h('div', { className: 'hint', style: 'text-align:center;margin:8px 0', textContent: m.sep })
-        : h('div', { className: 'msgrow' + (m.mine ? ' me' : '') },
-          msgs[i + 1] && !msgs[i + 1].sep && msgs[i + 1].mine === m.mine ? h('span', { style: 'width:24px;flex:none' })
-            : m.mine ? App.avatar(c.page.name, App.pageAvatarUrl(c.page), 24) : messageAvatar(c),
+        : h('div', { className: 'msgrow' + (m.mine ? ' me' : ''), dataset: m.mine ? { bsMe: '1', ts: String(m.ts || 0) } : { bsCus: '1' } },
+          m.mine ? h('span', { className: 'rc-slot' })
+            : msgs[i + 1] && !msgs[i + 1].sep && msgs[i + 1].mine === m.mine ? h('span', { style: 'width:24px;flex:none' }) : messageAvatar(c),
           h('div', { className: 'msg' + (m.mine ? ' me' : '') }, m.text || null, m.mine ? null : linkActions(c, m.text),
             m.pic ? picEl(m.pic) : null))),
       msgs.length ? null : empty('Chưa đọc được tin nào.'));
+    drawRcpt(c);
     // Hiện thêm tin cũ: giữ nguyên chỗ đang đọc (không nhảy).
     thread.scrollTop = keepTop ? thread.scrollHeight - prevH + prevTop : !silent || atBottom ? thread.scrollHeight : thread.scrollTop;
     if (!keepTop && (!silent || atBottom)) { S.stickUntil = Date.now() + (silent ? 1200 : 2500); S.atBottom = true; }
@@ -500,6 +501,38 @@
     if (silent && !atBottom && !keepTop && cnt > prevCount && prevCount) { const b = $('ibNewMsg'); if (b) b.hidden = false; }
     thread.onscroll = () => { if (thread.scrollTop < 40 && S.conv === c && !c.bsOlderBusy && thread.scrollHeight > thread.clientHeight + 40) bsOlder(c, true); };
   }
+  // Trạng thái tin của Page như Business Suite: ○ đang gửi · ✓ đã gửi · ● đã nhận · avatar khách = đã xem tới tin đó.
+  // Chỉ hiện ở các tin cuối của Page (khách chưa nhắn lại); mốc lấy từ dữ liệu gốc (đã nhận / đã xem của khách).
+  const hm = at => { const d = new Date(at); return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; };
+  function drawRcpt(c) {
+    const thread = $('ibThread'); if (!thread?.querySelectorAll || S.conv !== c) return;
+    thread.querySelectorAll('.rc-note').forEach(el => el.remove());
+    const rows = [...thread.querySelectorAll('.msgrow[data-bs-me], .msgrow[data-bs-cus]')].filter(r => !r.classList.contains('ib-pending'));
+    rows.forEach(r => r.querySelector(':scope > .rc-slot')?.replaceChildren());
+    let k = rows.length; while (k > 0 && rows[k - 1].dataset.bsMe) k--;
+    const tail = rows.slice(k); if (!tail.length) return;
+    const rc = c.rcpt || {}, read = rc.read || 0, dlv = rc.dlv || 0, ts = r => Number(r.dataset.ts) || 0;
+    const last = tail[tail.length - 1], lt = ts(last);
+    let seenRow = null; for (const r of tail) if (ts(r) && ts(r) <= read) seenRow = r;
+    const slot = r => r.querySelector(':scope > .rc-slot');
+    let note;
+    if (seenRow) {
+      const url = S.pics.get(pictureKey(c)) || '';
+      slot(seenRow).replaceChildren(h('span', { className: 'rc seen', title: 'Đã xem lúc ' + hm(read) }, App.avatar(c.other.name, url, 14)));
+      if (seenRow === last) note = 'Đã xem · ' + hm(read);
+    }
+    if (seenRow !== last) {
+      const got = lt && lt <= dlv;
+      slot(last).replaceChildren(h('span', { className: 'rc ' + (got ? 'dlv' : 'sent'), title: got ? 'Khách đã nhận' : 'Đã gửi' }));
+      note = got ? 'Đã nhận' : 'Đã gửi';
+    }
+    if (note) last.after(h('div', { className: 'rc-note', textContent: note }));
+  }
+  App.inbox.bsReceipt = (id, rc) => {
+    if (!rc) return;
+    const row = S.convs.find(x => x.id === 'bs:' + id); if (row) row.rcpt = rc;
+    const c = S.conv; if (c?.bs && `${c.page.id}:${c.uid}` === id) { c.rcpt = rc; drawRcpt(c); }
+  };
   async function bsOlder(c, auto = false) {
     const r = c.bsLast; if (!r || S.conv !== c) return;
     const shown = c.bsShow || BS_STEP, total = (r.messages || []).length;
@@ -547,6 +580,7 @@
       $('ibText').value = ''; S.tpl = null; S.image = ''; drawAttach(); saveDraft();
       pending = h('div', { className: 'msgrow me ib-pending' }, h('div', { className: 'msg me' }, text || null,
         image ? picEl(image) : null),
+        h('span', { className: 'rc-slot' }, h('span', { className: 'rc sending', title: 'Đang gửi' })),
         h('span', { className: 'hint', textContent: image ? 'Đang gửi ảnh…' : 'Đang gửi…' }));
       $('ibThread').append(pending); toBottom(true);
     }
