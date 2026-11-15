@@ -1,7 +1,7 @@
 /* Hộp thư (giống inbox-tab.js của tiện ích, nhưng đọc qua Graph API): một hoặc tất cả Page, lọc, thời gian khách chờ,
  * tự gắn nhãn theo lời khách (InboxRules), mẫu tin bằng nút "Mẫu" hoặc gõ "/", ảnh đính kèm, khung CRM, báo tin mới. */
 (() => {
-  const S = { filter: 'all', convs: [], conv: null, tpl: null, image: '', loading: 0, pics: new Map(), identities: new Map(), sending: false, more: new Map(), extra: new Map(), manual: {} };
+  const S = { filter: 'all', convs: [], conv: null, tpl: null, image: '', loading: 0, pics: new Map(), identities: new Map(), sending: false, more: new Map(), extra: new Map(), manual: {}, zconvs: [] };
   const draftKey = c => c?.other.id ? `inboxDraft:${c.page.id}|${c.other.id}` : '';
   function saveDraft(c = S.conv) {
     const key = draftKey(c);
@@ -277,7 +277,7 @@
   // Gộp các tin dồn dập trong 1,5 giây; khách đang mở thì đã tự cập nhật nên bỏ qua.
   const hotQ = new Map(); let hotT = 0, hotBusy = false;
   function prefetchHot(c) {
-    if (!c?.bs || S.conv?.id === c.id || !window.metaDesktop?.readThread) return;
+    if (!c?.bs || c.zalo || S.conv?.id === c.id || !window.metaDesktop?.readThread) return;
     hotQ.set(c.id, c); clearTimeout(hotT); hotT = setTimeout(runHot, 1500);
   }
   async function runHot() {
@@ -383,7 +383,7 @@
       const cached = bsMsgCache.get(c.id) || await DB.get('bsMsg:' + c.id, null).catch(() => null);
       if (S.conv !== c) return;
       if (cached?.messages?.length) { drawBs(c, cached); $('ibThread').append(h('div', { className: 'hint', style: 'text-align:center;margin:6px 0', id: 'ibBsUpd', textContent: 'Đang cập nhật tin mới…' })); }
-      else $('ibThread').replaceChildren(empty('Đang đọc tin từ Business Suite…'));
+      else $('ibThread').replaceChildren(empty(c.zalo ? 'Đang đọc tin từ Zalo…' : 'Đang đọc tin từ Business Suite…'));
       c.unread_count = 0; unreadHold.delete(c.id); drawList();
       const draft = await DB.get(draftKey(c), {}).catch(() => ({}));
       if (S.conv !== c) return;
@@ -392,6 +392,9 @@
     const r = await window.metaDesktop.readThread({ pageId: String(c.page.id), uid: c.uid, older }).catch(e => ({ error: e.message }));
     if (S.conv !== c) return;
     if (r.error && silent && !older) return; // đọc ngầm lỗi: giữ nguyên khung chat
+    if (r.error && c.zalo) return $('ibThread').replaceChildren(h('div', { className: 'status err' },
+      r.error === 'login' ? 'Chưa đăng nhập Zalo trong app: mở cột Zalo (Ctrl+Shift+Z) và quét mã QR.' : r.error, ' ',
+      h('button', { type: 'button', className: 'btn btn-ghost btn-sm', textContent: 'Mở cột Zalo ↗', onclick: () => window.metaDesktop.openZalo() })));
     if (r.error) return $('ibThread').replaceChildren(h('div', { className: 'status err' },
       r.error === 'login' ? 'Chưa đăng nhập Business Suite trong app (menu "Hộp thư Meta").' : `${r.error} Menu Xem › "Lưu chẩn đoán Business Suite" rồi gửi file "an" cho người hỗ trợ.`, ' ',
       h('button', { type: 'button', className: 'btn btn-ghost btn-sm', textContent: 'Mở trong cột Meta ↗', onclick: () => window.metaDesktop.openThread({ pageId: String(c.page.id), uid: c.uid }) })));
@@ -520,13 +523,13 @@
     // Tin không có giờ (đọc từ màn hình): so mốc với giờ tin cuối của hội thoại, hoặc dùng trạng thái Business Suite đang hiện.
     const lastAt = lt || (c.fromCustomer === false ? c.lastAt || Date.parse(c.updated_time) || 0 : 0);
     let seenRow = null; for (const r of tail) if (ts(r) && ts(r) <= read) seenRow = r;
-    if (!seenRow && !lt && ((lastAt && read >= lastAt - 1000) || c.domRc === 'seen')) seenRow = last;
+    if (!seenRow && (!lt || c.zalo) && ((!lt && lastAt && read >= lastAt - 1000) || c.domRc === 'seen')) seenRow = last;
     const slot = r => r.querySelector(':scope > .rc-slot');
     let note;
     if (seenRow) {
       const url = S.pics.get(pictureKey(c)) || '';
-      slot(seenRow).replaceChildren(h('span', { className: 'rc seen', title: 'Đã xem lúc ' + hm(read) }, App.avatar(c.other.name, url, 14)));
-      if (seenRow === last) note = 'Đã xem · ' + hm(read);
+      slot(seenRow).replaceChildren(h('span', { className: 'rc seen', title: read ? 'Đã xem lúc ' + hm(read) : 'Đã xem' }, App.avatar(c.other.name, url, 14)));
+      if (seenRow === last) note = read ? 'Đã xem · ' + hm(read) : 'Đã xem';
     }
     if (seenRow !== last) {
       const got = (lastAt && lastAt <= dlv) || c.domRc === 'dlv';
@@ -597,7 +600,7 @@
       // Chữ đã đi, chỉ thiếu ảnh: xoá chữ khỏi ô nhập (giữ ảnh) để bấm gửi lại không lặp tin.
       if (r.error && /^Chữ đã gửi/.test(r.error) && S.conv === c && $('ibText').value.trim() === text) { $('ibText').value = ''; await saveDraft(); updateSendState(); }
       if (r.error && /^Chữ đã gửi/.test(r.error) && pending) { pending.remove(); pending = null; if (S.conv === c && !S.image) { S.image = image; drawAttach(); saveDraft(); } }
-      if (r.error) throw new Error(r.error === 'login' ? 'Chưa đăng nhập Business Suite trong app.' : r.error);
+      if (r.error) throw new Error(r.error === 'login' ? (c.zalo ? 'Chưa đăng nhập Zalo trong app.' : 'Chưa đăng nhập Business Suite trong app.') : r.error);
       if (tpl) await App.recordTemplateUse(tpl, c.key);
       c.fromCustomer = false;
       if (S.conv === c) { if (!pending && $('ibText').value.trim() === text && S.image === image) { $('ibText').value = ''; S.image = ''; S.tpl = null; drawAttach(); await saveDraft(); }
@@ -617,7 +620,9 @@
   const listInterval = page => App.server?.livePages?.has?.(String(page.id)) ? 5 * 60e3 : App.selected().length > 5 ? 120e3 : 60e3;
   async function load(silent, { force = false } = {}) {
     const pages = App.selected();
-    if (!pages.length) { S.convs = []; $('ibList').replaceChildren(empty('Chưa tick Page nào.')); return; }
+    if (!pages.length) { // chưa tick Page: vẫn hiện tin Zalo (nếu đã đăng nhập Zalo trong app)
+      S.convs = [...S.zconvs]; S.errors = []; await App.inbox.zaloLoad(!S.zconvs.length).catch(() => {});
+      if (!S.convs.length) $('ibList').replaceChildren(empty('Chưa tick Page nào.')); else drawList(); return; }
     const scope = pages.map(p => p.id).join();
     if (S.listBusy && S.fetchScope === scope) return;
     const run = ++S.loading;
@@ -631,7 +636,7 @@
     const paint = async () => {
       if (run !== S.loading) return;
       const all = pages.flatMap(p => partial.get(p.id) || S.convs.filter(c => c.page.id === p.id));
-      S.convs = [...new Map([...S.extra.values(), ...all].map(c => [c.id, c])).values()].sort((a, b) => new Date(b.updated_time) - new Date(a.updated_time));
+      S.convs = [...new Map([...S.extra.values(), ...all, ...S.zconvs].map(c => [c.id, c])).values()].sort((a, b) => new Date(b.updated_time) - new Date(a.updated_time));
       await drawList();
     };
     if (viaBs) {
@@ -657,7 +662,7 @@
     S.failures = errors.length === pages.length ? (S.failures || 0) + 1 : 0;
     S.retryAt = S.failures ? Date.now() + Math.min(300e3, 30e3 * 2 ** (S.failures - 1)) : 0;
     lists.forEach((list, i) => { if (!S.more.has(pages[i].id) && typeof list.after === 'string') S.more.set(pages[i].id, { page: pages[i], after: list.after }); });
-    S.convs = [...new Map([...S.extra.values(), ...lists.flat()].map(c => [c.id, c])).values()].sort((a, b) => new Date(b.updated_time) - new Date(a.updated_time));
+    S.convs = [...new Map([...S.extra.values(), ...lists.flat(), ...S.zconvs].map(c => [c.id, c])).values()].sort((a, b) => new Date(b.updated_time) - new Date(a.updated_time));
     S.crm = await App.crm.all();
 
     S.errorPages = errorPages; S.errors = errors;
@@ -667,6 +672,7 @@
     queuePics(S.convs);
     if (S.pending) { $('ibSearch').value = S.pending; const hit = S.convs.find(c => norm(c.other.name) === norm(S.pending)); S.pending = ''; if (hit) openConv(hit); }
     drawList();
+    App.inbox.zaloLoad(!S.zconvs.length).catch(() => {});
     } finally { if (run === S.loading) S.listBusy = false; }
   }
   async function loadMore() {
@@ -796,10 +802,14 @@
     const pg = App.avatar(c.page.name, App.pageAvatarUrl(c.page), Math.round(size * .38));
     pg.classList.add('pg'); pg.title = c.page.name;
     const pl = platLogo(platOf(c), Math.round(size * .44)); pl.classList.add('pl');
-    return h('span', { className: 'avwrap' }, App.avatar(c.other.name, S.pics.get(pictureKey(c)), size, () => retryPicture(c, S.pics.get(pictureKey(c)))), pg, pl);
+    return h('span', { className: 'avwrap' }, App.avatar(c.other.name, S.pics.get(pictureKey(c)), size, () => retryPicture(c, S.pics.get(pictureKey(c)))), c.zalo ? null : pg, pl);
   };
   function drawHead(c) {
     if ($('ibOrderBtn')) $('ibOrderBtn').disabled = !c;
+    if (c.zalo) return $('ibTitle').replaceChildren(h('span', { className: 'thread-head' }, custAvatar(c, 32),
+      h('span', { className: 'th-text' }, h('div', { className: 'card-title', textContent: c.other.name }),
+        h('div', { className: 'th-meta' }, h('span', { className: 'th-page', textContent: 'Zalo cá nhân' }))),
+      h('button', { type: 'button', className: 'th-btn', title: 'Mở cột Zalo (hội thoại này đang mở sẵn trong đó)', textContent: 'Zalo ↗', onclick: () => window.metaDesktop.openZalo() })));
     if (c.bs) return $('ibTitle').replaceChildren(h('span', { className: 'thread-head' }, custAvatar(c, 32),
       h('span', { className: 'th-text' }, h('div', { className: 'card-title', textContent: c.other.name }),
         h('div', { className: 'th-meta' }, h('span', { className: 'th-page', title: c.page.name, textContent: c.page.name }), h('span', { className: 'th-dot', textContent: '·' }),
@@ -1158,6 +1168,53 @@
   let bsLive = false, bsAgain = false;
   // App Windows báo danh sách hội thoại của một Page vừa đổi (khách nhắn mới) → đọc lại danh sách Page đó ngay, vẽ lại, báo tin.
   let bsListBusy = new Set(), bsListAgain = new Set();
+  // ── Zalo cá nhân: danh sách đọc từ Zalo Web (cột Zalo của app) ──
+  const ZPAGE = { id: 'zalo', name: 'Zalo', zalo: true };
+  // Giờ Zalo ghi kiểu "4 phút", "2 giờ", "Hôm qua", "06/11", "3 ngày" → mốc ms (gần đúng).
+  const zTime = (t, now = Date.now()) => { t = String(t || '').trim().toLowerCase(); let m;
+    if (!t || /vừa xong|just/.test(t)) return now;
+    if ((m = t.match(/(\d+)\s*(giây|phút|giờ|ngày|tuần)/))) return now - Number(m[1]) * { 'giây': 1e3, 'phút': 6e4, 'giờ': 36e5, 'ngày': 864e5, 'tuần': 6048e5 }[m[2]];
+    if (/hôm qua|yesterday/.test(t)) return now - 864e5;
+    if ((m = t.match(/(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?/))) { const y = m[3] ? (m[3].length === 2 ? 2000 + Number(m[3]) : Number(m[3])) : new Date().getFullYear(); const d = new Date(y, Number(m[2]) - 1, Number(m[1]), 12); if (d > now) d.setFullYear(y - 1); return d.getTime(); }
+    return now; };
+  // Chỉ lấy hội thoại 1-1 với khách: bỏ nhóm, tài khoản Zalo chính thức (Zalo, Meta, Nạp Điện Thoại…) và My Documents.
+  const zKeep = r => !r.group && !r.oa && !/^(my documents|zalo|cloud của tôi)$/i.test(r.name);
+  let zFirst = true;
+  App.inbox.zaloList = async rows => {
+    if (!Array.isArray(rows)) return;
+    const st = await settings().catch(() => ({}));
+    const old = new Map(S.zconvs.map(c => [c.id, c])), out = [], now = Date.now();
+    rows.filter(zKeep).forEach((r, i) => {
+      const id = 'bs:zalo:' + r.id, prev = old.get(id), mine = /^(bạn|you)\s*:/i.test(r.snippet);
+      const changed = !prev || prev.snippet !== r.snippet;
+      const at = !changed && prev ? prev.lastAt : zTime(r.time, now) - i; // tin cuối không đổi: giữ mốc cũ (Zalo ghi "4 phút" trôi theo giờ)
+      const c = prev || { id, bs: true, zalo: true, platform: 'zalo', uid: r.id, page: ZPAGE, other: { id: 'zl' + r.id } };
+      Object.assign(c, { other: { id: 'zl' + r.id, name: r.name }, snippet: r.snippet, timeText: '', updated_time: new Date(at).toISOString(), lastAt: at,
+        // Số chưa đọc: theo huy hiệu của Zalo; Zalo không hiện (vd hội thoại đang mở sẵn trong cột Zalo) thì tự đếm tin mới.
+        unread_count: mine ? 0 : r.unread || (changed && prev && !zFirst ? (prev.unread_count || 0) + 1 : prev?.unread_count || 0),
+        fromCustomer: !mine, key: App.crmKey('zalo', r.name), muted: r.muted });
+      if (r.pic) S.pics.set(pictureKey(c), r.pic);
+      const viewing = S.conv?.id === id && App.current() === 'inbox' && !document.hidden;
+      if (viewing) c.unread_count = 0;
+      if (changed && prev && !zFirst && !mine && !viewing && !r.muted && st.webNotify && InboxRules.notifyAllowed(st, 'zalo'))
+        App.notify(`💬 ${r.name} · Zalo`, r.snippet || 'Tin nhắn mới');
+      if (changed && prev && S.conv?.id === id && !S.sending) openBs(S.conv, { silent: true }).catch(() => {});
+      out.push(c);
+    });
+    // Dòng Zalo không còn trong khung đang thấy (danh sách ảo) vẫn giữ lại.
+    for (const c of S.zconvs) if (!out.some(x => x.id === c.id)) out.push(c);
+    zFirst = false; S.zconvs = out;
+    S.convs = [...new Map([...S.convs.filter(c => !c.zalo), ...out].map(c => [c.id, c])).values()].sort((a, b) => new Date(b.updated_time) - new Date(a.updated_time));
+    if (App.current() === 'inbox') drawList();
+  };
+  // Mở Hộp thư: lấy danh sách Zalo (cuộn hết một lượt) nếu đã đăng nhập Zalo trong app.
+  let zLoaded = 0;
+  App.inbox.zaloLoad = async (deep = false) => {
+    if (!window.metaDesktop?.zaloList || (!deep && Date.now() - zLoaded < 60e3)) return;
+    zLoaded = Date.now();
+    const r = await window.metaDesktop.zaloList({ deep }).catch(() => null);
+    if (r?.rows) App.inbox.zaloList(r.rows); else zLoaded = 0;
+  };
   App.inbox.bsListChanged = async pageId => {
     if (!bsFirst()) return;
     const p = App.selected().find(x => String(x.id) === String(pageId)); if (!p) return;
