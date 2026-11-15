@@ -214,9 +214,12 @@ app.whenReady().then(async () => {
     const w = cur ? Math.round(Math.min(0.8, Math.max(0.2, widths[cur])) * width) : 0;
     pageView.setBounds({ x: 0, y: 0, width: width - w, height });
     bar.setBounds(cur ? { x: width - w, y: 0, width: w, height: BAR } : { x: width, y: 0, width: 0, height: 0 });
-    // Zalo ẩn vẫn giữ kích thước thật (đặt ngoài mép cửa sổ): Zalo Web chỉ vẽ dòng/tin đang "thấy" nên khung 0×0 sẽ không đọc được gì.
+    // Zalo ẩn vẫn phải "đang hiện" với kích thước thật (Zalo Web chỉ vẽ dòng/tin đang thấy, khung 0×0 hay ngoài cửa sổ thì không chạy):
+    // đặt nó NẰM DƯỚI trang chính (bị trang chính che kín); mở cột Zalo thì đưa lên trên cùng.
+    const zTop = cur === 'zalo';
+    if (zaloView.__top !== zTop) { zaloView.__top = zTop; try { if (zTop) mainWindow.contentView.addChildView(zaloView); else mainWindow.contentView.addChildView(zaloView, 0); } catch {} }
     for (const [name, v] of [['studio', panelView], ['meta', metaView], ['zalo', zaloView], ['svc', svcView]]) v.setBounds(cur === name ? { x: width - w, y: BAR, width: w, height: height - BAR }
-      : name === 'zalo' ? { x: width + 50, y: BAR, width: 760, height: Math.max(600, height - BAR) } : { x: width, y: 0, width: 0, height: 0 });
+      : name === 'zalo' ? { x: 0, y: 0, width: Math.min(820, Math.max(400, width - w)), height } : { x: width, y: 0, width: 0, height: 0 });
     const title = cur === 'meta' ? 'Hộp thư Meta' : cur === 'studio' ? 'Studio AI' : cur === 'zalo' ? 'Zalo' : cur === 'svc' ? 'Dịch vụ' : '';
     if (title && bar.webContents.__title !== title) { bar.webContents.__title = title; bar.webContents.loadFile(path.join(__dirname, 'bar.html'), { query: { t: title } }); }
   };
@@ -388,6 +391,12 @@ app.whenReady().then(async () => {
   ipcMain.handle('meta-thread-send', (e, args) => !fromPage(e) ? { error: 'denied' } : args?.pageId === 'zalo' ? zalo.send(args) : auto.sendThread(args || {}));
   ipcMain.handle('meta-threads', (e, args) => fromPage(e) ? auto.listThreads(args || {}) : { error: 'denied' });
   ipcMain.handle('meta-hidden-status', e => fromPage(e) ? auto.hiddenStatus() : []);
+  // Zalo: trạng thái cho thanh trên cùng + ghi Downloads/GetHelps-debug/zalo.json (30 giây/lần) để chẩn đoán.
+  ipcMain.handle('zalo-status', async e => { if (!fromPage(e)) return null;
+    const url = zaloView.webContents.getURL(); if (!url.startsWith('https://chat.zalo.me')) return { state: 'closed', ...zalo.status(), url };
+    await zalo.ready().catch(() => {}); return zalo.status(); });
+  setInterval(() => { try { const dir = path.join(app.getPath('downloads'), 'GetHelps-debug'); require('fs').mkdirSync(dir, { recursive: true });
+    require('fs').writeFileSync(path.join(dir, 'zalo.json'), JSON.stringify({ at: new Date().toISOString(), url: zaloView.webContents.getURL().slice(0, 80), bounds: zaloView.getBounds(), ...zalo.status(), listAgo: zalo.status().listAt ? Math.round((Date.now() - zalo.status().listAt) / 1000) : null }, null, 1)); } catch {} }, 30e3);
   // Mở đúng hội thoại trong cột Meta: tải hộp thư của Page rồi bấm vào dòng của khách (UID).
   ipcMain.handle('meta-open-thread', async (e, { pageId, uid } = {}) => {
     if (!fromPage(e) || !/^\d+$/.test(String(pageId)) || !/^\d+$/.test(String(uid))) return false;

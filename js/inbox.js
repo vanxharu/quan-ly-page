@@ -1278,6 +1278,7 @@
   };
   // Mở Hộp thư: lấy danh sách Zalo (cuộn hết một lượt) nếu đã đăng nhập Zalo trong app.
   let zLoaded = 0;
+  App.inbox.zaloCount = () => S.zconvs.length;
   App.inbox.zaloLoad = async (deep = false) => {
     if (!window.metaDesktop?.zaloList || (!deep && Date.now() - zLoaded < 60e3)) return;
     zLoaded = Date.now();

@@ -176,8 +176,10 @@ function zWatch(tag) {
 }
 
 function createZaloAuto({ wc, sendKey, onList = () => {}, onThread = () => {}, log = () => {} }) {
+  // Trạng thái để chẩn đoán (thanh trạng thái + Downloads/GetHelps-debug/zalo.json).
+  const stat = { state: 'closed', url: '', rows: 0, kept: 0, err: '', listAt: 0, events: 0, watch: false };
   // Hàm chạy trong trang kèm hàm phụ (zReacts dùng trong zRead).
-  const PRELUDE = `const Z_EMO = ${JSON.stringify(Z_EMO)}; ${zReacts};`;
+  const PRELUDE = `const Z_EMO = ${JSON.stringify(Z_EMO)}; ${zReacts}; ${zCurrent};`;
   const run = (fn, ...args) => wc().executeJavaScript(`(() => { ${PRELUDE} return (${fn})(${args.map(a => JSON.stringify(a)).join(',')}); })()`, true);
   let chain = Promise.resolve();
   const queue = job => { const p = chain.then(job, job); chain = p.catch(() => {}); return p; };
@@ -185,8 +187,10 @@ function createZaloAuto({ wc, sendKey, onList = () => {}, onThread = () => {}, l
   const ready = async () => {
     const w = wc(); if (!w || w.isDestroyed()) return 'closed';
     if (!w.getURL().startsWith('https://chat.zalo.me')) return 'closed';
-    const s = await run(zState).catch(() => 'loading');
-    if (s === 'ready') await run(zWatch, TAG).catch(() => {});
+    stat.url = w.getURL().slice(0, 60);
+    const s = await run(zState).catch(e => { stat.err = 'zState: ' + e.message; return 'loading'; });
+    stat.state = s;
+    if (s === 'ready') stat.watch = !!(await run(zWatch, TAG).catch(e => { stat.err = 'zWatch: ' + e.message; return false; }));
     return s;
   };
   const err = s => ({ error: s === 'login' || s === 'closed' ? 'login' : 'Zalo Web đang tải, thử lại sau vài giây.' });
@@ -194,8 +198,9 @@ function createZaloAuto({ wc, sendKey, onList = () => {}, onThread = () => {}, l
   const list = ({ deep = false } = {}) => queue(async () => {
     const s = await ready(); if (s !== 'ready') return err(s);
     await run(`() => { window.__gaZList = ${zList}; }`).catch(() => {});
-    const rows = deep ? await run(zListAll, 60).catch(() => null) : await run(zList).catch(() => null);
+    const rows = deep ? await run(zListAll, 60).catch(e => { stat.err = 'zListAll: ' + e.message; return null; }) : await run(zList).catch(e => { stat.err = 'zList: ' + e.message; return null; });
     if (!rows) return { error: 'Không đọc được danh sách Zalo.' };
+    stat.rows = rows.length; stat.listAt = Date.now(); stat.err = '';
     if (!deep) { const m = new Map(lastList.map(r => [r.id, r])); for (const r of rows) m.set(r.id, r); lastList = [...m.values()]; } else lastList = rows;
     return { rows: lastList.map(({ y, ...r }) => r) };
   });
@@ -246,12 +251,13 @@ function createZaloAuto({ wc, sendKey, onList = () => {}, onThread = () => {}, l
   let busyList = false, againList = false;
   const onConsole = async msg => {
     if (!String(msg || '').startsWith(TAG)) return;
+    stat.events++;
     if (msg === TAG + 'list') {
       if (busyList) { againList = true; return; } busyList = true;
       try { const r = await list(); if (r.rows) onList(r.rows); } catch {} finally { busyList = false; if (againList) { againList = false; onConsole(TAG + 'list'); } }
     } else if (msg === TAG + 'thread') { const id = await current(); if (id) onThread(id); }
   };
-  return { list, read, send, react, onConsole, ready };
+  return { list, read, send, react, onConsole, ready, status: () => ({ ...stat }) };
 }
 
 module.exports = { createZaloAuto, _page: { zReacts, zReact, zReplyTo, zState, zList, zListAll, zCurrent, zOpen, zRead, zPutText, zDropImage, zClickSend, zMineCount, zWatch } };
