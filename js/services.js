@@ -755,8 +755,8 @@
   function invoiceText(o, inv, kind) {
     const q = qtyOf(o), name = o.displayName || o.items?.[0]?.name || 'Dịch vụ';
     const L = [`${kind === 'quote' && o.renewOf ? '🔔 GIA HẠN DỊCH VỤ' : KIND_TITLE[kind] || KIND_TITLE.new} #${payCode(o)}`,
-      ...(multi(o) ? [o.link ? `• Link: ${o.link}` : null, `• Gồm ${o.lines.length} dịch vụ:`, ...o.lines.map((l, i) => '   ' + lineText(o, l, i)), `• Tổng tiền: ${money(orderSell(o))}`]
-        : [`• Dịch vụ: ${name}`, o.link ? `• Link: ${o.link}` : null, `• Số lượng: ${q.toLocaleString('vi-VN')}`, `• Thành tiền: ${money(orderSell(o))}`])];
+      ...(multi(o) ? [o.link ? `• Link: ${o.link}` : null, `• Gồm ${o.lines.length} dịch vụ:`, ...o.lines.map((l, i) => '   ' + lineText(o, l, i)), kind === 'progress' ? null : `• Tổng tiền: ${money(orderSell(o))}`]
+        : [`• Dịch vụ: ${name}`, o.link ? `• Link: ${o.link}` : null, `• Số lượng: ${q.toLocaleString('vi-VN')}`, kind === 'progress' ? null : `• Thành tiền: ${money(orderSell(o))}`])];
     if (kind === 'quote') {
       if (o.renewEnd) L.push(`• Gói hiện tại hết hạn: ${fmtTime(o.renewEnd)}`);
       if (o.termMonths) L.push(`• Thời hạn: ${o.termMonths} tháng`);
@@ -781,7 +781,62 @@
   }
   // Ảnh hoá đơn / báo giá. Có chuyển khoản: mã QR to chiếm phần lớn ảnh (khách quét ngay), số tiền + nội dung CK nổi bật;
   // mỗi loại thông tin một màu (dịch vụ tím, link xanh dương, số lượng cam, hạn vàng, mã CK đỏ, ngân hàng xanh lá…).
+  // Ảnh báo tiến độ / hoàn thành: gọn, không có tiền. Thanh tiến độ to (đã lên / tổng, %), số ban đầu → hiện tại, trạng thái.
+  async function progressImage(o, inv, kind) {
+    const page = App.pageById(o.pageKey), shop = page?.name || o.pageName || inv.shop || 'Cửa hàng';
+    const logo = await loadImg(App.pageAvatarUrl(page) || o.pageAvatar);
+    const W = 720, P = 28, c = document.createElement('canvas'); let x = c.getContext('2d');
+    const font = (w, sz) => `${w} ${sz}px "Plus Jakarta Sans","Inter","Segoe UI",Arial,sans-serif`;
+    const fit = (t, maxW, f) => { x.font = f; t = String(t); if (x.measureText(t).width <= maxW) return t; while (t.length > 1 && x.measureText(t + '…').width > maxW) t = t.slice(0, -1); return t + '…'; };
+    const items = multi(o) ? o.lines.map(l => ({ name: l.displayName, link: l.link || o.link, ord: l.order || l })) : [{ name: o.displayName || o.serviceName || 'Dịch vụ', link: o.link, ord: o }];
+    const info = it => { const q = qtyOf(it.ord), d = doneOf(it.ord), st = it.ord.status === 'done' || kind === 'done' && !multi(o) ? 'done' : /pending/i.test(it.ord.svcStatus || '') ? 'wait' : 'run';
+      const pct = st === 'done' ? 100 : d != null && q ? Math.min(100, Math.round(d / q * 100)) : 0; return { q, d: st === 'done' ? q : d, pct, st, start: it.ord.startCount != null ? num(it.ord.startCount) : null }; };
+    const ST = { done: ['HOÀN THÀNH', '#059669', '#d1fae5'], run: ['ĐANG CHẠY', '#6c5ce7', '#ede9fe'], wait: ['CHỜ CHẠY', '#b45309', '#fef3c7'] };
+    const one = items.length === 1, rowH = one ? 200 : 120;
+    const H = 96 + 24 + items.length * (rowH + 14) + 70;
+    c.width = W * 2; c.height = H * 2; x = c.getContext('2d'); x.scale(2, 2);
+    x.fillStyle = '#f5f3ff'; x.fillRect(0, 0, W, H);
+    x.fillStyle = '#fff'; x.beginPath(); x.roundRect(P / 2, P / 2, W - P, H - P, 20); x.fill();
+    // Đầu
+    const g = x.createLinearGradient(P / 2, 0, W - P / 2, 0); g.addColorStop(0, '#6c5ce7'); g.addColorStop(1, '#00b894');
+    x.fillStyle = g; x.beginPath(); x.roundRect(P / 2, P / 2, W - P, 82, [20, 20, 0, 0]); x.fill();
+    if (logo) { x.save(); x.beginPath(); x.arc(P + 26, P / 2 + 41, 26, 0, Math.PI * 2); x.clip(); x.drawImage(logo, P, P / 2 + 15, 52, 52); x.restore(); }
+    const tx = logo ? P + 66 : P + 4;
+    x.fillStyle = '#fff'; x.fillText(fit(shop, W - tx - P - 120, font(800, 20)), tx, P / 2 + 38);
+    x.font = font(700, 13); x.fillStyle = '#ecfdf5'; x.fillText(kind === 'done' ? 'ĐƠN HÀNG ĐÃ HOÀN THÀNH ✓' : 'CẬP NHẬT TIẾN ĐỘ ĐƠN HÀNG', tx, P / 2 + 62);
+    x.font = font(800, 14); x.textAlign = 'right'; x.fillStyle = '#fff'; x.fillText('#' + payCode(o), W - P - 6, P / 2 + 38); x.font = font(600, 12); x.fillText(fmtTime(Date.now()), W - P - 6, P / 2 + 60); x.textAlign = 'left';
+    let y = P / 2 + 82 + 24;
+    for (const it of items) {
+      const m = info(it), [stTxt, stCol, stBg] = ST[m.st];
+      x.fillStyle = '#fafafe'; x.beginPath(); x.roundRect(P, y, W - P * 2, rowH, 16); x.fill();
+      x.strokeStyle = '#ece9fb'; x.lineWidth = 1; x.stroke();
+      // Tên dịch vụ + trạng thái
+      x.font = font(800, 12); const sw = x.measureText(stTxt).width + 22;
+      x.fillStyle = stBg; x.beginPath(); x.roundRect(W - P - 16 - sw, y + 16, sw, 26, 13); x.fill(); x.fillStyle = stCol; x.fillText(stTxt, W - P - 16 - sw + 11, y + 34);
+      x.fillStyle = '#111827'; x.fillText(fit(String(it.name).replace(/\s*·\s*\d[\d.,]*\s*$/, ''), W - P * 2 - sw - 48, font(800, one ? 18 : 15)), P + 16, y + 35);
+      if (it.link) { x.fillStyle = '#2563eb'; x.fillText(fit(it.link.replace(/^https?:\/\/(www\.)?/, ''), W - P * 2 - 32, font(600, 12)), P + 16, y + 56); }
+      // Số lớn: đã lên / tổng
+      const by = one ? y + 74 : y + 66;
+      if (one) { x.font = font(900, 46); x.fillStyle = stCol; const big = (m.d != null ? m.d : 0).toLocaleString('vi-VN'); x.fillText(big, P + 16, by + 44);
+        const bw = x.measureText(big).width; x.font = font(700, 20); x.fillStyle = '#9ca3af'; x.fillText(' / ' + m.q.toLocaleString('vi-VN'), P + 16 + bw, by + 44);
+        x.font = font(900, 30); x.textAlign = 'right'; x.fillStyle = stCol; x.fillText(m.pct + '%', W - P - 16, by + 42); x.textAlign = 'left'; }
+      // Thanh tiến độ
+      const barY = one ? by + 62 : by, barW = W - P * 2 - 32;
+      x.fillStyle = '#ece9fb'; x.beginPath(); x.roundRect(P + 16, barY, barW, one ? 16 : 12, 8); x.fill();
+      if (m.pct > 0) { const gb = x.createLinearGradient(P + 16, 0, P + 16 + barW, 0); gb.addColorStop(0, m.st === 'done' ? '#10b981' : '#6c5ce7'); gb.addColorStop(1, m.st === 'done' ? '#059669' : '#00b894');
+        x.fillStyle = gb; x.beginPath(); x.roundRect(P + 16, barY, Math.max(16, barW * m.pct / 100), one ? 16 : 12, 8); x.fill(); }
+      if (!one) { x.font = font(700, 12); x.fillStyle = '#6b7280'; x.fillText(`${(m.d ?? 0).toLocaleString('vi-VN')} / ${m.q.toLocaleString('vi-VN')} · ${m.pct}%`, P + 16, barY + 34); }
+      // Số ban đầu → hiện tại
+      if (one) { const yy = barY + 46; x.font = font(600, 13); x.fillStyle = '#6b7280';
+        x.fillText(m.start != null ? `Ban đầu ${m.start.toLocaleString('vi-VN')}  →  hiện tại ${(m.start + (m.d || 0)).toLocaleString('vi-VN')}  ·  mục tiêu ${(m.start + m.q).toLocaleString('vi-VN')}` : m.st === 'wait' ? 'Hệ thống đang xếp đơn, thường bắt đầu chạy trong ít phút' : 'Đang cập nhật số ban đầu…', P + 16, yy); }
+      y += rowH + 14;
+    }
+    x.font = font(700, 13); x.fillStyle = '#6c5ce7'; x.textAlign = 'center';
+    x.fillText(kind === 'done' ? 'Cảm ơn quý khách đã tin tưởng ủng hộ shop! ❤️' : 'Shop sẽ báo ngay khi đơn hoàn thành · Cảm ơn quý khách!', W / 2, H - P / 2 - 24); x.textAlign = 'left';
+    return { dataUrl: c.toDataURL('image/png'), qrMissing: false };
+  }
   async function invoiceImage(o, inv, kind) {
+    if (kind === 'progress' || kind === 'done') return progressImage(o, inv, kind);
     const page = App.pageById(o.pageKey), shop = page?.name || o.pageName || inv.shop || 'Cửa hàng';
     const [logo, qr] = await Promise.all([loadImg(App.pageAvatarUrl(page) || o.pageAvatar), hasPayBlock(kind) ? loadImg(qrUrl(inv, o)) : null]);
     const W = 760, P = 28, c = document.createElement('canvas'); let x = c.getContext('2d');
