@@ -1240,7 +1240,8 @@
       el.append(
         h('div', { className: 'toolbar' },
           h('div', { className: 'chips', id: 'svPeriod' }), h('span', { className: 'grow' }),
-          h('span', { className: 'hint', id: 'svBalance' }),
+          h('button', { type: 'button', className: 'svc-balance', id: 'svBalance', title: 'Bấm để xem nguyên văn API Baostar trả về', textContent: '💰 Số dư: …',
+            onclick: e => { const n = e.currentTarget.dataset.note; if (n) { navigator.clipboard?.writeText(n).catch(() => {}); toast(n + ' (đã sao chép)', 15000); } } }),
           h('button', { className: 'btn btn-ghost', textContent: '↻ Cập nhật trạng thái', onclick: async () => { try { const n = await refreshStatus(), r = await refreshRefills(); toast(`Đã cập nhật ${n} đơn${r ? `, ${r} yêu cầu bảo hành` : ''}.`); this.refresh(); } catch (e) { toast(e.message, 6000); } } }),
           h('button', { className: 'btn btn-ghost', textContent: '＋ Thêm đơn theo mã', title: 'Đơn đã tạo thẳng trên web dịch vụ: nhập mã đơn để app theo dõi giá gốc, trạng thái', onclick: () => importById() }),
           h('button', { className: 'btn btn-ghost', textContent: 'Mở web dịch vụ ↗', onclick: () => openWeb() }),
@@ -1294,8 +1295,9 @@
             (o.refillable || refillOk.has(String(o.serviceId))) && o.status !== 'cancelled' ? h('button', { type: 'button', className: 'btn btn-ghost btn-sm', title: 'Yêu cầu Baostar bảo hành (bù số lượng tụt)', textContent: '🛡', onclick: () => requestRefill(o) }) : null,
             h('button', { type: 'button', className: 'btn btn-ghost btn-sm', title: o.progressSentAt ? 'Đã báo tiến độ lúc ' + fmtTime(o.progressSentAt) : 'Báo tiến độ cho khách', textContent: '📊', onclick: async () => { await refreshStatus([o]).catch(() => {}); const f = (o.payCode && o.groupSize > 1 && await groupOf(o.payCode)) || (await DB.get(ORDERS, [])).find(y => y.id === o.id) || o; invoiceDialog(f, 'progress'); } })))); }))) : h('div', { className: 'empty', textContent: 'Chưa có đơn dịch vụ trong khoảng này. Tạo đơn từ Hộp thư (nút "＋ Tạo đơn dịch vụ") hoặc nút ＋ Tạo đơn.' }));
       drawSettings(s, this);
-      if (s.apiKey) vndBalance().then(r => { $('svBalance').textContent = Number.isFinite(r.v) ? `Số dư: ${r.v.toLocaleString('vi-VN')}đ` : r.why; $('svBalance').title = r.note || ''; }).catch(e => { $('svBalance').textContent = e.message; });
-      else $('svBalance').textContent = 'Chưa nhập API key';
+      if (s.apiKey) vndBalance().then(r => { const b = $('svBalance'); b.textContent = Number.isFinite(r.v) ? `💰 Số dư Baostar: ${r.v.toLocaleString('vi-VN')}đ` : '⚠ ' + r.why; b.dataset.note = r.note || r.why || ''; })
+        .catch(e => { const b = $('svBalance'); b.textContent = '⚠ Số dư: ' + e.message; b.dataset.note = e.message; });
+      else $('svBalance').textContent = '💰 Chưa nhập API key';
     }
   });
   async function importById() {
