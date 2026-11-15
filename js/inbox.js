@@ -923,7 +923,8 @@
       (!q || norm(`${c.other.name} ${c.snippet} ${(S.crm?.[c.key]?.labels || []).join(' ')}`).includes(q)));
     // Mở Hộp thư chỉ hiện 15 khách mới nhất (tìm kiếm thì hiện hết kết quả); bấm "Tải thêm hội thoại" để hiện thêm 15.
     const total = list.length;
-    if (!q) list.splice(S.showN || 15);
+    // Giới hạn 15 dòng tính riêng cho mỗi nền tảng: khách Zalo cũ hơn không bị tin Business Suite mới đẩy mất.
+    if (!q) { const lim = S.showN || 15, cnt = {}; const keep = list.filter(c => { const p = platOf(c); cnt[p] = (cnt[p] || 0) + 1; return cnt[p] <= lim; }); list.length = 0; list.push(...keep); }
     S.hiddenMore = total - list.length;
     $('ibMore').hidden = !S.hiddenMore && ![...S.more.values()].some(x => x.after) && !bsFirst();
     const errors = S.errors?.length ? [h('details', { className: 'status err' },

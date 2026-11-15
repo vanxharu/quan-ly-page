@@ -26,7 +26,7 @@ function zList() {
     let unread = counter(el); if (!unread && el.querySelector('.z-conv-message[class~="--unread"]')) unread = 1;
     return { id, name: (el.querySelector('.conv-item-title__name')?.innerText || '').replace(/\s+/g, ' ').trim(), pic: img?.src || '', snippet,
       time: (el.querySelector('.preview-time')?.innerText || '').trim(), unread, group: /^g\d/.test(id), muted: !!el.querySelector('.conv__mute'),
-      oa: !!el.querySelector('.zavatar-block, [id^="zic_svg-Verified"]'), y: parseFloat(el.style.top) || 0 };
+      oa: !!el.querySelector('[id^="zic_svg-Verified"], [style*="Verified_24"]'), y: parseFloat(el.style.top) || 0 }; // chỉ tài khoản có dấu tích xanh (Zalo OA)
   }).filter(r => r.id && /^g?\d+$/.test(r.id)).sort((a, b) => a.y - b.y);
 }
 // Cuộn danh sách (ảo: chỉ dòng đang thấy mới có trong trang) để lấy thêm hội thoại, rồi cuộn về đầu.
@@ -36,9 +36,10 @@ async function zListAll(max) {
   const seen = new Map(), add = () => { for (const r of window.__gaZList()) if (!seen.has(r.id)) seen.set(r.id, r); };
   window.__gaZList = window.__gaZList || (() => []);
   add();
-  for (let i = 0; i < 12 && seen.size < max && sc.scrollTop + sc.clientHeight < sc.scrollHeight - 4; i++) {
-    sc.scrollTop += Math.max(200, sc.clientHeight * 0.8); await new Promise(r => setTimeout(r, 180)); add();
+  for (let i = 0; i < 30 && seen.size < max && sc.scrollTop + sc.clientHeight < sc.scrollHeight - 4; i++) {
+    sc.scrollTop += Math.max(200, sc.clientHeight * 0.7); await new Promise(r => setTimeout(r, 250)); add();
   }
+  await new Promise(r => setTimeout(r, 250)); add();
   sc.scrollTop = 0;
   return [...seen.values()];
 }
@@ -201,6 +202,7 @@ function createZaloAuto({ wc, sendKey, onList = () => {}, onThread = () => {}, l
     const rows = deep ? await run(zListAll, 60).catch(e => { stat.err = 'zListAll: ' + e.message; return null; }) : await run(zList).catch(e => { stat.err = 'zList: ' + e.message; return null; });
     if (!rows) return { error: 'Không đọc được danh sách Zalo.' };
     stat.rows = rows.length; stat.listAt = Date.now(); stat.err = '';
+    stat.sample = rows.slice(0, 40).map(r => `${r.name.slice(0, 14)}${r.group ? ' [nhóm]' : ''}${r.oa ? ' [OA]' : ''}`);
     if (!deep) { const m = new Map(lastList.map(r => [r.id, r])); for (const r of rows) m.set(r.id, r); lastList = [...m.values()]; } else lastList = rows;
     return { rows: lastList.map(({ y, ...r }) => r) };
   });
