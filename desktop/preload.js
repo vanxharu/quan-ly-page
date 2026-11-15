@@ -8,6 +8,7 @@ contextBridge.exposeInMainWorld('metaDesktop', {
   hiddenStatus: () => ipcRenderer.invoke('meta-hidden-status'),
   readThread: args => ipcRenderer.invoke('meta-thread-read', args),
   sendThread: args => ipcRenderer.invoke('meta-thread-send', args),
+  reactThread: args => ipcRenderer.invoke('thread-react', args),
   openZalo: () => ipcRenderer.send('open-zalo'),
   zaloList: args => ipcRenderer.invoke('zalo-list', args || {}),
   resetZalo: full => ipcRenderer.send('zalo-reset', !!full),

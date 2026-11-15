@@ -371,6 +371,7 @@ app.whenReady().then(async () => {
   zaloView.webContents.on('console-message', (ev, ...a) => zalo.onConsole(ev?.message ?? a[1]));
   // Đã đăng nhập Zalo lần trước → mở sẵn Zalo Web (ẩn) khi bật app để Hộp thư có tin Zalo ngay.
   zaloSes.cookies.get({ domain: 'zalo.me' }).then(cs => { if (cs.some(c => /^zpw_sek$/.test(c.name)) && !zaloView.webContents.getURL()) zaloView.webContents.loadURL('https://chat.zalo.me/').catch(() => {}); }).catch(() => {});
+  ipcMain.handle('thread-react', (e, args) => !fromPage(e) ? { error: 'denied' } : args?.pageId === 'zalo' ? zalo.react(args) : auto.react(args || {}));
   ipcMain.handle('zalo-list', (e, args) => fromPage(e) ? zalo.list(args || {}) : { error: 'denied' });
   ipcMain.handle('meta-thread-read', (e, args) => !fromPage(e) ? { error: 'denied' } : args?.pageId === 'zalo' ? zalo.read(args) : auto.readThread(args || {}));
   ipcMain.handle('meta-thread-send', (e, args) => !fromPage(e) ? { error: 'denied' } : args?.pageId === 'zalo' ? zalo.send(args) : auto.sendThread(args || {}));

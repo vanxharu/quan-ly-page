@@ -172,6 +172,7 @@
             h('div', { id: 'ibOrder', hidden: true }),
             h('div', { className: 'popover', id: 'ibPicker', hidden: true }, picker.el),
             h('div', { className: 'attach', id: 'ibAttach', hidden: true }),
+            h('div', { className: 'ib-reply', id: 'ibReply', hidden: true }),
             h('div', { id: 'ibWindow', className: 'status', hidden: true, style: 'margin-bottom:6px' }),
             h('div', { className: 'composer-row' },
               h('button', { className: 'tpl-btn', id: 'ibTplBtn', onclick: () => togglePicker() }, icon('i-msg'), 'Mẫu'),
@@ -478,6 +479,52 @@
       '🧾 Tạo đơn', h('span', { textContent: ' · ' }), App.services.linkPlatform?.(l) ? App.services.platBadge(App.services.linkPlatform(l), 14) : null,
       h('span', { textContent: (App.services.linkPlatform?.(l) ? ' ' : '') + l.replace(/^https?:\/\/(www\.|m\.)?/, '').slice(0, 32) + (l.length > 44 ? '…' : '') }))));
   }
+  // ── Cảm xúc + trả lời trích dẫn (Business Suite và Zalo) ──
+  const EMO = ['👍', '❤️', '😆', '😮', '😢', '😡'];
+  const canAct = (c, m) => !!(c.bs && m.mid && window.metaDesktop?.reactThread);
+  function msgBubble(c, m) {
+    const bub = h('div', { className: 'msg' + (m.mine ? ' me' : '') }, m.text || null, m.mine ? null : linkActions(c, m.text), m.pic ? picEl(m.pic) : null,
+      m.re?.length ? h('div', { className: 'msg-re', title: m.re.map(x => (x.mine ? 'Bạn' : c.other.name) + ' ' + x.e).join(' · ') }, ...m.re.map(x => h('span', { className: x.mine ? 'mine' : '', textContent: x.e }))) : null);
+    if (!canAct(c, m)) return bub;
+    const acts = h('div', { className: 'msg-acts' },
+      h('button', { type: 'button', title: 'Thả cảm xúc', textContent: '😊', onclick: e => { e.stopPropagation(); emoPop(c, m, e.currentTarget); } }),
+      h('button', { type: 'button', title: 'Trả lời tin này', textContent: '↩', onclick: e => { e.stopPropagation(); setReply(c, m); } }));
+    const wrap = h('div', { className: 'msg-wrap' + (m.mine ? ' me' : '') }, bub, acts);
+    wrap.oncontextmenu = e => { e.preventDefault(); msgMenu(c, m, e.clientX, e.clientY); };
+    return wrap;
+  }
+  const closePop = () => document.querySelectorAll('.ib-emo-pop, .ib-msg-menu').forEach(x => x.remove());
+  document.addEventListener('click', e => { if (!e.target.closest?.('.ib-emo-pop, .ib-msg-menu')) closePop(); });
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') closePop(); });
+  const emoRow = (c, m) => h('div', { className: 'ib-emo-row' }, ...EMO.map(e => h('button', { type: 'button', className: (m.re || []).some(x => x.mine && x.e === e) ? 'on' : '', title: e, textContent: e,
+    onclick: ev => { ev.stopPropagation(); closePop(); reactTo(c, m, e); } })));
+  function place(el, x, y) { document.body.append(el); const r = el.getBoundingClientRect(); el.style.left = Math.max(8, Math.min(x, innerWidth - r.width - 8)) + 'px'; el.style.top = Math.max(8, Math.min(y, innerHeight - r.height - 8)) + 'px'; }
+  function emoPop(c, m, btn) { closePop(); const r = btn.getBoundingClientRect(); place(h('div', { className: 'ib-emo-pop' }, emoRow(c, m)), r.left - 90, r.top - 46); }
+  function msgMenu(c, m, x, y) {
+    closePop();
+    const item = (t, fn) => h('button', { type: 'button', className: 'ib-mm-item', textContent: t, onclick: ev => { ev.stopPropagation(); closePop(); fn(); } });
+    place(h('div', { className: 'ib-msg-menu' }, emoRow(c, m), item('↩ Trả lời', () => setReply(c, m)),
+      m.text ? item('📋 Sao chép', () => navigator.clipboard.writeText(m.text).then(() => toast('Đã sao chép.'))) : null), x, y);
+  }
+  async function reactTo(c, m, e) {
+    // Bấm lại đúng cảm xúc mình đã thả = bỏ (Business Suite); Zalo chỉ thả thêm được.
+    const mineNow = (m.re || []).find(x => x.mine)?.e, emoji = mineNow === e && !c.zalo ? '' : e;
+    const before = m.re; m.re = [...(m.re || []).filter(x => !x.mine), ...(emoji ? [{ e: emoji, mine: true }] : [])]; if (S.conv === c && c.bsLast) drawBs(c, c.bsLast, { silent: true });
+    const r = await window.metaDesktop.reactThread({ pageId: String(c.page.id), uid: c.uid, mid: m.mid, ts: m.ts, emoji }).catch(err => ({ error: err.message }));
+    if (r?.error) { m.re = before; if (S.conv === c && c.bsLast) drawBs(c, c.bsLast, { silent: true }); return toast(r.error, 6000); }
+    if (S.conv === c && r?.messages?.length) drawBs(c, r, { silent: true });
+  }
+  function setReply(c, m) {
+    S.reply = { id: c.id, mid: m.mid, text: m.text || (m.pic ? '[Ảnh]' : ''), mine: m.mine };
+    drawReply(); $('ibText')?.focus();
+  }
+  function drawReply() {
+    const box = $('ibReply'); if (!box) return;
+    const r = S.reply && S.conv?.id === S.reply.id ? S.reply : null;
+    box.hidden = !r;
+    box.replaceChildren(...(r ? [h('span', { className: 'ib-reply-ico', textContent: '↩' }), h('div', { className: 'ib-reply-txt' }, h('b', { textContent: 'Trả lời ' + (r.mine ? 'chính bạn' : S.conv.other.name) }), h('span', { textContent: r.text.slice(0, 140) })),
+      h('button', { type: 'button', className: 'icon-btn', title: 'Bỏ trả lời', textContent: '✕', onclick: () => { S.reply = null; drawReply(); } })] : []));
+  }
   function drawBs(c, r, { silent = false, older = false, keepTop = false } = {}) {
     watchThreadScroll();
     const prevCount = c.bsShownCount || 0;
@@ -497,8 +544,7 @@
         : h('div', { className: 'msgrow' + (m.mine ? ' me' : ''), dataset: m.mine ? { bsMe: '1', ts: String(m.ts || 0) } : { bsCus: '1' } },
           m.mine ? h('span', { className: 'rc-slot' })
             : msgs[i + 1] && !msgs[i + 1].sep && msgs[i + 1].mine === m.mine ? h('span', { style: 'width:24px;flex:none' }) : messageAvatar(c),
-          h('div', { className: 'msg' + (m.mine ? ' me' : '') }, m.text || null, m.mine ? null : linkActions(c, m.text),
-            m.pic ? picEl(m.pic) : null))),
+          msgBubble(c, m))),
       msgs.length ? null : empty('Chưa đọc được tin nào.'));
     drawRcpt(c);
     // Hiện thêm tin cũ: giữ nguyên chỗ đang đọc (không nhảy).
@@ -582,13 +628,14 @@
     drawList();
   }
   async function sendBs(c, text) {
-    const image = S.image, tpl = S.tpl;
+    const image = S.image, tpl = S.tpl, reply = S.reply?.id === c.id && text ? S.reply : null;
     S.sending = true; updateSendState();
     // Xoá ô nhập + hiện tin (chữ, ảnh) "Đang gửi…" ngay, không chờ Business Suite xác nhận; lỗi thì trả chữ / ảnh lại ô nhập.
     let pending = null;
     if ((text || image) && S.conv === c) {
       $('ibText').value = ''; S.tpl = null; S.image = ''; drawAttach(); saveDraft();
-      pending = h('div', { className: 'msgrow me ib-pending' }, h('div', { className: 'msg me' }, text || null,
+      if (reply) { S.reply = null; drawReply(); }
+      pending = h('div', { className: 'msgrow me ib-pending' }, h('div', { className: 'msg me' }, reply ? h('div', { className: 'msg-quote', textContent: '↩ ' + reply.text.slice(0, 80) }) : null, text || null,
         image ? picEl(image) : null),
         h('span', { className: 'rc-slot' }, h('span', { className: 'rc sending', title: 'Đang gửi' })),
         h('span', { className: 'hint', textContent: image ? 'Đang gửi ảnh…' : 'Đang gửi…' }));
@@ -596,7 +643,8 @@
     }
     try {
       const data = image ? await asDataUrl(image).catch(() => { throw new Error('Không đọc được ảnh đính kèm.'); }) : '';
-      const r = await window.metaDesktop.sendThread({ pageId: String(c.page.id), uid: c.uid, text, image: data });
+      const r = await window.metaDesktop.sendThread({ pageId: String(c.page.id), uid: c.uid, text, image: data, ...(reply ? { replyTo: reply.mid } : {}) });
+      if (r?.warn) toast(r.warn, 6000);
       // Chữ đã đi, chỉ thiếu ảnh: xoá chữ khỏi ô nhập (giữ ảnh) để bấm gửi lại không lặp tin.
       if (r.error && /^Chữ đã gửi/.test(r.error) && S.conv === c && $('ibText').value.trim() === text) { $('ibText').value = ''; await saveDraft(); updateSendState(); }
       if (r.error && /^Chữ đã gửi/.test(r.error) && pending) { pending.remove(); pending = null; if (S.conv === c && !S.image) { S.image = image; drawAttach(); saveDraft(); } }
@@ -883,6 +931,7 @@
       }) : [empty(S.plat === 'zalo' && !S.convs.some(c => platOf(c) === 'zalo') ? 'Chưa có tin Zalo: đăng nhập Zalo ở cột Zalo (Ctrl+Shift+Z), app đang được làm phần đọc tin Zalo.' : S.convs.length ? 'Không có hội thoại khớp bộ lọc.' : 'Chưa có tin nhắn.')]));
   }
   function resetThread() {
+    S.reply = null; drawReply(); closePop();
     S.draftReady = false; S.image = ''; S.tpl = null;
     if(!$('ibText'))return; // Đổi Page trước khi mở Hộp thư vẫn hợp lệ.
     $('ibText').value = ''; $('ibText').disabled = true; drawAttach();

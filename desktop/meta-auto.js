@@ -232,7 +232,7 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
   //  deleteThenInsertThread: 0 giờ hoạt động · 1 đã đọc tới · 2 tin cuối · 4 ảnh · 7 thread · 10 thư mục · 18 Page
   //  deleteThenInsertContact: 0 id · 2 ảnh · 9 tên   ·  insertNewMessageRange: 0 thread (đã tải 1 đoạn tin của hội thoại)
   const lsStores = new Map(); // pageId -> { threads, contacts, msgs: Map(uid -> Map(mid -> tin)), loaded:Set(uid), at }
-  const lsStore = pageId => { pageId = String(pageId); let st = lsStores.get(pageId); if (!st) lsStores.set(pageId, st = { threads: new Map(), contacts: new Map(), msgs: new Map(), loaded: new Set(), rcpt: new Map(), at: 0 }); return st; };
+  const lsStore = pageId => { pageId = String(pageId); let st = lsStores.get(pageId); if (!st) lsStores.set(pageId, st = { threads: new Map(), contacts: new Map(), msgs: new Map(), loaded: new Set(), rcpt: new Map(), reacts: new Map(), at: 0 }); return st; };
   const lsVal = x => Array.isArray(x) ? (x[0] === 19 ? x[1] : x[0] === 9 ? null : x) : x;
   const lsMsg = (st, uid, mid) => { let m = st.msgs.get(uid); if (!m) st.msgs.set(uid, m = new Map()); let x = m.get(mid); if (!x) m.set(mid, x = { mid, ts: 0, text: '', mine: false, pic: '' }); return x; };
   // Lấy các gói Lightspeed { step: [...] } từ bất kỳ dạng bọc nào: gói WebSocket {"payload":"…"}, phản hồi GraphQL
@@ -275,6 +275,11 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
             st.threads.set(uid, { uid, at: Number(v[0]) || 0, read: Number(v[1]) || 0, snippet: String(v[2] || ''), pic: /^https/.test(v[4] || '') ? v[4] : '', folder: String(v[10] || '') }); list = true; seen++; }
         } else if (n === 'deleteThenInsertContact') {
           const id = String(v[0] || ''); if (/^\d+$/.test(id) && v[9]) st.contacts.set(id, { name: String(v[9]), pic: /^https/.test(v[2] || '') ? v[2] : '' });
+        } else if (n === 'upsertReaction' || n === 'deleteReaction') {
+          // upsertReaction: 0 thread · 1 giờ tin · 2 mã tin · 3 người thả · 4 biểu tượng   ·  deleteReaction: 0 thread · 1 mã tin · 2 người
+          const up = n === 'upsertReaction', uid = String(v[0] || ''), mid = String(up ? v[2] : v[1] || ''), who = String(up ? v[3] : v[2] || '');
+          if (/^\d+$/.test(uid) && /^mid\./.test(mid) && who) { let r = st.reacts.get(mid); if (!r) st.reacts.set(mid, r = new Map());
+            if (up && v[4]) r.set(who, String(v[4])); else r.delete(who); threads.add(uid); }
         } else if (n === 'addParticipantIdToGroupThread') {
           const uid = String(v[0] || ''); if (String(v[1]) === uid) { setRc(uid, 'read', v[2]); setRc(uid, 'dlv', v[3]); }
         } else if (n === 'updateReadReceipt' || n === 'updateDeliveryReceipt') {
@@ -302,7 +307,8 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
     for (const m of all) {
       if (m.ts - last > 30 * 60e3) { const d = new Date(m.ts), hm = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
         out.push({ sep: new Date().toDateString() === d.toDateString() ? hm : `${hm} ${d.getDate()} Tháng ${d.getMonth() + 1}, ${d.getFullYear()}` }); }
-      last = m.ts; out.push({ mine: m.mine, text: m.text, ...(m.pic ? { pic: m.pic } : {}), ts: m.ts });
+      const rx = lsStore(pageId).reacts.get(m.mid), re = rx?.size ? [...rx].map(([who, e]) => ({ e, mine: who === String(pageId) })) : null;
+      last = m.ts; out.push({ mine: m.mine, text: m.text, ...(m.pic ? { pic: m.pic } : {}), ts: m.ts, mid: m.mid, ...(re ? { re } : {}) });
     }
     return out;
   };
@@ -377,7 +383,7 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
       else if ((method === 'Network.loadingFinished' || method === 'Network.loadingFailed') && lsStore(pageId).uploads?.delete(params.requestId)) lsStore(pageId).uploadsDone = Date.now();
       if (method === 'Fetch.requestPaused') dbg.sendCommand('Fetch.failRequest', { requestId: params.requestId, errorReason: 'BlockedByClient' }).catch(() => {});
       else if (method === 'Network.webSocketFrameReceived' && (lsStore(pageId).frames = (lsStore(pageId).frames || 0) + 1)) { const f = params.response || {}; const raw = f.opcode === 2 ? Buffer.from(String(f.payloadData || ''), 'base64').toString('utf8') : String(f.payloadData || '');
-        const wq = lsStore(pageId).waitReq; if (wq && raw.includes(`"request_id":${wq}`)) { lsStore(pageId).reqAck = Date.now(); sentSample(pageId, { at: new Date().toISOString(), kind: 'tra-loi', bytes: raw.length, text: raw.replace(/[\x00-\x08\x0e-\x1f]/g, '·').slice(0, 20000) }); } if (/ls_resp|upsertMessage|deleteThenInsert/.test(raw)) got(pageId, raw); }
+        const wq = lsStore(pageId).waitReq; if (wq && raw.includes(`"request_id":${wq}`)) { lsStore(pageId).reqAck = Date.now(); sentSample(pageId, { at: new Date().toISOString(), kind: 'tra-loi', bytes: raw.length, text: raw.replace(/[\x00-\x08\x0e-\x1f]/g, '·').slice(0, 20000) }); } if (/ls_resp|upsertMessage|deleteThenInsert|Reaction|ReadReceipt|DeliveryReceipt/.test(raw)) got(pageId, raw); }
       else if (method === 'Network.responseReceived' && (/\/api\/graphql|lightspeed|ls_req/i.test(params.response?.url || '') || (params.type === 'Document' && /\/latest\/inbox/.test(params.response?.url || '')))) pending.set(params.requestId, params.response.url);
       else if (method === 'Network.loadingFinished' && pending.has(params.requestId)) {
         const url = pending.get(params.requestId); pending.delete(params.requestId);
@@ -802,12 +808,16 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
   // Không cần mở hội thoại, gõ chữ hay bấm nút → thường < 1 giây. Mã otid/epoch = giờ(ms) << 22 | số ngẫu nhiên (như Business Suite).
   // Gói MQTT PUBLISH QoS1 lên chủ đề /ls_req; mã gói = request_id (dùng dải số cao để không trùng bộ đếm của trang).
   const snow = () => String(BigInt(Date.now()) * 4194304n + BigInt(Math.floor(Math.random() * 4194304)));
-  async function directSend(wc, pageId, uid, text) {
+  // Trả lời trích dẫn (reply): thêm reply_metadata trỏ tới mã tin gốc (mid.$…).
+  async function directSend(wc, pageId, uid, text, replyTo = '') {
+    const reply = /^mid\./.test(replyTo) ? `,"reply_metadata":{"reply_source_id":${JSON.stringify(replyTo)},"reply_source_type":1,"reply_type":0}` : '';
+    return directTask(wc, pageId, '46', `{"thread_id":${uid},"otid":"${snow()}","source":4456448,"send_type":1,"sync_group":${Number(lsStore(pageId).lsCfg?.group) || 205},"mark_thread_read":1,"text":${JSON.stringify(text)}${reply}}`, String(uid));
+  }
+  async function directTask(wc, pageId, label, taskPayload, queueName) {
     const cfg = lsStore(pageId).lsCfg;
     if (!cfg?.app || !cfg?.ver) return 'chưa học được app_id/version_id';
     const req = 40000 + Math.floor(Math.random() * 25000); lsStore(pageId).waitReq = req; lsStore(pageId).reqAck = 0;
-    const task = { failure_count: null, label: '46', payload: `{"thread_id":${uid},"otid":"${snow()}","source":4456448,"send_type":1,"sync_group":${Number(cfg.group) || 205},"mark_thread_read":1,"text":${JSON.stringify(text)}}`,
-      queue_name: String(uid), task_id: req };
+    const task = { failure_count: null, label, payload: taskPayload, queue_name: queueName, task_id: req };
     const payload = `{"epoch_id":${snow()},"tasks":[${JSON.stringify(task)}],"version_id":"${cfg.ver}"}`;
     const body = JSON.stringify({ app_id: cfg.app, payload, request_id: req, type: 3 });
     return wc.executeJavaScript(`(() => { const body = ${JSON.stringify(body)}, pid = ${req};
@@ -862,7 +872,7 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
     const text = String(args.text || '').trim();
     const nn = t => String(t || '').normalize('NFC').replace(/[^\p{L}\p{N}]/gu, '').toLowerCase(), want = nn(text), t1 = Date.now();
     const echoed = () => [...(lsStore(args.pageId).msgs.get(String(args.uid))?.values() || [])].some(m => m.ts >= t1 - 3000 && want && nn(m.text).includes(want.slice(0, 40)));
-    const r = await directSend(wc, String(args.pageId), String(args.uid), text);
+    const r = await directSend(wc, String(args.pageId), String(args.uid), text, String(args.replyTo || ''));
     mark('gui-thang'); sendCore.how = 'thang: ' + r;
     if (r !== 'ok') return null;
     const done = () => { mark('xac-nhan-goc'); const lr = lsMessages(args.pageId, args.uid);
@@ -1157,6 +1167,23 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
     return Promise.all(ids.map(async id => ({ page: id, read: await one(slots.get(id), false), send: makeWorker ? await one(sendSlots.get(id), true) : 'none',
       busy: !!slots.get(id)?.queue.runningSince, frames: lsStore(id).frames || 0 })));
   };
-  return { lookupProfile, listThreads, readThread: args => readThread(args).then(r => withRcpt(args, r)), sendThread: args => sendThread(args).then(r => withRcpt(args, r)), composePost, hiddenStatus };
+  // Thả / bỏ cảm xúc lên một tin (gói "label 29" như Business Suite): chờ Meta báo lại upsertReaction của Page cho tin đó.
+  async function react(args) {
+    const pid = String(args.pageId || ''), uid = String(args.uid || ''), mid = String(args.mid || ''), emoji = String(args.emoji || '');
+    if (!/^\d+$/.test(pid) || !/^\d+$/.test(uid) || !/^mid\./.test(mid)) return { error: 'Tin này chưa có mã (đọc lại hội thoại rồi thử lại).' };
+    const wc = await directReady(sendSlots.get(pid), pid) || await directReady(slots.get(pid), pid);
+    if (!wc) return { error: 'Khung Business Suite của Page chưa sẵn sàng, thử lại sau vài giây.' };
+    const st = lsStore(pid), m = st.msgs.get(uid)?.get(mid), ts = Number(args.ts) || m?.ts || Date.now();
+    st.capture = Date.now() + 15e3; // ghi mẫu gói gửi / trả lời để chẩn đoán nếu Meta không nhận
+    const payload = `{"thread_key":${uid},"timestamp_ms":${ts},"message_id":${JSON.stringify(mid)},"actor_id":${pid},"reaction":${JSON.stringify(emoji)},"reaction_style":null,"sync_group":1,"send_attribution":4456448}`;
+    const r = await directTask(wc, pid, '29', payload, JSON.stringify(['reaction', mid]));
+    if (r !== 'ok') return { error: 'Không gửi được cảm xúc: ' + r };
+    const mineNow = () => st.reacts.get(mid)?.get(pid) || '';
+    for (let i = 0; i < 40 && mineNow() !== emoji; i++) await sleep(100);
+    if (mineNow() !== emoji && !(st.reqAck > Date.now() - 5000)) return { error: 'Meta chưa nhận cảm xúc. Gửi file Downloads/GetHelps-debug/ls-gui-mau.json cho người hỗ trợ.' };
+    if (mineNow() !== emoji) { const rx = st.reacts.get(mid) || new Map(); if (emoji) rx.set(pid, emoji); else rx.delete(pid); st.reacts.set(mid, rx); } // Meta đã nhận gói, chưa kịp báo lại
+    return { ok: true, messages: lsMessages(pid, uid), source: 'ls' };
+  }
+  return { react, lookupProfile, listThreads, readThread: args => readThread(args).then(r => withRcpt(args, r)), sendThread: args => sendThread(args).then(r => withRcpt(args, r)), composePost, hiddenStatus };
 }
 module.exports = { readThreads, createMetaAuto, extractProfile, findTarget };

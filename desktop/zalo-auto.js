@@ -75,8 +75,9 @@ async function zRead(older) {
     const mine = el.classList.contains('me'), ts = Number((el.id.match(/bb_msg_id_(\d+)/) || [])[1]) || 0;
     let text = (el.querySelector('[data-component="text-container"]')?.textContent || '').trim(); // textContent: giữ xuống dòng của tin
     const img = [...el.querySelectorAll('img.zimg-el')].find(i => !i.closest('.link-message'));
-    const m = { mine, text, ts };
+    const m = { mine, text, ts, mid: ts ? 'z' + ts : '' };
     if (img) { const d = toData(img); if (d) m.pic = d; }
+    const re = zReacts(el); if (re.length) m.re = re;
     if (!m.text && !m.pic) {
       if (el.querySelector('z-instant')) m.text = '[Tin nhắn mẫu Zalo]';
       else if (el.querySelector('[class*="sticker" i]')) m.text = '[Sticker]';
@@ -88,6 +89,48 @@ async function zRead(older) {
   }
   const st = [...root.querySelectorAll('.bubble-message-status')].pop()?.innerText.trim() || '';
   return { messages: out, domRc: /đã xem|seen/i.test(st) ? 'seen' : /đã nhận|received|delivered/i.test(st) ? 'dlv' : /đã gửi|sent/i.test(st) ? 'sent' : '' };
+}
+// Cảm xúc đang hiện trên tin (ngoài nút thả và bảng chọn): mã Zalo → emoji.
+const Z_EMO = { '/-strong': '👍', '/-heart': '❤️', ':>': '😆', ':o': '😮', ':-((': '😢', ':-h': '😡' };
+function zReacts(el) {
+  const out = [], box = el.querySelector('.message-reaction-container'); if (!box) return out;
+  for (const n of box.querySelectorAll('.emoji-sizer, img')) {
+    if (n.closest('.emoji-list-wrapper') || n.classList.contains('default-react-icon-thumb')) continue;
+    const t = (n.textContent || n.getAttribute('alt') || '').trim(), e = Z_EMO[t] || (/\p{Extended_Pictographic}/u.test(t) ? t : '');
+    if (e && !out.some(x => x.e === e)) out.push({ e, mine: false });
+  }
+  return out;
+}
+// Thả cảm xúc: rê vào nút thả của tin (giờ ts) rồi bấm biểu tượng thứ i trong bảng 6 cảm xúc của Zalo.
+async function zReact(ts, i) {
+  const el = document.getElementById('bb_msg_id_' + ts); if (!el) return 'Không thấy tin này trong cột Zalo.';
+  el.scrollIntoView({ block: 'center' });
+  const btn = el.querySelector('[id^="reaction-btn-"]'); if (!btn) return 'Tin này không thả cảm xúc được.';
+  const hover = n => { for (const t of ['pointerover', 'pointerenter', 'mouseover', 'mouseenter', 'mousemove']) n.dispatchEvent(new MouseEvent(t, { bubbles: true, cancelable: true, view: window })); };
+  hover(el); hover(btn); await new Promise(r => setTimeout(r, 350));
+  const icon = btn.querySelectorAll('.reaction-emoji-icon')[i] || el.querySelectorAll('.reaction-emoji-icon')[i];
+  if (!icon) return 'Không mở được bảng cảm xúc của Zalo.';
+  const target = icon.querySelector('.emoji-sizer') || icon;
+  hover(icon); for (const t of ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click']) target.dispatchEvent(new MouseEvent(t, { bubbles: true, cancelable: true, view: window, button: 0 }));
+  return 'ok';
+}
+// Bấm "Trả lời" cho tin (giờ ts): rê vào tin tìm nút Trả lời, không có thì mở menu chuột phải. Trả true khi ô nhập hiện khung trích dẫn.
+async function zReplyTo(ts) {
+  const el = document.getElementById('bb_msg_id_' + ts); if (!el) return false;
+  el.scrollIntoView({ block: 'center' });
+  const fire = (n, ts2) => { for (const t of ts2) n.dispatchEvent(new MouseEvent(t, { bubbles: true, cancelable: true, view: window, button: t === 'contextmenu' ? 2 : 0 })); };
+  const quoted = () => !!(document.querySelector('.chat-box-input__heading')?.innerText || '').trim();
+  const find = () => [...document.querySelectorAll('[title], [data-translate-title], [data-id], [icon], li, [role="menuitem"]')].find(n => {
+    const v = [n.getAttribute('title'), n.getAttribute('data-translate-title'), n.getAttribute('data-id'), n.getAttribute('icon'), n.matches('li, [role="menuitem"]') ? n.innerText : ''].join(' ');
+    return /(^|\s)(Trả lời|Reply)(\s|$)|STR_REPLY|_Reply|Reply_/i.test(v) && n.getBoundingClientRect().width > 0; });
+  fire(el.querySelector('.message-frame, .message-non-frame') || el, ['pointerover', 'mouseover', 'mouseenter', 'mousemove']); await new Promise(r => setTimeout(r, 300));
+  let b = find();
+  if (!b) { fire(el.querySelector('.message-frame, .message-non-frame') || el, ['contextmenu']); await new Promise(r => setTimeout(r, 300)); b = find(); }
+  if (!b) return false;
+  fire(b, ['mousedown', 'mouseup', 'click']);
+  for (let i = 0; i < 15 && !quoted(); i++) await new Promise(r => setTimeout(r, 100));
+  document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); // đóng menu chuột phải (nếu còn)
+  return quoted();
 }
 // Đặt chữ vào ô nhập (dán như người dùng → giữ xuống dòng); trả số ký tự ô nhập có.
 function zPutText(text) {
@@ -133,7 +176,9 @@ function zWatch(tag) {
 }
 
 function createZaloAuto({ wc, sendKey, onList = () => {}, onThread = () => {}, log = () => {} }) {
-  const run = (fn, ...args) => wc().executeJavaScript(`(${fn})(${args.map(a => JSON.stringify(a)).join(',')})`, true);
+  // Hàm chạy trong trang kèm hàm phụ (zReacts dùng trong zRead).
+  const PRELUDE = `const Z_EMO = ${JSON.stringify(Z_EMO)}; ${zReacts};`;
+  const run = (fn, ...args) => wc().executeJavaScript(`(() => { ${PRELUDE} return (${fn})(${args.map(a => JSON.stringify(a)).join(',')}); })()`, true);
   let chain = Promise.resolve();
   const queue = job => { const p = chain.then(job, job); chain = p.catch(() => {}); return p; };
   const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -163,6 +208,8 @@ function createZaloAuto({ wc, sendKey, onList = () => {}, onThread = () => {}, l
     const e = await open(args.uid); if (e) return e;
     const text = String(args.text || '').trim(), image = String(args.image || '');
     const before = await run(zMineCount).catch(() => ({ n: 0, pics: 0 }));
+    let replyWarn = '';
+    if (text && /^z\d+$/.test(args.replyTo || '')) { if (!(await run(zReplyTo, Number(args.replyTo.slice(1))).catch(() => false))) replyWarn = 'Không bấm được "Trả lời" trên Zalo: tin đã gửi dạng thường.'; }
     if (text) {
       if ((await run(zPutText, text).catch(() => -1)) <= 0) return { error: 'Không nhập được chữ vào ô chat Zalo.' };
       await sleep(120); sendKey('Enter');
@@ -178,7 +225,21 @@ function createZaloAuto({ wc, sendKey, onList = () => {}, onThread = () => {}, l
       if (!ok) return { error: text ? 'Chữ đã gửi, ảnh chưa gửi được qua Zalo.' : 'Ảnh chưa gửi được qua Zalo.' };
     }
     await sleep(300);
-    return { ok: true, ...(await run(zRead, false).catch(() => null) || {}) };
+    return { ok: true, ...(replyWarn ? { warn: replyWarn } : {}), ...(await run(zRead, false).catch(() => null) || {}) };
+  });
+  const EMO = ['👍', '❤️', '😆', '😮', '😢', '😡'];
+  const react = args => queue(async () => {
+    const e = await open(args.uid); if (e) return e;
+    const i = EMO.indexOf(String(args.emoji || '')), ts = Number(String(args.mid || '').slice(1));
+    if (i < 0) return { error: 'Zalo chỉ có 6 cảm xúc: ' + EMO.join(' ') + ' (bỏ cảm xúc thì bấm trong cột Zalo).' };
+    if (!ts) return { error: 'Không xác định được tin.' };
+    const r = await run(zReact, ts, i).catch(x => 'lỗi: ' + x.message);
+    if (r !== 'ok') return { error: r };
+    await sleep(600);
+    const got = await run(zRead, false).catch(() => null) || {};
+    // Zalo chưa kịp hiện cảm xúc trên tin: vẫn ghi nhận để Hộp thư hiện ngay.
+    const m = (got.messages || []).find(x => x.mid === args.mid); if (m && !(m.re || []).some(x => x.e === args.emoji)) m.re = [...(m.re || []), { e: args.emoji, mine: true }];
+    return { ok: true, ...got };
   });
   const current = () => run(zCurrent).catch(() => '');
   // Tin mới: danh sách đổi → đọc lại danh sách; hội thoại đang mở đổi → báo Hộp thư đọc lại.
@@ -190,7 +251,7 @@ function createZaloAuto({ wc, sendKey, onList = () => {}, onThread = () => {}, l
       try { const r = await list(); if (r.rows) onList(r.rows); } catch {} finally { busyList = false; if (againList) { againList = false; onConsole(TAG + 'list'); } }
     } else if (msg === TAG + 'thread') { const id = await current(); if (id) onThread(id); }
   };
-  return { list, read, send, onConsole, ready };
+  return { list, read, send, react, onConsole, ready };
 }
 
-module.exports = { createZaloAuto, _page: { zState, zList, zListAll, zCurrent, zOpen, zRead, zPutText, zDropImage, zClickSend, zMineCount, zWatch } };
+module.exports = { createZaloAuto, _page: { zReacts, zReact, zReplyTo, zState, zList, zListAll, zCurrent, zOpen, zRead, zPutText, zDropImage, zClickSend, zMineCount, zWatch } };

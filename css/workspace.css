@@ -424,3 +424,29 @@ td.num.neg{font-weight:700}
 .svc-name-cell{display:inline-flex;align-items:center;gap:6px}
 .svc-chip .plat-badge,.msg-link-btn .plat-badge,.ord-main .plat-badge{vertical-align:-3px;margin-right:4px;display:inline-flex}
 .ord-main .plat-badge{margin-right:6px}
+
+/* Cảm xúc + trả lời */
+[data-panel=inbox] .msg-wrap{position:relative;display:flex;align-items:center;gap:4px;max-width:82%;min-width:0}
+[data-panel=inbox] .msg-wrap.me{flex-direction:row-reverse}
+[data-panel=inbox] .msg-wrap>.msg{max-width:100%}
+[data-panel=inbox] .msg-acts{display:flex;gap:2px;opacity:0;transition:opacity .12s;flex:none}
+[data-panel=inbox] .msg-wrap:hover .msg-acts{opacity:1}
+[data-panel=inbox] .msg-acts button{width:26px;height:26px;border-radius:50%;border:0;background:var(--bg-card);color:var(--text-secondary);cursor:pointer;font-size:13px;box-shadow:var(--shadow-xs)}
+[data-panel=inbox] .msg-acts button:hover{background:var(--primary-soft);color:var(--text-primary)}
+[data-panel=inbox] .msg{position:relative}
+[data-panel=inbox] .msg-re{position:absolute;bottom:-11px;right:8px;display:flex;gap:1px;background:var(--bg-card);border:1px solid var(--border);border-radius:10px;padding:0 4px;font-size:11px;line-height:18px;box-shadow:var(--shadow-xs)}
+[data-panel=inbox] .msg.me .msg-re{right:auto;left:8px}
+[data-panel=inbox] .msgrow:has(.msg-re){margin-bottom:16px}
+.ib-emo-pop,.ib-msg-menu{position:fixed;z-index:1000;background:var(--bg-card);border:1px solid var(--border);border-radius:14px;box-shadow:var(--shadow-sm);padding:4px}
+.ib-msg-menu{display:flex;flex-direction:column;gap:2px;min-width:200px}
+.ib-emo-row{display:flex;gap:2px}
+.ib-emo-row button{width:32px;height:32px;border:0;border-radius:50%;background:transparent;font-size:18px;cursor:pointer;transition:transform .1s}
+.ib-emo-row button:hover{transform:scale(1.25);background:var(--bg-input)}
+.ib-emo-row button.on{background:var(--primary-soft)}
+.ib-mm-item{text-align:left;border:0;background:transparent;color:var(--text-primary);padding:7px 10px;border-radius:8px;font-size:12px;cursor:pointer}
+.ib-mm-item:hover{background:var(--bg-input)}
+[data-panel=inbox] .ib-reply{display:flex;align-items:center;gap:8px;padding:6px 8px;margin-bottom:6px;border-left:3px solid var(--primary);background:var(--bg-input);border-radius:8px}
+[data-panel=inbox] .ib-reply-ico{color:var(--primary)}
+[data-panel=inbox] .ib-reply-txt{flex:1;min-width:0;display:flex;flex-direction:column;font-size:11px;line-height:1.5}
+[data-panel=inbox] .ib-reply-txt span{color:var(--text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+[data-panel=inbox] .msg-quote{font-size:10px;color:var(--text-muted);border-left:2px solid var(--primary-border);padding-left:6px;margin-bottom:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
