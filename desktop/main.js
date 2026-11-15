@@ -380,27 +380,27 @@ app.whenReady().then(async () => {
     if (!/^https?:$/.test(u.protocol)) return { error: 'link không hợp lệ' };
     const hit = snapCache.get(u.href); if (hit && Date.now() - hit.at < 60e3) return { dataUrl: hit.dataUrl, metrics: hit.metrics };
     const fbLike = /(^|\.)(facebook\.com|fb\.watch|fb\.me|instagram\.com|threads\.(net|com))$/i.test(u.hostname);
-    const w = new BrowserWindow({ show: false, width: 430, height: 932, webPreferences: { partition: fbLike ? META : 'persist:snap', offscreen: true, sandbox: true, contextIsolation: true, backgroundThrottling: false } });
+    // Trang Facebook / Instagram / Threads dùng chung phiên đăng nhập Business Suite → phải cùng "thiết bị" với các khung khác của app
+    // (cùng kiểu trình duyệt máy tính). Một phiên mà lúc là Chrome máy tính, lúc là iPhone là dấu hiệu Facebook dễ bắt xác minh (checkpoint).
+    // Trang khác (TikTok…) chụp kiểu điện thoại bằng phiên riêng, không đăng nhập.
+    const w = new BrowserWindow({ show: false, width: fbLike ? 900 : 430, height: fbLike ? 1000 : 932, webPreferences: { partition: fbLike ? META : 'persist:snap', offscreen: true, sandbox: true, contextIsolation: true, backgroundThrottling: false } });
     try {
       w.webContents.setAudioMuted(true); w.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
       const MOBILE = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1';
       const load = async href => { await Promise.race([w.loadURL(href), new Promise(r => setTimeout(r, 20e3))]).catch(() => {}); };
       const isFeed = href => { try { const x = new URL(href); return /facebook\.com$/i.test(x.hostname) && (/^\/(home\.php)?$/.test(x.pathname) || /^\/(login|checkpoint)/.test(x.pathname)); } catch { return false; } };
-      let target = u.href;
-      if (/facebook\.com|fb\.watch|fb\.me/i.test(u.hostname)) {
-        // Link chia sẻ Facebook (/share/…, fb.me…): mở bằng trình duyệt máy tính để lấy địa chỉ bài thật (bản điện thoại hay đẩy về Bảng tin).
-        if (/^\/share\/|^\/story\.php|fb\.me|fb\.watch/i.test(u.pathname + u.hostname)) { await load(u.href); await new Promise(r => setTimeout(r, 1500)); const fin = w.webContents.getURL(); if (fin && !isFeed(fin)) target = fin; }
-        try { const t = new URL(target); if (/^(www\.)?facebook\.com$/i.test(t.hostname)) { t.hostname = 'm.facebook.com'; target = t.href; } } catch {}
-      }
-      w.webContents.setUserAgent(MOBILE);
-      await load(target);
-      // Bị đẩy về Bảng tin / trang đăng nhập: không phải bài của khách → không chụp (tránh ảnh sai).
-      if (isFeed(w.webContents.getURL().replace('m.facebook.com', 'www.facebook.com'))) return { error: 'Facebook không mở được bài này (bài riêng tư, đã xoá, hoặc link chia sẻ không còn dùng được)' };
+      if (fbLike) await asChrome(w.webContents); // cùng kiểu trình duyệt với cột Meta và các khung ngầm
+      else w.webContents.setUserAgent(MOBILE);
+      await load(u.href); // link chia sẻ (/share/…, fb.me…) tự chuyển tới bài thật
+      if (fbLike) await new Promise(r => setTimeout(r, 1200));
+      // Bị đẩy về Bảng tin / trang đăng nhập / xác minh: không phải bài của khách → không chụp (tránh ảnh sai).
+      if (isFeed(w.webContents.getURL())) return { error: 'Facebook không mở được bài này (bài riêng tư, đã xoá, hoặc link chia sẻ không còn dùng được)' };
       await new Promise(r => setTimeout(r, 4500)); // chờ trang điền số follow / like
-      // Đóng hộp "mở ứng dụng / đăng nhập" che trang (nếu có), cuộn lên đầu.
-      await w.webContents.executeJavaScript(`(() => { for (const b of document.querySelectorAll('[aria-label*="Close" i],[aria-label*="Đóng" i],[data-e2e*="close" i]')) try { b.click(); } catch (e) {} scrollTo(0, 0); })()`).catch(() => {});
+      // Trang không đăng nhập: đóng hộp "mở ứng dụng / đăng nhập" che trang (nếu có). Trang Facebook đang đăng nhập: chỉ xem, không bấm gì.
+      if (!fbLike) await w.webContents.executeJavaScript(`(() => { for (const b of document.querySelectorAll('[aria-label*="Close" i],[aria-label*="Đóng" i],[data-e2e*="close" i]')) try { b.click(); } catch (e) {} scrollTo(0, 0); })()`).catch(() => {});
       await new Promise(r => setTimeout(r, 600));
-      const img = await w.webContents.capturePage({ x: 0, y: 0, width: 430, height: 620 });
+      // Facebook bản máy tính: bỏ thanh trên cùng (thông báo, ảnh đại diện của bạn), chụp phần bài viết.
+      const img = await w.webContents.capturePage(fbLike ? { x: 0, y: 56, width: 900, height: 720 } : { x: 0, y: 0, width: 430, height: 620 });
       if (img.isEmpty()) return { error: 'không chụp được trang' };
       const dataUrl = 'data:image/jpeg;base64,' + img.toJPEG(82).toString('base64');
       // Đọc số thật đang hiện trên trang (TikTok: follower / following / thích của kênh, hoặc tim / bình luận / chia sẻ của video).
@@ -418,6 +418,8 @@ app.whenReady().then(async () => {
         const NUM = /([\\d][\\d.,]*\\s?(?:[KkMmBb]|N|Tr)?)\\s*/.source;
         g('followers', new RegExp(NUM + '(?:Followers?|người theo dõi)', 'i'));
         g('following', new RegExp(NUM + '(?:Following|Đang theo dõi|đang follow)', 'i'));
+        // Facebook bản máy tính: "Tất cả cảm xúc: 46" / "All reactions: 46"
+        { const m = t.match(/(?:Tất cả cảm xúc|All reactions)\\s*:?\\s*([\\d][\\d.,]*\\s?(?:[KkMm]|N|Tr)?)/i); if (m && out.likes == null) { const v = n(m[1]); if (v != null) out.likes = v; } }
         g('likes', new RegExp(NUM + '(?:Likes?|lượt thích|Thích|lượt tim|lượt bày tỏ cảm xúc|cảm xúc|reactions?)', 'i'));
         // Facebook: "Bạn và 45 người khác" / "Lan và 45 người khác" → 46
         if (out.likes == null) { const m = t.match(/và\\s+([\\d][\\d.,]*\\s?(?:[KkMm]|N|Tr)?)\\s+người khác|and\\s+([\\d][\\d.,]*[KkMm]?)\\s+others/i); if (m) { const v = n(m[1] || m[2]); if (v != null) out.likes = v + 1; } }
