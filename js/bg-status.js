@@ -22,12 +22,14 @@
     const by = new Map(list.map(x => [String(x.page), x])), pages = App.selected();
     const rows = pages.map(p => ({ p, st: by.get(String(p.id)) || { read: 'none', send: 'none' } }));
     const sendOk = r => r.st.send === 'fast' || r.st.send === 'ready' || (r.st.send === 'none' && r.st.read === 'ready' && !list.some(x => x.send !== 'none'));
-    const ready = rows.filter(r => r.st.read === 'ready' && sendOk(r)).length, fast = rows.filter(r => r.st.send === 'fast').length, n = rows.length;
-    const state = ready < n ? 'loading' : fast === n ? 'fast' : 'ready';
+    // Đếm cả khung Zalo (nếu có) vào tổng số khung ngầm.
+    const zOk = z?.state === 'ready', zN = z ? 1 : 0;
+    const ready = rows.filter(r => r.st.read === 'ready' && sendOk(r)).length + (zOk ? 1 : 0), fast = rows.filter(r => r.st.send === 'fast').length, n = rows.length + zN;
+    const state = ready < n ? 'loading' : fast === rows.length ? 'fast' : 'ready';
     btn.hidden = false; btn.className = 'bg-status ' + state;
     btn.replaceChildren(h('span', { className: 'dot' }), state === 'loading' ? `Đang mở khung ngầm ${ready}/${n}` : state === 'fast' ? 'Sẵn sàng · gửi nhanh' : `Sẵn sàng ${ready}/${n}`);
-    btn.title = 'Khung ngầm Business Suite: bấm để xem từng Page';
-    pop.replaceChildren(h('div', { className: 'bg-status-head', textContent: 'Khung ngầm Business Suite' }),
+    btn.title = 'Khung ngầm Business Suite + Zalo: bấm để xem từng khung';
+    pop.replaceChildren(h('div', { className: 'bg-status-head', textContent: `Khung ngầm (${n}): ${rows.length} Page Business Suite` + (zN ? ' + Zalo' : '') }),
       ...rows.map(({ p, st }) => h('div', { className: 'bg-status-row' }, App.avatar(p.name, App.pageAvatarUrl(p), 20), h('span', { className: 'nm', textContent: p.name }),
         h('span', { className: 'st ' + st.read, title: 'Khung đọc: danh sách, tin mới', textContent: 'Đọc ' + READ[st.read] }),
         h('span', { className: 'st ' + st.send, title: 'Khung gửi: ⚡ = gửi thẳng tin chữ (< 1 giây)', textContent: SEND[st.send] }))),
