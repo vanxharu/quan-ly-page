@@ -146,7 +146,7 @@
           h('div', { className: 'ib-toolbar' },
             h('div', { className: 'chips', id: 'ibFilter' }, ...[['all', 'Tất cả'], ['unread', 'Chưa đọc'], ['unanswered', 'Chưa trả lời'], ['today', 'Hôm nay']].map(([f, t]) =>
               h('button', { className: 'chip', dataset: { f }, textContent: t, 'aria-pressed': String(f === S.filter), onclick: () => { S.filter = f; drawList(); } }))),
-            h('div', { className: 'ib-plats', id: 'ibPlat', role: 'group', 'aria-label': 'Lọc theo nền tảng' }, ...['all', 'messenger', 'zalo'].map(k =>
+            h('div', { className: 'ib-plats', id: 'ibPlat', role: 'group', 'aria-label': 'Lọc theo nền tảng' }, ...['all', 'bs', 'zalo'].map(k =>
               h('button', { type: 'button', className: 'ib-plat', dataset: { p: k }, title: k === 'all' ? 'Mọi nền tảng' : 'Chỉ ' + PLAT[k].name, 'aria-pressed': String((S.plat || 'all') === k),
                 onclick: () => { S.plat = k; local.set('inboxPlat', k); drawList(); } }, k === 'all' ? 'Tất cả' : platLogo(k, 16)))),
             h('select', { id: 'ibLabel', 'aria-label': 'Lọc theo nhãn', onchange: () => drawList() }),
@@ -154,8 +154,8 @@
               h('summary', { title: 'Thêm', 'aria-label': 'Thêm' }, '⋯'),
               h('div', { className: 'ib-menu-pop' },
                 window.metaDesktop?.listThreads ? h('div', { className: 'ib-src', title: 'Nguồn đọc tin Messenger · Business Suite: đọc như hộp thư Meta, trả lời được cả tin quá 7 ngày. API: đọc và trả lời qua API.' },
-                  h('span', {}, 'Nguồn tin'), ...['bs', 'api'].map(v => h('button', { type: 'button', className: 'ib-plat', title: PLAT[v].name, 'aria-label': PLAT[v].name, 'aria-pressed': String(v === 'bs' ? bsFirst() : !bsFirst()),
-                    onclick: e => { if ((v === 'bs') === bsFirst()) return; local.set('inboxSource', v); e.currentTarget.parentElement.querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', String(b === e.currentTarget))); S.convs = []; S.more.clear(); load(false, { force: true }); } }, platLogo(v, 18)))) : null,
+                  h('span', {}, 'Nguồn tin'), ...['bs', 'api'].map(v => h('button', { type: 'button', className: 'ib-plat', 'aria-label': v === 'bs' ? 'Business Suite' : 'API', 'aria-pressed': String(v === 'bs' ? bsFirst() : !bsFirst()), title: v === 'bs' ? 'Đọc qua Business Suite' : 'Đọc qua API',
+                    onclick: e => { if ((v === 'bs') === bsFirst()) return; local.set('inboxSource', v); e.currentTarget.parentElement.querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', String(b === e.currentTarget))); S.convs = []; S.more.clear(); load(false, { force: true }); } }, v === 'bs' ? platLogo('bs', 18) : 'API'))) : null,
                 window.metaDesktop?.openZalo ? h('button', { type: 'button', title: 'Mở Zalo Web (Zalo cá nhân) ở cột phải · Ctrl+Shift+Z', onclick: () => window.metaDesktop.openZalo() }, 'Mở Zalo') : null,
                 window.metaDesktop?.resetZalo ? h('button', { type: 'button', title: 'Zalo Web treo "Đang đăng nhập…": xoá phiên Zalo trong app rồi quét QR lại', onclick: () => { if (confirm('Đăng nhập lại Zalo?\n\nApp xoá phiên Zalo Web trong app (không ảnh hưởng Zalo trên điện thoại), bạn quét mã QR lại.')) window.metaDesktop.resetZalo(true); } }, 'Đăng nhập lại Zalo') : null,
                 window.metaDesktop?.lookupProfile ? h('button',{type:'button',textContent:'Lấy avatar khách',title:'Đọc avatar + UID khách từ Business Suite (từng khách, tối đa 30)',onclick:e=>lookupList(e.currentTarget)}) : null,
@@ -780,11 +780,11 @@
     }
   }
   // Logo nền tảng (file bạn gửi, đặt ở img/platforms/). Chưa có file → huy hiệu chữ cái đơn giản.
-  const PLAT = { messenger: { name: 'Messenger', file: 'messenger', ch: 'M', color: '#7b61ff' }, zalo: { name: 'Zalo', file: 'zalo', ch: 'Z', color: '#2f80ed' },
-    bs: { name: 'Business Suite', file: 'business-suite', ch: 'B', color: '#5b6b8c' }, api: { name: 'API', file: 'api', ch: 'A', color: '#3b9b7a' } };
-  const platOf = c => c?.platform || 'messenger';
+  // Tin Facebook Page (đọc qua Business Suite hay API) đều mang logo Business Suite; Zalo mang logo Zalo.
+  const PLAT = { bs: { name: 'Business Suite', file: 'business-suite', ch: 'B', color: '#5b6b8c' }, zalo: { name: 'Zalo', file: 'zalo', ch: 'Z', color: '#2f80ed' } };
+  const platOf = c => c?.platform === 'zalo' ? 'zalo' : 'bs';
   function platLogo(key, size = 16) {
-    const p = PLAT[key] || PLAT.messenger, box = h('span', { className: 'plat', title: p.name, style: `width:${size}px;height:${size}px` });
+    const p = PLAT[key] || PLAT.bs, box = h('span', { className: 'plat', title: p.name, style: `width:${size}px;height:${size}px` });
     const letter = () => box.replaceChildren(h('span', { className: 'plat-ch', style: `background:${p.color};font-size:${Math.round(size * .6)}px`, textContent: p.ch }));
     const exts = ['svg', 'png', 'webp'], img = h('img', { alt: p.name, src: `img/platforms/${p.file}.${exts[0]}`, draggable: false });
     let i = 0; img.onerror = () => { if (++i < exts.length) img.src = `img/platforms/${p.file}.${exts[i]}`; else letter(); };
@@ -833,7 +833,7 @@
     drawLabelFilter();
     const q = norm($('ibSearch').value), lab = $('ibLabel').value, today = new Date().toDateString();
     [...$('ibFilter').children].forEach(c => c.setAttribute('aria-pressed', String(c.dataset.f === S.filter)));
-    S.plat ||= local.get('inboxPlat') || 'all';
+    S.plat ||= local.get('inboxPlat') || 'all'; if (!['all', 'bs', 'zalo'].includes(S.plat)) S.plat = 'all';
     [...($('ibPlat')?.children || [])].forEach(b => b.setAttribute('aria-pressed', String(b.dataset.p === S.plat)));
     const list = S.convs.filter(c => (S.plat === 'all' || platOf(c) === S.plat) &&
       (S.filter !== 'unread' || c.unread_count) && (S.filter !== 'unanswered' || c.fromCustomer) &&
