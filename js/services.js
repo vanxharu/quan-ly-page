@@ -225,15 +225,15 @@
   const estCost = (svc, qty) => svc ? (svc.unitCost || 0) * qty : 0;
   const num = v => Number(String(v ?? '').replace(/[^0-9.\-]/g, ''));
   // Số tiền có thể ghi kiểu Việt "2.450.000" / "12.448" (dấu chấm ngăn nghìn), kiểu Anh "2,450,000.50" hoặc số thường "2450000.0000".
-  // Số dư VND lấy từ API. Baostar trả số dư theo USD → đổi theo tỉ giá Baostar công bố (mặc định 27.000đ/USD, sửa trong Cài đặt dịch vụ).
-  // API lỗi mới đọc số dư trên trang web.
+  // Số dư lấy từ API theo tài liệu Baostar: action=balance → { "balance": "343423", "currency": "VND" }.
+  // Chỉ khi API ghi rõ currency "USD" mới đổi theo tỉ giá (mặc định 27.000đ/USD, sửa trong Cài đặt dịch vụ). API lỗi mới đọc số dư trên trang web.
   async function vndBalance() {
     const s = await settings(), rate = Number(s.usdRate) || 27000;
     try {
       const b = await call('balance'), raw = b?.balance ?? b?.data?.balance ?? b?.money ?? b?.amount ?? b, cur = String(b?.currency || '').toUpperCase(), v = money0(raw);
       if (Number.isFinite(v)) {
-        const usd = cur === 'USD' || (!cur && v < 5000); // không ghi tiền mà số nhỏ (vd 1.87) → USD
-        return usd ? { v: Math.round(v * rate), src: 'api', note: `API: ${raw} USD × ${rate.toLocaleString('vi-VN')}đ` } : { v, src: 'api', note: `API: ${raw} ${cur || 'VND'}` };
+        if (cur === 'USD') return { v: Math.round(v * rate), src: 'api', note: `API: ${raw} USD × ${rate.toLocaleString('vi-VN')}đ` };
+        return { v, src: 'api', note: `API trả: ${JSON.stringify(b).slice(0, 120)}` };
       }
     } catch (e) { if (!window.metaDesktop?.svcWebBalance) throw e; }
     if (window.metaDesktop?.svcWebBalance && s.home) { const w = await window.metaDesktop.svcWebBalance({ origin: s.home }).catch(() => null);
