@@ -369,7 +369,7 @@ app.whenReady().then(async () => {
     if (!fromPage(e)) return { error: 'denied' };
     let u; try { u = new URL(url); } catch { return { error: 'link không hợp lệ' }; }
     if (!/^https?:$/.test(u.protocol)) return { error: 'link không hợp lệ' };
-    const hit = snapCache.get(u.href); if (hit && Date.now() - hit.at < 60e3) return { dataUrl: hit.dataUrl };
+    const hit = snapCache.get(u.href); if (hit && Date.now() - hit.at < 60e3) return { dataUrl: hit.dataUrl, metrics: hit.metrics };
     const fbLike = /(^|\.)(facebook\.com|fb\.watch|fb\.me|instagram\.com|threads\.(net|com))$/i.test(u.hostname);
     const w = new BrowserWindow({ show: false, width: 430, height: 932, webPreferences: { partition: fbLike ? META : 'persist:snap', offscreen: true, sandbox: true, contextIsolation: true, backgroundThrottling: false } });
     try {
@@ -383,8 +383,18 @@ app.whenReady().then(async () => {
       const img = await w.webContents.capturePage({ x: 0, y: 0, width: 430, height: 620 });
       if (img.isEmpty()) return { error: 'không chụp được trang' };
       const dataUrl = 'data:image/jpeg;base64,' + img.toJPEG(82).toString('base64');
-      snapCache.set(u.href, { at: Date.now(), dataUrl }); if (snapCache.size > 30) snapCache.delete(snapCache.keys().next().value);
-      return { dataUrl };
+      // Đọc số thật đang hiện trên trang (TikTok: follower / following / thích của kênh, hoặc tim / bình luận / chia sẻ của video).
+      const metrics = await w.webContents.executeJavaScript(`(() => { const out = {};
+        const n = t => { t = String(t || '').trim().replace(/\\s/g, ''); const m = t.match(/^([\\d.,]+)([KkMmBbNnTr]*)/); if (!m) return null;
+          let v = m[1], u = m[2].toLowerCase(); if (u) v = v.replace(',', '.'); else v = v.replace(/[.,]/g, '');
+          const k = u.startsWith('k') || u === 'n' ? 1e3 : u.startsWith('m') || u === 'tr' ? 1e6 : u.startsWith('b') ? 1e9 : 1; const x = parseFloat(v) * k; return isFinite(x) ? Math.round(x) : null; };
+        const q = (k, sel) => { const el = document.querySelector(sel); if (el) { const v = n(el.textContent); if (v != null) out[k] = v; } };
+        q('followers', '[data-e2e="followers-count"]'); q('following', '[data-e2e="following-count"]'); q('likes', '[data-e2e="likes-count"]');
+        q('likes', '[data-e2e="like-count"], [data-e2e="browse-like-count"]'); q('comments', '[data-e2e="comment-count"], [data-e2e="browse-comment-count"]');
+        q('shares', '[data-e2e="share-count"]'); q('views', '[data-e2e="video-views"], [data-e2e="view-count"]');
+        return out; })()`).catch(() => ({}));
+      snapCache.set(u.href, { at: Date.now(), dataUrl, metrics }); if (snapCache.size > 30) snapCache.delete(snapCache.keys().next().value);
+      return { dataUrl, metrics };
     } catch (err) { return { error: err.message }; } finally { if (!w.isDestroyed()) w.destroy(); }
   });
   const openMetaInbox = url => {

@@ -790,7 +790,10 @@
     const fit = (t, maxW, f) => { x.font = f; t = String(t); if (x.measureText(t).width <= maxW) return t; while (t.length > 1 && x.measureText(t + '…').width > maxW) t = t.slice(0, -1); return t + '…'; };
     const items = multi(o) ? o.lines.map(l => ({ name: l.displayName, link: l.link || o.link, ord: l.order || l })) : [{ name: o.displayName || o.serviceName || 'Dịch vụ', link: o.link, ord: o }];
     const info = it => { const q = qtyOf(it.ord), d = doneOf(it.ord), st = it.ord.status === 'done' || kind === 'done' && !multi(o) ? 'done' : /pending/i.test(it.ord.svcStatus || '') ? 'wait' : 'run';
-      const pct = st === 'done' ? 100 : d != null && q ? Math.min(100, Math.round(d / q * 100)) : 0; return { q, d: st === 'done' ? q : d, pct, st, start: it.ord.startCount != null ? num(it.ord.startCount) : null }; };
+      const start = it.ord.startCount != null ? num(it.ord.startCount) : null, real = o._real && items.length === 1 ? o._real.v : null;
+      // Số thật trên trang (đã chụp) mới hơn số Baostar báo: đã lên = số thật − số ban đầu.
+      const dd = st === 'done' ? q : real != null && start != null ? Math.min(q, Math.max(d ?? 0, real - start)) : d;
+      const pct = st === 'done' ? 100 : dd != null && q ? Math.min(100, Math.round(dd / q * 100)) : 0; return { q, d: dd, pct, st, start, real }; };
     const ST = { done: ['HOÀN THÀNH', '#059669', '#d1fae5'], run: ['ĐANG CHẠY', '#6c5ce7', '#ede9fe'], wait: ['CHỜ CHẠY', '#b45309', '#fef3c7'] };
     const one = items.length === 1, rowH = one ? 200 : 120;
     const H = 96 + 24 + items.length * (rowH + 14) + 70;
@@ -828,7 +831,7 @@
       if (!one) { x.font = font(700, 12); x.fillStyle = '#6b7280'; x.fillText(`${(m.d ?? 0).toLocaleString('vi-VN')} / ${m.q.toLocaleString('vi-VN')} · ${m.pct}%`, P + 16, barY + 34); }
       // Số ban đầu → hiện tại
       if (one) { const yy = barY + 46; x.font = font(600, 13); x.fillStyle = '#6b7280';
-        x.fillText(m.start != null ? `Ban đầu ${m.start.toLocaleString('vi-VN')}  →  hiện tại ${(m.start + (m.d || 0)).toLocaleString('vi-VN')}  ·  mục tiêu ${(m.start + m.q).toLocaleString('vi-VN')}` : m.st === 'wait' ? 'Hệ thống đang xếp đơn, thường bắt đầu chạy trong ít phút' : 'Đang cập nhật số ban đầu…', P + 16, yy); }
+        x.fillText(m.start != null ? `Ban đầu ${m.start.toLocaleString('vi-VN')}  →  hiện tại ${(m.real ?? (m.start + (m.d || 0))).toLocaleString('vi-VN')}${m.real != null ? ' (số thật trên trang)' : ''}  ·  mục tiêu ${(m.start + m.q).toLocaleString('vi-VN')}` : m.st === 'wait' ? 'Hệ thống đang xếp đơn, thường bắt đầu chạy trong ít phút' : 'Đang cập nhật số ban đầu…', P + 16, yy); }
       y += rowH + 14;
     }
     x.font = font(700, 13); x.fillStyle = '#6c5ce7'; x.textAlign = 'center';
@@ -836,11 +839,16 @@
     return { dataUrl: c.toDataURL('image/png'), qrMissing: false };
   }
   // Ghép "ảnh thực tế" (app chụp ngầm link của khách: trang TikTok, bài Facebook…) vào dưới ảnh phiếu: báo giá, tiến độ, hoàn thành.
+  // Số thật trên trang khách (vd TikTok 56 follower) theo loại dịch vụ: follow → followers, like/tim → likes, view → views, bình luận → comments.
+  const metricOf = name => /follow|theo dõi/i.test(name) ? 'followers' : /view|lượt xem|mắt/i.test(name) ? 'views' : /bình luận|comment|cmt/i.test(name) ? 'comments' : /share|chia sẻ/i.test(name) ? 'shares' : /like|tim|thích|cảm xúc/i.test(name) ? 'likes' : '';
   async function invoiceImage(o, inv, kind, { snap = true } = {}) {
-    const res = await invoiceImage0(o, inv, kind);
     const link = o.link || o.lines?.find(l => l.link)?.link || '';
-    if (!snap || !link || !['quote', 'progress', 'done'].includes(kind) || !window.metaDesktop?.svcSnap) return res;
-    const sn = await window.metaDesktop.svcSnap({ url: link }).catch(() => null);
+    const want = snap && link && ['quote', 'progress', 'done'].includes(kind) && window.metaDesktop?.svcSnap;
+    const sn = want ? await window.metaDesktop.svcSnap({ url: link }).catch(() => null) : null;
+    // Chụp được số thật → phiếu tiến độ dùng số thật (Baostar báo tiến độ thường chậm hơn trang thật).
+    const key = metricOf(o.displayName || o.serviceName || ''), real = sn?.metrics && key && Number.isFinite(sn.metrics[key]) ? { key, v: sn.metrics[key] } : null;
+    const res = await invoiceImage0(real && !multi(o) ? { ...o, _real: real } : o, inv, kind);
+    if (!want) return res;
     if (!sn?.dataUrl) return { ...res, snapError: sn?.error || 'không chụp được' };
     const [card, shot] = await Promise.all([loadImg(res.dataUrl), loadImg(sn.dataUrl)]); if (!card || !shot) return res;
     const W = card.width, pad = 28 * 2, sw = Math.min(W - pad * 2, 430 * 2 * 1.1), sh = Math.round(shot.height * sw / shot.width), cap = 64;
