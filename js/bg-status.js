@@ -9,7 +9,7 @@
   btn.onclick = e => { e.stopPropagation(); pop.hidden = !pop.hidden; };
   document.addEventListener('click', e => { if (!wrap.contains(e.target)) pop.hidden = true; });
   const READ = { ready: '✓ Đã mở', loading: '⏳ Đang mở', none: '— Chưa mở' };
-  const SEND = { fast: '⚡ Gửi nhanh', ready: '✓ Sẵn sàng', loading: '⏳ Đang mở', none: '— Chưa mở' };
+  const SEND = { fast: '⚡ Gửi nhanh', ready: '✓ Sẵn sàng', loading: '⏳ Đang mở', none: '— Chưa mở', idle: '💤 Nghỉ' };
   let timer = 0;
   async function tick() {
     clearTimeout(timer);
@@ -21,7 +21,8 @@
     const ZST = { ready: '✓ Đã mở', loading: '⏳ Đang mở', login: '⚠ Chưa đăng nhập', closed: '— Chưa mở' };
     const by = new Map(list.map(x => [String(x.page), x])), pages = App.selected();
     const rows = pages.map(p => ({ p, st: by.get(String(p.id)) || { read: 'none', send: 'none' } }));
-    const sendOk = r => r.st.send === 'fast' || r.st.send === 'ready' || (r.st.send === 'none' && r.st.read === 'ready' && !list.some(x => x.send !== 'none'));
+    const sendOk = r => r.st.send !== 'loading'; // khung gửi nghỉ / chưa mở vẫn ổn: tin chữ đi qua khung đọc
+    for (const r of rows) if (r.st.send !== 'fast' && r.st.readFast) r.st = { ...r.st, send: r.st.send === 'loading' ? 'loading' : 'fast' };
     // Đếm cả khung Zalo (nếu có) vào tổng số khung ngầm.
     const zOk = z?.state === 'ready', zN = z ? 1 : 0;
     const ready = rows.filter(r => r.st.read === 'ready' && sendOk(r)).length + (zOk ? 1 : 0), fast = rows.filter(r => r.st.send === 'fast').length, n = rows.length + zN;
@@ -32,7 +33,7 @@
     pop.replaceChildren(h('div', { className: 'bg-status-head', textContent: `Khung ngầm (${n}): ${rows.length} Page Business Suite` + (zN ? ' + Zalo' : '') }),
       ...rows.map(({ p, st }) => h('div', { className: 'bg-status-row' }, App.avatar(p.name, App.pageAvatarUrl(p), 20), h('span', { className: 'nm', textContent: p.name }),
         h('span', { className: 'st ' + st.read, title: 'Khung đọc: danh sách, tin mới', textContent: 'Đọc ' + READ[st.read] }),
-        h('span', { className: 'st ' + st.send, title: 'Khung gửi: ⚡ = gửi thẳng tin chữ (< 1 giây)', textContent: SEND[st.send] }))),
+        h('span', { className: 'st ' + st.send, title: 'Khung gửi: ⚡ = gửi thẳng tin chữ (< 1 giây) · 💤 = khung gửi ảnh chỉ mở khi bạn trả lời Page này, tự đóng sau 5 phút', textContent: SEND[st.send] }))),
       z ? h('div', { className: 'bg-status-row' }, h('img', { src: 'img/platforms/zalo.png', alt: '', style: 'width:20px;height:20px;border-radius:5px' }), h('span', { className: 'nm', textContent: 'Zalo cá nhân' }),
         h('span', { className: 'st ' + (z.state === 'ready' ? 'ready' : z.state === 'loading' ? 'loading' : 'none'), title: z.err || '', textContent: ZST[z.state] || z.state }),
         h('span', { className: 'st ' + (zKept ? 'ready' : 'none'), title: `Đọc được ${z.rows} hội thoại trên Zalo Web · ${zKept} khách hiện trong Hộp thư` + (z.err ? ' · lỗi: ' + z.err : ''), textContent: z.state === 'ready' ? `${zKept} khách` : '' })) : null,

@@ -453,7 +453,11 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
     ss.used = Date.now();
     return ss;
   };
-  const sendQueue = (pageId, fn, prio = 1) => { const ss = sendSlot(pageId); return ss.queue(async () => { await ss.win.ready; await lighten(ss.win.webContents, ss.pageId, !!ss.send); return fn(ss); }, prio); };
+  // Khung gửi chỉ mở khi cần (bạn mở khách của Page đó / gửi ảnh) và tự đóng sau 5 phút không dùng → bình thường chỉ ~1 khung gửi chạy.
+  // Tin chữ vẫn gửi thẳng qua kết nối của khung đọc nên không cần khung gửi.
+  const SEND_IDLE = 5 * 60e3;
+  setInterval(() => { for (const [id, ss] of sendSlots) if (Date.now() - ss.used > SEND_IDLE && !ss.queue.runningSince && !ss.queue.waiting?.()) { sendSlots.delete(id); try { ss.win.destroy(); } catch {} } }, 60e3);
+  const sendQueue = (pageId, fn, prio = 1) => { const ss = sendSlot(pageId); return ss.queue(async () => { ss.used = Date.now(); await ss.win.ready; await lighten(ss.win.webContents, ss.pageId, !!ss.send); return fn(ss); }, prio); };
   // Mở sẵn: tải Hộp thư của Page vào khung gửi (lúc app đọc danh sách), mở sẵn hội thoại bạn đang xem.
   const warmSend = pageId => { if (!makeWorker || !/^\d+$/.test(String(pageId))) return; const ss = sendSlot(pageId); if (ss.warmed) return; ss.warmed = true;
     sendQueue(pageId, async s => { const wc = s.win.webContents; if (!wc.getURL().includes(`asset_id=${pageId}`)) await wc.loadURL(`https://business.facebook.com/latest/inbox/messenger?asset_id=${pageId}&mailbox_id=${pageId}`).catch(() => {}); }, 0).catch(() => {}); };
@@ -518,7 +522,7 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
     for (const r of rows) if (!r.name) r.name = 'Khách Messenger';
     return rows;
   };
-  const listThreads = ({ pageId, max = 15, full = false }) => (warmSend(pageId), !/^\d+$/.test(String(pageId))) ? Promise.resolve({ error: 'Thiếu Page.' })
+  const listThreads = ({ pageId, max = 15, full = false }) => !/^\d+$/.test(String(pageId)) ? Promise.resolve({ error: 'Thiếu Page.' })
     : (!full && lsList(pageId, Math.min(Math.max(Number(max) || 15, 5), 80))) ? Promise.resolve({ rows: lsList(pageId, Math.min(Math.max(Number(max) || 15, 5), 80)), source: 'ls' })
     : queue(pageId, async () => {
     const sl = slot(pageId), wc = sl.win.webContents;
@@ -1169,7 +1173,9 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
       const live = await Promise.race([wc.executeJavaScript(`(window.__gaWS || []).some(w => w.readyState === 1 && w.__ls)`).catch(() => false), sleep(800).then(() => false)]);
       const cfg = lsStore(sl.pageId).lsCfg; return live && cfg?.app && cfg?.ver ? 'fast' : 'ready'; } catch { return 'none'; } };
     const ids = [...new Set([...slots.keys(), ...sendSlots.keys()])];
-    return Promise.all(ids.map(async id => ({ page: id, read: await one(slots.get(id), false), send: makeWorker ? await one(sendSlots.get(id), true) : 'none',
+    // Khung gửi đang nghỉ (chưa mở / đã tự đóng) = 'idle': không phải lỗi. Khung đọc bám được kết nối Meta → vẫn gửi nhanh tin chữ.
+    return Promise.all(ids.map(async id => ({ page: id, read: await one(slots.get(id), false), readFast: (await one(slots.get(id), true)) === 'fast',
+      send: makeWorker ? (sendSlots.has(id) ? await one(sendSlots.get(id), true) : 'idle') : 'none',
       busy: !!slots.get(id)?.queue.runningSince, frames: lsStore(id).frames || 0 })));
   };
   // ── Học mẫu gói thật từ cột Meta: khi BẠN tự thả cảm xúc / trả lời trong cột Meta, ghi lại cấu trúc gói Business Suite gửi
