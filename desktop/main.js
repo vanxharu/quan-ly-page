@@ -392,6 +392,15 @@ app.whenReady().then(async () => {
         q('followers', '[data-e2e="followers-count"]'); q('following', '[data-e2e="following-count"]'); q('likes', '[data-e2e="likes-count"]');
         q('likes', '[data-e2e="like-count"], [data-e2e="browse-like-count"]'); q('comments', '[data-e2e="comment-count"], [data-e2e="browse-comment-count"]');
         q('shares', '[data-e2e="share-count"]'); q('views', '[data-e2e="video-views"], [data-e2e="view-count"]');
+        // Trang bản điện thoại không có data-e2e: đọc theo chữ "63 Followers", "214 Likes", "1,2K người theo dõi"…
+        const t = (document.body?.innerText || '').replace(/\\u00a0/g, ' ');
+        const g = (k, re) => { if (out[k] != null) return; const m = t.match(re); if (m) { const v = n(m[1]); if (v != null) out[k] = v; } };
+        const NUM = /([\\d][\\d.,]*\\s?(?:[KkMmBb]|N|Tr)?)\\s*/.source;
+        g('followers', new RegExp(NUM + '(?:Followers?|người theo dõi)', 'i'));
+        g('following', new RegExp(NUM + '(?:Following|Đang theo dõi|đang follow)', 'i'));
+        g('likes', new RegExp(NUM + '(?:Likes?|lượt thích|Thích|lượt tim)', 'i'));
+        g('views', new RegExp(NUM + '(?:views?|lượt xem)', 'i'));
+        g('comments', new RegExp(NUM + '(?:comments?|bình luận)', 'i'));
         return out; })()`).catch(() => ({}));
       snapCache.set(u.href, { at: Date.now(), dataUrl, metrics }); if (snapCache.size > 30) snapCache.delete(snapCache.keys().next().value);
       return { dataUrl, metrics };
