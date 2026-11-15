@@ -462,7 +462,7 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
   // Mở sẵn: tải Hộp thư của Page vào khung gửi (lúc app đọc danh sách), mở sẵn hội thoại bạn đang xem.
   const warmSend = pageId => { if (!makeWorker || !/^\d+$/.test(String(pageId))) return; const ss = sendSlot(pageId); if (ss.warmed) return; ss.warmed = true;
     sendQueue(pageId, async s => { const wc = s.win.webContents; if (!wc.getURL().includes(`asset_id=${pageId}`)) await wc.loadURL(`https://business.facebook.com/latest/inbox/messenger?asset_id=${pageId}&mailbox_id=${pageId}`).catch(() => {}); }, 0).catch(() => {}); };
-  const preOpenSend = (pageId, uid) => { if (ONE_FRAME || !makeWorker || !threadArgs({ pageId, uid })) return; const ss = sendSlot(pageId); if (ss.opened === `${pageId}:${uid}` || ss.queue.waiting()) return;
+  const preOpenSend = (pageId, uid) => { if (!makeWorker || !threadArgs({ pageId, uid })) return; const ss = sendSlot(pageId); if (ss.opened === `${pageId}:${uid}` || ss.queue.waiting()) return;
     sendQueue(pageId, s => openThreadHidden(String(pageId), String(uid), s), 0).catch(() => {}); };
   const queue = (pageId, fn, prio = 0) => { const sl = slot(pageId); return sl.queue(async () => { await sl.win.ready; await lighten(sl.win.webContents, sl.pageId); return fn(); }, prio); };
 
