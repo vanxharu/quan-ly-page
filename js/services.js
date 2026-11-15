@@ -732,55 +732,91 @@
     }
     return new Promise(ok => { const im = new Image(); im.onload = () => ok(im); im.onerror = () => ok(null); im.src = src; });
   }
+  // Ảnh hoá đơn / báo giá. Có chuyển khoản: mã QR to chiếm phần lớn ảnh (khách quét ngay), số tiền + nội dung CK nổi bật;
+  // mỗi loại thông tin một màu (dịch vụ tím, link xanh dương, số lượng cam, hạn vàng, mã CK đỏ, ngân hàng xanh lá…).
   async function invoiceImage(o, inv, kind) {
     const page = App.pageById(o.pageKey), shop = page?.name || o.pageName || inv.shop || 'Cửa hàng';
     const [logo, qr] = await Promise.all([loadImg(App.pageAvatarUrl(page) || o.pageAvatar), hasPayBlock(kind) ? loadImg(qrUrl(inv, o)) : null]);
-    const W = 760, P = 36, c = document.createElement('canvas'), x = c.getContext('2d');
+    const W = 760, P = 28, c = document.createElement('canvas'); let x = c.getContext('2d');
     const font = (w, sz) => `${w} ${sz}px "Plus Jakarta Sans","Inter","Segoe UI",Arial,sans-serif`;
     const wrap = (text, maxW, f) => { x.font = f; const out = []; for (const para of String(text).split('\n')) { let line = '';
       for (const w of para.split(/(\s+)/)) { const t = line + w; if (x.measureText(t).width > maxW && line.trim()) { out.push(line.trim()); line = w.trimStart(); } else line = t; }
       out.push(line.trim()); } return out; };
-    const q = qtyOf(o);
-    const rows = [[kind === 'quote' ? 'Mã thanh toán' : 'Mã đơn', '#' + payCode(o)], [kind === 'quote' ? 'Ngày báo giá' : 'Ngày tạo', fmtTime(o.at)], o.customer?.name ? ['Khách hàng', o.customer.name] : null, ...(multi(o) ? [o.link ? ['Link chung', o.link] : null, ...o.lines.map((l, i) => [`Dịch vụ ${i + 1}`, lineText(o, l, i).replace(/^\d+\. /, '')])]
-        : [['Dịch vụ', o.displayName || o.items?.[0]?.name || 'Dịch vụ'], o.link ? ['Link', o.link] : null, ['Số lượng', q.toLocaleString('vi-VN')]]), kind === 'quote' ? ['Hạn thanh toán', fmtTime(o.expiresAt)] : null,
-      kind === 'quote' && o.renewEnd ? ['Gói hiện tại hết hạn', fmtTime(o.renewEnd)] : null, o.termMonths && kind === 'quote' ? ['Thời hạn', o.termMonths + ' tháng'] : null,
-      kind === 'paid' ? ['Đã thanh toán', money(o.paidAmount || orderSell(o))] : null, kind !== 'quote' && o.vipEnd ? ['Hạn sử dụng đến', fmtTime(o.vipEnd)] : null, multi(o) && o.group ? null : ['Trạng thái', progressLine(o)]].filter(Boolean);
-    const valW = W - P * 2 - 150, rowLines = rows.map(([, v]) => wrap(v, valW, font(600, 16)));
-    const noteLinesW = inv.note ? wrap(inv.note.trim(), W - P * 2 - 24, font(500, 14)) : [];
-    const hasPay = hasPayBlock(kind) && inv.acc;
-    let H = 120 + 50 + rowLines.reduce((s, l) => s + l.length * 24 + 12, 0) + 90 + (hasPay ? 230 : 0) + (noteLinesW.length ? noteLinesW.length * 21 + 50 : 0) + 60;
-    c.width = W * 2; c.height = H * 2; x.scale(2, 2);
+    const C = { violet: '#6c5ce7', blue: '#2563eb', orange: '#ea580c', amber: '#b45309', red: '#dc2626', green: '#059669', teal: '#0d9488', pink: '#db2777', gray: '#6b7280', ink: '#111827' };
+    const q = qtyOf(o), hasPay = hasPayBlock(kind) && inv.acc;
+    // [nhãn, giá trị, màu]
+    const rows = [[kind === 'quote' ? 'Mã thanh toán' : 'Mã đơn', '#' + payCode(o), C.red], o.customer?.name ? ['Khách hàng', o.customer.name, C.pink] : null,
+      ...(multi(o) ? [o.link ? ['Link chung', o.link, C.blue] : null, ...o.lines.map((l, i) => [`Dịch vụ ${i + 1}`, lineText(o, l, i).replace(/^\d+\. /, ''), C.violet])]
+        : [['Dịch vụ', o.displayName || o.items?.[0]?.name || 'Dịch vụ', C.violet], o.link ? ['Link', o.link, C.blue] : null, ['Số lượng', q.toLocaleString('vi-VN'), C.orange]]),
+      [kind === 'quote' ? 'Ngày báo giá' : 'Ngày tạo', fmtTime(o.at), C.gray],
+      kind === 'quote' ? ['Hạn thanh toán', fmtTime(o.expiresAt), C.amber] : null,
+      kind === 'quote' && o.renewEnd ? ['Gói hiện tại hết hạn', fmtTime(o.renewEnd), C.amber] : null, o.termMonths && kind === 'quote' ? ['Thời hạn', o.termMonths + ' tháng', C.teal] : null,
+      kind === 'paid' ? ['Đã thanh toán', money(o.paidAmount || orderSell(o)), C.green] : null, kind !== 'quote' && o.vipEnd ? ['Hạn sử dụng đến', fmtTime(o.vipEnd), C.amber] : null,
+      multi(o) && o.group ? null : ['Trạng thái', progressLine(o), C.teal]].filter(Boolean);
+    const due = kind === 'quote' && o.paidAmount, amount = money(due ? amountDue(o) : kind === 'paid' ? (o.paidAmount || orderSell(o)) : orderSell(o));
+    const amountLabel = due ? 'CÒN PHẢI TRẢ' : kind === 'paid' ? 'ĐÃ THANH TOÁN' : hasPay ? 'SỐ TIỀN CẦN CHUYỂN' : 'THÀNH TIỀN';
+    const QR = 470;
+    // Vẽ 2 lượt: lượt 1 chỉ đo chiều cao, lượt 2 vẽ thật.
+    const render = draw => {
+      const fill = (col, f) => { x.fillStyle = col; if (f) x.font = f; };
+      const text = (t, tx, ty, col, f, align = 'left') => { if (!draw) return; fill(col, f); x.textAlign = align; x.fillText(t, tx, ty); x.textAlign = 'left'; };
+      const box = (bx, by, bw, bh, r, col) => { if (!draw) return; x.fillStyle = col; x.beginPath(); x.roundRect(bx, by, bw, bh, r); x.fill(); };
+      let y = P / 2;
+      // Đầu: dải màu + ảnh Page + tên + loại phiếu
+      if (draw) { const g = x.createLinearGradient(P / 2, 0, W - P / 2, 0); g.addColorStop(0, '#6c5ce7'); g.addColorStop(1, '#00b894'); x.fillStyle = g; x.beginPath(); x.roundRect(P / 2, y, W - P, 84, [18, 18, 0, 0]); x.fill();
+        if (logo) { x.save(); x.beginPath(); x.arc(P + 28, y + 42, 28, 0, Math.PI * 2); x.clip(); x.drawImage(logo, P, y + 14, 56, 56); x.restore(); } }
+      const tx0 = logo ? P + 70 : P + 4;
+      text(shop.length > 36 ? shop.slice(0, 35) + '…' : shop, tx0, y + 38, '#fff', font(800, 22));
+      text(kind === 'quote' && o.renewOf ? 'GIA HẠN DỊCH VỤ · CHỜ THANH TOÁN' : KIND_HEAD[kind] || KIND_HEAD.new, tx0, y + 64, '#ecfdf5', font(700, 14));
+      y += 84 + 22;
+      // Số tiền nổi bật
+      text(amountLabel, W / 2, y + 4, C.gray, font(800, 14), 'center');
+      text(amount, W / 2, y + 46, kind === 'paid' ? C.green : C.violet, font(900, 40), 'center');
+      y += hasPay ? 80 : 66;
+      if (hasPay) {
+        // Mã QR to ở giữa, viền màu
+        const qx = (W - QR) / 2;
+        if (draw) { const g = x.createLinearGradient(qx, y, qx + QR, y + QR); g.addColorStop(0, '#6c5ce7'); g.addColorStop(1, '#00b894'); x.fillStyle = g; x.beginPath(); x.roundRect(qx - 10, y - 10, QR + 20, QR + 20, 22); x.fill(); }
+        box(qx - 4, y - 4, QR + 8, QR + 8, 16, '#fff');
+        if (draw && qr) x.drawImage(qr, qx + 6, y + 6, QR - 12, QR - 12);
+        if (!qr) text('Không tải được mã QR — chuyển khoản theo thông tin bên dưới', W / 2, y + QR / 2, C.red, font(700, 15), 'center');
+        y += QR + 26;
+        text('📱 Mở app ngân hàng › Quét mã QR', W / 2, y, C.gray, font(700, 14), 'center'); y += 22;
+        // Nội dung chuyển khoản: thẻ đỏ to
+        const code = 'Nội dung CK: ' + payCode(o); x.font = font(900, 22); const cw = x.measureText(code).width + 40;
+        box((W - cw) / 2, y, cw, 42, 21, '#fee2e2'); text(code, W / 2, y + 29, C.red, font(900, 22), 'center'); y += 58;
+        // Ngân hàng · STK · chủ TK: 3 ô màu
+        const cells = [['Ngân hàng', bankName(inv.bin) || inv.bin, C.blue, '#eff6ff'], ['Số tài khoản', inv.acc, C.ink, '#f3f4f6'], inv.holder ? ['Chủ tài khoản', inv.holder, C.green, '#ecfdf5'] : null].filter(Boolean);
+        const gap = 10, cw2 = (W - P * 2 - gap * (cells.length - 1)) / cells.length;
+        cells.forEach(([k, v, col, bg], i) => { const bx = P + i * (cw2 + gap); box(bx, y, cw2, 62, 12, bg); text(k, bx + 12, y + 22, C.gray, font(700, 12));
+          x.font = font(800, 16); let t = String(v); while (t.length > 3 && x.measureText(t).width > cw2 - 24) t = t.slice(0, -2) + '…'; text(t, bx + 12, y + 46, col, font(800, 16)); });
+        y += 62 + 22;
+      }
+      // Chi tiết đơn: nhãn màu (chấm + chữ), giá trị đậm
+      const valW = W - P * 2 - 160;
+      if (draw) { x.strokeStyle = '#e5e7eb'; x.beginPath(); x.moveTo(P + 4, y - 8); x.lineTo(W - P - 4, y - 8); x.stroke(); }
+      y += 14;
+      for (const [k, v, col] of rows) {
+        const lines = wrap(v, valW, font(700, 15));
+        if (draw) { x.fillStyle = col; x.beginPath(); x.arc(P + 10, y - 5, 4, 0, Math.PI * 2); x.fill(); }
+        text(k, P + 22, y, col, font(800, 13));
+        lines.forEach((l, j) => text(l, P + 160, y + j * 22, k === 'Link' || k === 'Link chung' ? C.blue : C.ink, font(700, 15)));
+        y += lines.length * 22 + 10;
+      }
+      if (inv.note) {
+        const nl = wrap(inv.note.trim(), W - P * 2 - 28, font(500, 13)); y += 6;
+        box(P, y, W - P * 2, nl.length * 19 + 34, 12, '#fff7e6');
+        text('📌 Lưu ý', P + 14, y + 22, '#8a5a00', font(800, 13)); nl.forEach((l, i) => text(l, P + 14, y + 42 + i * 19, '#8a5a00', font(500, 13)));
+        y += nl.length * 19 + 46;
+      }
+      y += 8; text(kind === 'quote' ? '⏳ Shop lên đơn ngay khi nhận được thanh toán · Cảm ơn quý khách!' : 'Cảm ơn quý khách! ' + shop, W / 2, y + 10, C.violet, font(700, 13), 'center');
+      return y + 30;
+    };
+    const H = Math.ceil(render(false) + P / 2);
+    c.width = W * 2; c.height = H * 2; x = c.getContext('2d'); x.scale(2, 2);
     x.fillStyle = '#f3f1ff'; x.fillRect(0, 0, W, H);
-    const card = (y, hgt) => { x.fillStyle = '#fff'; x.beginPath(); x.roundRect(P / 2, y, W - P, hgt, 18); x.fill(); };
-    card(P / 2, H - P);
-    // Đầu: ảnh + tên Page
-    const grad = x.createLinearGradient(P / 2, 0, W - P / 2, 0); grad.addColorStop(0, '#6c5ce7'); grad.addColorStop(1, '#00b894');
-    x.fillStyle = grad; x.beginPath(); x.roundRect(P / 2, P / 2, W - P, 100, [18, 18, 0, 0]); x.fill();
-    if (logo) { x.save(); x.beginPath(); x.arc(P + 32, P / 2 + 50, 32, 0, Math.PI * 2); x.clip(); x.drawImage(logo, P, P / 2 + 18, 64, 64); x.restore(); }
-    x.fillStyle = '#fff'; x.font = font(800, 24); x.fillText(shop.length > 34 ? shop.slice(0, 33) + '…' : shop, logo ? P + 80 : P, P / 2 + 46);
-    x.font = font(600, 15); x.fillText(kind === 'quote' && o.renewOf ? 'GIA HẠN DỊCH VỤ · CHỜ THANH TOÁN' : KIND_HEAD[kind] || KIND_HEAD.new, logo ? P + 80 : P, P / 2 + 72);
-    let y = P / 2 + 140;
-    rows.forEach(([k], i) => { x.fillStyle = '#6b7280'; x.font = font(600, 14); x.fillText(k, P + 8, y);
-      x.fillStyle = '#111827'; x.font = font(600, 16); rowLines[i].forEach((l, j) => x.fillText(l, P + 158, y + j * 24));
-      y += rowLines[i].length * 24 + 12; });
-    x.strokeStyle = '#e5e7eb'; x.beginPath(); x.moveTo(P + 8, y); x.lineTo(W - P - 8, y); x.stroke(); y += 40;
-    const due = kind === 'quote' && o.paidAmount;
-    x.fillStyle = '#6b7280'; x.font = font(700, 15); x.fillText(due ? 'CÒN PHẢI TRẢ' : kind === 'paid' ? 'ĐÃ THANH TOÁN' : 'THÀNH TIỀN', P + 8, y);
-    x.fillStyle = kind === 'paid' ? '#00a37a' : '#6c5ce7'; x.font = font(800, 30); x.textAlign = 'right'; x.fillText(money(due ? amountDue(o) : kind === 'paid' ? (o.paidAmount || orderSell(o)) : orderSell(o)), W - P - 8, y + 4); x.textAlign = 'left'; y += 46;
-    if (hasPay) {
-      x.fillStyle = '#f8f7ff'; x.beginPath(); x.roundRect(P + 4, y, W - P * 2 - 8, 210, 14); x.fill();
-      if (qr) x.drawImage(qr, P + 18, y + 14, 182, 182);
-      const tx = qr ? P + 220 : P + 22; x.fillStyle = '#111827';
-      [['Ngân hàng', bankName(inv.bin) || inv.bin], ['Số tài khoản', inv.acc], inv.holder ? ['Chủ tài khoản', inv.holder] : null, ['Nội dung CK', payCode(o)], ['Số tiền', money(amountDue(o))]].filter(Boolean)
-        .forEach(([k, v], i) => { x.fillStyle = '#6b7280'; x.font = font(600, 13); x.fillText(k, tx, y + 36 + i * 36); x.fillStyle = '#111827'; x.font = font(700, 16); x.fillText(String(v), tx, y + 54 + i * 36); });
-      y += 230;
-    }
-    if (noteLinesW.length) {
-      x.fillStyle = '#fff7e6'; x.beginPath(); x.roundRect(P + 4, y, W - P * 2 - 8, noteLinesW.length * 21 + 34, 12); x.fill();
-      x.fillStyle = '#8a5a00'; x.font = font(700, 14); x.fillText('📌 Lưu ý', P + 18, y + 24); x.font = font(500, 14);
-      noteLinesW.forEach((l, i) => x.fillText(l, P + 18, y + 46 + i * 21)); y += noteLinesW.length * 21 + 50;
-    }
-    x.fillStyle = '#9ca3af'; x.font = font(600, 13); x.textAlign = 'center'; x.fillText('Cảm ơn quý khách! ' + shop, W / 2, H - P / 2 - 18);
+    x.fillStyle = '#fff'; x.beginPath(); x.roundRect(P / 2, P / 2, W - P, H - P, 18); x.fill();
+    render(true);
     return { dataUrl: c.toDataURL('image/png'), qrMissing: hasPay && !qr };
   }
   async function invoiceDialog(o, kind = 'new') {
