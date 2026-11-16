@@ -157,6 +157,8 @@ function domShares() {
     const hrefs = [...el.querySelectorAll('a[href]')].map(a => un(a.href)).filter(u => /^https?:\/\//.test(u) && !/fbcdn\.net|business\.facebook\.com\/latest|\/messages\/|messenger\.com/.test(u));
     const u = hrefs.find(h => /\/(share|posts|reel|reels|videos|watch|story\.php|permalink|photo|photos|groups|p)\b|fb\.watch|tiktok\.com|youtu|instagram\.com/i.test(h)) || hrefs[0];
     if (u) out[el.getAttribute('data-message-id')] = u;
+    const raw = [...el.querySelectorAll('a[href]')].map(a => a.href.slice(0, 300));
+    if (raw.length || el.querySelector('img')) (out.__raw || (out.__raw = [])).push({ id: el.getAttribute('data-message-id'), hrefs: raw, text: (el.innerText || '').replace(/\s+/g, ' ').slice(0, 80), roles: [...el.querySelectorAll('[role=link],[role=button]')].map(b => (b.getAttribute('aria-label') || b.innerText || '').slice(0, 40)).slice(0, 6) });
   }
   return out;
 }
@@ -262,7 +264,9 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
     }
     return out;
   }
-  // Link bài trong thẻ chia sẻ: gỡ lớp bọc l.php?u= / media_fallback?original_url= (mã hoá 1–2 lần), bỏ link ảnh fbcdn.
+  // Thẻ chia sẻ gần nhất (dữ liệu gốc + màn hình) → Downloads/GetHelps-debug/the-chia-se.json để tìm chỗ Meta để link bài.
+const shareDump = { ls: [], dom: [] };
+// Link bài trong thẻ chia sẻ: gỡ lớp bọc l.php?u= / media_fallback?original_url= (mã hoá 1–2 lần), bỏ link ảnh fbcdn.
 function lsUnwrap(u) {
   u = String(u || '');
   for (let i = 0; i < 4; i++) {
@@ -303,6 +307,7 @@ function lsIngest(pageId, raw) {
             const url = [v[8], v[3]].find(u => /^https:\/\//.test(u || '')); if (url) x.pic = url;
             if (!blob && !x.text && v[58]) x.text = String(v[58]);
             if (!blob) (st.xma || (st.xma = new Set())).add(String(mid));
+            if (!blob) { shareDump.ls.unshift({ at: new Date().toISOString(), page: pid, mid: String(mid), kind: 'xma', link: st.shares.get(String(mid)) || '', vals: v.map((x, k) => [k, x]).filter(([, x]) => x !== null && x !== undefined && x !== '' && x !== false && x !== 0 && x !== '0').map(([k, x]) => k + ': ' + String(x).slice(0, 400)) }); shareDump.ls.splice(8); shareDump.dirty = 1; }
             // Thẻ chia sẻ (khách bấm Chia sẻ bài / reel / TikTok, tin không có chữ link): link bài nằm bọc trong ảnh dự phòng (original_url=…).
             if (!blob && !st.shares.has(String(mid))) { const su = lsShareUrl(v); if (su) st.shares.set(String(mid), su); }
             threads.add(uid); }
@@ -314,6 +319,7 @@ function lsIngest(pageId, raw) {
         } else if (n === 'insertAttachmentCta') {
           // Nút của thẻ chia sẻ: 5 mã tin · 7 loại (xma_web_url) · 9 link đích (thường bọc l.php?u=…) → link bài thật.
           const mid = String(v[5] || ''), url = lsShareUrl([v[9], v[8], v[10]]);
+          if (/^mid\./.test(mid)) { shareDump.ls.unshift({ at: new Date().toISOString(), page: pid, mid, kind: 'cta', link: url, vals: v.map((x, k) => k + ': ' + String(x).slice(0, 400)) }); shareDump.ls.splice(8); shareDump.dirty = 1; }
           if (/^mid\./.test(mid) && url && /web_url|open_url|link/i.test(String(v[7] || 'web_url'))) { st.shares.set(mid, url); const uid = String(v[3] || ''); if (/^\d+$/.test(uid)) threads.add(uid); }
         } else if (n === 'upsertReaction' || n === 'deleteReaction') {
           // upsertReaction: 0 thread · 1 giờ tin · 2 mã tin · 3 người thả · 4 biểu tượng   ·  deleteReaction: 0 thread · 1 mã tin · 2 người
@@ -389,6 +395,7 @@ function lsIngest(pageId, raw) {
         url: (() => { try { return ss.win.webContents.getURL().slice(0, 100); } catch { return 'đã đóng'; } })() })) };
       const dir = path.join(app.getPath('downloads'), 'GetHelps-debug'); fs.mkdirSync(dir, { recursive: true });
       fs.writeFileSync(path.join(dir, 'trang-thai.json'), JSON.stringify(data, null, 1));
+      if (shareDump.dirty) { shareDump.dirty = 0; fs.writeFileSync(path.join(dir, 'the-chia-se.json'), JSON.stringify({ at: new Date().toISOString(), ls: shareDump.ls, dom: shareDump.dom }, null, 1)); }
     } catch {}
   }, 30e3);
   // Mẫu gói tin gửi (Downloads/GetHelps-debug/ls-gui-mau.json, 12 gói gần nhất): chỉ ghi trong ~20 giây quanh mỗi lần app gửi tin.
@@ -849,6 +856,7 @@ function lsIngest(pageId, raw) {
   const lsWaited = new Set();
   const fillShares = async args => { try { const wc = slot(args.pageId).win.webContents;
       const got = await Promise.race([wc.executeJavaScript(`(${domShares})()`), sleep(1500).then(() => ({}))]).catch(() => ({})), st = lsStore(args.pageId);
+      if (got?.__raw) { shareDump.dom.unshift({ at: new Date().toISOString(), uid: String(args.uid).slice(-4), cards: got.__raw.slice(-12) }); shareDump.dom.splice(4); shareDump.dirty = 1; delete got.__raw; }
       const ent = Object.entries(got || {});
       for (const [mid, u] of ent) if (/^mid\./.test(mid) && !st.shares.has(mid)) st.shares.set(mid, u);
       // Mã khối trên màn hình không phải mã tin → ghép theo thứ tự từ cuối: thẻ chia sẻ thứ n từ dưới lên ↔ tin thẻ thứ n từ dưới lên.
