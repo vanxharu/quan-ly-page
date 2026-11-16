@@ -11,6 +11,8 @@ contextBridge.exposeInMainWorld('metaDesktop', {
   sendThread: args => ipcRenderer.invoke('meta-thread-send', args),
   reactThread: args => ipcRenderer.invoke('thread-react', args),
   openZalo: () => ipcRenderer.send('open-zalo'),
+  miniOpen: () => ipcRenderer.send('mini-open'),
+  miniPush: st => ipcRenderer.send('mini-push', st),
   zaloList: args => ipcRenderer.invoke('zalo-list', args || {}),
   resetZalo: full => ipcRenderer.send('zalo-reset', !!full),
   openService: url => ipcRenderer.send('open-svc', url),

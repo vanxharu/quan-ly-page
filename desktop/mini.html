@@ -1,0 +1,76 @@
+<!doctype html><html lang="vi"><head><meta charset="utf-8"><title>Chat nhanh</title>
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src https: data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'">
+<style>
+:root{--bg:#141414;--card:#1c1c1c;--in:#0f0f0f;--line:#2c2c2c;--fg:#f1f1f1;--mut:#9a9a9a;--pri:#7b6cf6;--me:#2b2840;--meb:#4a4566;--ok:#39ff7a}
+*{box-sizing:border-box}html,body{margin:0;height:100%;background:var(--bg);color:var(--fg);font:13px/1.45 "Segoe UI",Inter,Arial,sans-serif;overflow:hidden}
+.app{display:flex;flex-direction:column;height:100%;border:1px solid var(--line);border-radius:12px;overflow:hidden}
+.head{display:flex;align-items:center;gap:8px;padding:8px 8px 8px 10px;background:var(--card);border-bottom:1px solid var(--line);-webkit-app-region:drag}
+.head .av{width:26px;height:26px;border-radius:50%;object-fit:cover;flex:none;background:#333;display:grid;place-items:center;font-size:11px;font-weight:700}
+.head .nm{flex:1;min-width:0;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.head .pl{font-size:10px;color:var(--mut);font-weight:600}
+.head button{-webkit-app-region:no-drag;border:0;background:transparent;color:var(--mut);width:24px;height:24px;border-radius:6px;cursor:pointer;font-size:14px}
+.head button:hover{background:#2a2a2a;color:var(--fg)}
+.wait{display:flex;gap:6px;padding:6px 8px;overflow-x:auto;border-bottom:1px solid var(--line);scrollbar-width:none;flex:none}
+.wait:empty{display:none}
+.w{position:relative;flex:none;border:0;padding:0;background:none;cursor:pointer;border-radius:50%;outline:2px solid transparent}
+.w.on{outline-color:var(--pri)}
+.w img,.w span.ph{width:30px;height:30px;border-radius:50%;object-fit:cover;display:grid;place-items:center;background:#333;color:#ddd;font-size:11px;font-weight:700}
+.w b{position:absolute;right:-3px;top:-3px;min-width:15px;height:15px;padding:0 3px;border-radius:8px;background:#e5484d;color:#fff;font-size:9px;line-height:15px;text-align:center}
+.msgs{flex:1;overflow-y:auto;padding:10px 8px;display:flex;flex-direction:column;gap:6px}
+.m{max-width:84%;padding:6px 10px;border-radius:14px;background:var(--card);border:1px solid var(--line);white-space:pre-wrap;word-break:break-word}
+.m.me{align-self:flex-end;background:var(--me);border-color:var(--meb)}
+.m.pend{opacity:.6}
+.m .t{display:block;font-size:10px;color:var(--mut);margin-top:2px;text-align:right}
+.empty{margin:auto;color:var(--mut);text-align:center;padding:20px}
+.foot{display:flex;gap:6px;align-items:flex-end;padding:8px;border-top:1px solid var(--line);background:var(--card)}
+textarea{flex:1;resize:none;max-height:90px;min-height:34px;border:1px solid var(--line);border-radius:10px;background:var(--in);color:var(--fg);padding:7px 9px;font:inherit;outline:none}
+textarea:focus{border-color:var(--pri)}
+.send{width:34px;height:34px;border:0;border-radius:10px;background:var(--pri);color:#fff;font-size:15px;cursor:pointer;flex:none}
+.send:disabled{opacity:.4;cursor:default}
+.err{color:#ff8a8a;font-size:11px;padding:0 10px 6px}
+</style></head><body>
+<div class="app">
+  <div class="head"><span class="av" id="av"></span><span class="nm" id="nm">Chưa mở khách</span><span class="pl" id="pl"></span>
+    <button title="Mở trong app" id="bOpen">⤢</button><button title="Thu nhỏ" id="bMin">─</button><button title="Đóng" id="bClose">✕</button></div>
+  <div class="wait" id="wait"></div>
+  <div class="msgs" id="msgs"><div class="empty">Mở một khách trong Hộp thư rồi bấm ⧉.</div></div>
+  <div class="err" id="err" hidden></div>
+  <div class="foot"><textarea id="tx" rows="1" placeholder="Nhập tin… (Enter gửi)"></textarea><button class="send" id="bSend" title="Gửi">➤</button></div>
+</div>
+<script>
+const $ = id => document.getElementById(id);
+const el = (t, cls, txt) => { const e = document.createElement(t); if (cls) e.className = cls; if (txt != null) e.textContent = txt; return e; };
+const ini = n => String(n || '?').trim().split(/\s+/).slice(-2).map(w => w[0] || '').join('').toUpperCase();
+const avatar = (url, name, cls = '') => { const ph = () => { const e = el('span', ('ph ' + cls).trim(), ini(name)); if (cls === 'av') e.id = 'av'; return e; };
+  if (url && /^(https:|data:image)/.test(url)) { const i = el('img', cls); i.src = url; i.alt = ''; i.onerror = () => i.replaceWith(ph()); return i; } return ph(); };
+const hm = ts => { if (!ts) return ''; const d = new Date(ts); return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0'); };
+let st = null, busy = false;
+function draw(s) {
+  st = s || {};
+  const c = st.conv;
+  $('nm').textContent = c ? c.name : 'Chưa mở khách'; $('pl').textContent = c ? c.plat : '';
+  $('av').replaceWith(Object.assign(c ? avatar(c.pic, c.name, 'av') : el('span', 'av'), { id: 'av' }));
+  const w = $('wait'); w.replaceChildren(...(st.waiting || []).map(x => { const b = el('button', 'w' + (c && x.id === c.id ? ' on' : '')); b.title = x.name + (x.snippet ? ' · ' + x.snippet : '');
+    b.append(avatar(x.pic, x.name)); if (x.unread) b.append(el('b', '', x.unread > 9 ? '9+' : String(x.unread))); b.onclick = () => window.mini.open(x.id); return b; }));
+  const box = $('msgs'), atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 40;
+  if (!c) box.replaceChildren(el('div', 'empty', 'Mở một khách trong Hộp thư rồi bấm ⧉.'));
+  else if (!(st.msgs || []).length) box.replaceChildren(el('div', 'empty', 'Đang đọc tin…'));
+  else box.replaceChildren(...st.msgs.map(m => { const d = el('div', 'm' + (m.mine ? ' me' : '') + (m.pending ? ' pend' : ''), m.text || (m.pic ? '[Ảnh]' : '')); if (m.ts) d.append(el('span', 't', hm(m.ts))); return d; }));
+  if (atBottom || st.scroll) box.scrollTop = box.scrollHeight;
+  $('tx').disabled = !c; $('bSend').disabled = !c || busy;
+}
+async function send() {
+  const t = $('tx').value.trim(); if (!t || busy || !st?.conv) return;
+  busy = true; $('bSend').disabled = true; $('err').hidden = true;
+  const m = el('div', 'm me pend', t); $('msgs').append(m); $('msgs').scrollTop = $('msgs').scrollHeight; $('tx').value = '';
+  const r = await window.mini.send(t).catch(e => e.message);
+  busy = false; $('bSend').disabled = false;
+  if (r !== true) { m.remove(); $('tx').value = t; $('err').textContent = String(r || 'Chưa gửi được.'); $('err').hidden = false; }
+}
+$('tx').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } });
+$('tx').addEventListener('input', () => { const t = $('tx'); t.style.height = 'auto'; t.style.height = Math.min(90, t.scrollHeight) + 'px'; });
+$('bSend').onclick = send;
+$('bClose').onclick = () => window.mini.win('close'); $('bMin').onclick = () => window.mini.win('min'); $('bOpen').onclick = () => window.mini.win('app');
+window.mini.onState(draw);
+window.mini.refresh().then(s => draw({ ...s, scroll: true })).catch(() => {});
+</script></body></html>

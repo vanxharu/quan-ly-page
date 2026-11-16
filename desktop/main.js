@@ -1,6 +1,6 @@
 // Meta Assistant cho Windows: mở trang web (luôn là bản mới nhất trên GitHub Pages) trong cửa sổ riêng
 // và chạy sẵn tiện ích Studio AI (ChatGPT) bên trong, không cần Chrome.
-const { app, BaseWindow, BrowserWindow, Menu, WebContentsView, clipboard, ipcMain, net, safeStorage, session, shell } = require('electron');
+const { app, BaseWindow, BrowserWindow, Menu, WebContentsView, clipboard, ipcMain, net, safeStorage, screen, session, shell } = require('electron');
 const path = require('path'), crypto = require('crypto');
 const { ElectronChromeExtensions } = require('electron-chrome-extensions');
 const { createMetaAuto } = require('./meta-auto');
@@ -495,6 +495,31 @@ app.whenReady().then(async () => {
   ipcMain.handle('meta-thread-read', (e, args) => !fromPage(e) ? { error: 'denied' } : args?.pageId === 'zalo' ? zalo.read(args) : auto.readThread(args || {}));
   ipcMain.handle('meta-thread-send', (e, args) => !fromPage(e) ? { error: 'denied' } : args?.pageId === 'zalo' ? zalo.send(args) : auto.sendThread(args || {}));
   ipcMain.handle('meta-threads', (e, args) => fromPage(e) ? auto.listThreads(args || {}) : { error: 'denied' });
+  // ── Cửa sổ chat nhỏ nổi trên cùng: phản chiếu hội thoại đang mở trong Hộp thư (5 tin gần nhất), gửi tin, đổi nhanh giữa khách đang chờ ──
+  let mini = null, miniBounds = null;
+  const pageJs = code => pageView.webContents.executeJavaScript(code, true);
+  const openMini = () => {
+    if (mini && !mini.isDestroyed()) { mini.showInactive(); mini.focus(); return; }
+    const wa = screen.getPrimaryDisplay().workArea, W = 330, H = 460;
+    mini = new BrowserWindow({ ...(miniBounds || { x: wa.x + wa.width - W - 16, y: wa.y + wa.height - H - 16, width: W, height: H }), minWidth: 260, minHeight: 300,
+      frame: false, transparent: true, alwaysOnTop: true, skipTaskbar: false, resizable: true, fullscreenable: false, maximizable: false, title: 'Chat nhanh', icon: ICON,
+      webPreferences: { preload: path.join(__dirname, 'mini-preload.js'), sandbox: true, contextIsolation: true, backgroundThrottling: false } });
+    mini.setAlwaysOnTop(true, 'floating'); mini.setMenu(null);
+    mini.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+    mini.on('close', () => { try { miniBounds = mini.getBounds(); } catch {} });
+    mini.on('closed', () => { mini = null; pageJs('window.App?.inbox?.miniClosed?.()').catch(() => {}); });
+    mini.loadFile(path.join(__dirname, 'mini.html'));
+  };
+  ipcMain.on('mini-open', e => { if (fromPage(e)) openMini(); });
+  ipcMain.on('mini-push', (e, st) => { if (fromPage(e) && mini && !mini.isDestroyed()) mini.webContents.send('mini-state', st); });
+  ipcMain.on('mini-win', (e, name) => { if (!mini || e.sender !== mini.webContents) return;
+    if (name === 'close') mini.close(); else if (name === 'min') mini.minimize();
+    else if (name === 'app') { if (mainWindow.isMinimized()) mainWindow.restore(); mainWindow.show(); mainWindow.focus(); pageJs("window.App?.show?.('inbox'); window.App?.inbox?.setPane?.('thread')").catch(() => {}); } });
+  ipcMain.handle('mini-cmd', async (e, cmd, arg) => { if (!mini || e.sender !== mini.webContents) return null;
+    if (cmd === 'state') return pageJs('window.App?.inbox?.miniState?.()').catch(() => null);
+    if (cmd === 'send') return pageJs(`window.App?.inbox?.compose?.({ key: window.App.inbox.openKey(), text: ${JSON.stringify(String(arg || '').slice(0, 5000))}, autoSend: true })`).catch(x => x.message);
+    if (cmd === 'open') return pageJs(`window.App?.inbox?.openId?.(${JSON.stringify(String(arg || ''))})`).catch(() => null);
+    return null; });
   ipcMain.handle('meta-hidden-status', e => fromPage(e) ? auto.hiddenStatus() : []);
   // Zalo: trạng thái cho thanh trên cùng + ghi Downloads/GetHelps-debug/zalo.json (30 giây/lần) để chẩn đoán.
   ipcMain.handle('zalo-status', async e => { if (!fromPage(e)) return null;
