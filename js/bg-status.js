@@ -38,6 +38,11 @@
       z ? h('div', { className: 'bg-status-row' }, h('img', { src: 'img/platforms/zalo.png', alt: '', style: 'width:20px;height:20px;border-radius:5px' }), h('span', { className: 'nm', textContent: 'Zalo cá nhân' }),
         h('span', { className: 'st ' + (z.state === 'ready' ? 'ready' : z.state === 'loading' ? 'loading' : 'none'), title: z.err || '', textContent: ZST[z.state] || z.state }),
         h('span', { className: 'st ' + (zKept ? 'ready' : 'none'), title: `Đọc được ${z.rows} hội thoại trên Zalo Web · ${zKept} khách hiện trong Hộp thư` + (z.err ? ' · lỗi: ' + z.err : ''), textContent: z.state === 'ready' ? `${zKept} khách` : '' })) : null,
+      z && z.state !== 'ready' ? h('div', { className: 'hint', style: 'margin:4px 0 0;padding:6px 8px;border-radius:6px;background:var(--surface-2,rgba(127,127,127,.12))' },
+        h('div', { textContent: 'Zalo ngầm đang hiện: ' + ((z.screen?.text || '').slice(0, 140) || '(trang trống)') + (z.reloads ? ` · đã tự tải lại ${z.reloads} lần` : '') }),
+        h('div', { style: 'margin-top:4px;display:flex;gap:6px' },
+          h('button', { className: 'btn btn-sm', textContent: 'Mở cột Zalo', onclick: () => window.metaDesktop?.openZalo?.() }),
+          h('button', { className: 'btn btn-sm', textContent: 'Tải lại Zalo ngầm', onclick: () => window.metaDesktop?.resetZalo?.(false) }))) : null,
       h('p', { className: 'hint', textContent: 'Mở xong cả hai khung thì bấm vào khách là gửi được ngay. ⚡ Gửi nhanh: tin chữ đi thẳng qua kết nối Meta.' }));
     timer = setTimeout(tick, state === 'fast' ? 10e3 : 2000);
   }

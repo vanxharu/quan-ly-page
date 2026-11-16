@@ -567,7 +567,10 @@ app.whenReady().then(async () => {
     const url = ZW().getURL(); if (!url.startsWith('https://chat.zalo.me')) return { state: 'closed', ...zalo.status(), url };
     await zalo.ready().catch(() => {}); return zalo.status(); });
   setInterval(() => { try { const dir = path.join(app.getPath('downloads'), 'GetHelps-debug'); require('fs').mkdirSync(dir, { recursive: true });
-    require('fs').writeFileSync(path.join(dir, 'zalo.json'), JSON.stringify({ at: new Date().toISOString(), url: ZW().getURL().slice(0, 80), colOpen: zaloColOpen, ...zalo.status(), listAgo: zalo.status().listAt ? Math.round((Date.now() - zalo.status().listAt) / 1000) : null }, null, 1)); } catch {} }, 30e3);
+    require('fs').writeFileSync(path.join(dir, 'zalo.json'), JSON.stringify({ at: new Date().toISOString(), url: ZW().getURL().slice(0, 80), colOpen: zaloColOpen, ...zalo.status(), listAgo: zalo.status().listAt ? Math.round((Date.now() - zalo.status().listAt) / 1000) : null }, null, 1));
+    // Zalo ngầm chưa vào được: chụp màn hình khung ngầm (zalo-man-hinh.png) để thấy nó đang kẹt ở đâu.
+    if (!zaloColOpen && zalo.status().state !== 'ready' && ZW().getURL().startsWith('https://chat.zalo.me')) ZW().capturePage().then(img => { if (!img.isEmpty()) require('fs').writeFileSync(path.join(dir, 'zalo-man-hinh.png'), img.toPNG()); }).catch(() => {});
+  } catch {} }, 30e3);
   // Mở đúng hội thoại trong cột Meta: tải hộp thư của Page rồi bấm vào dòng của khách (UID).
   ipcMain.handle('meta-open-thread', async (e, { pageId, uid } = {}) => {
     if (!fromPage(e) || !/^\d+$/.test(String(pageId)) || !/^\d+$/.test(String(uid))) return false;
