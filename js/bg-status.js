@@ -29,6 +29,7 @@
     const state = ready < n ? 'loading' : fast === rows.length ? 'fast' : 'ready';
     btn.hidden = false; btn.className = 'bg-status ' + state;
     btn.replaceChildren(h('span', { className: 'dot' }), state === 'loading' ? `Đang mở khung ngầm ${ready}/${n}` : state === 'fast' ? 'Sẵn sàng · gửi nhanh' : `Sẵn sàng ${ready}/${n}`);
+    btn.dataset.short = state === 'loading' ? `${ready}/${n}` : state === 'fast' ? '⚡' : `${ready}/${n}`; // cửa sổ hẹp: chỉ hiện chấm + số
     btn.title = 'Khung ngầm Business Suite + Zalo: bấm để xem từng khung';
     pop.replaceChildren(h('div', { className: 'bg-status-head', textContent: `Khung ngầm (${n}): ${rows.length} Page Business Suite` + (zN ? ' + Zalo' : '') }),
       ...rows.map(({ p, st }) => h('div', { className: 'bg-status-row' }, App.avatar(p.name, App.pageAvatarUrl(p), 20), h('span', { className: 'nm', textContent: p.name }),

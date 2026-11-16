@@ -18,7 +18,7 @@
   for (const [group, [label, tabs]] of Object.entries(App.NAV)) {
     const section = h('section', { className: 'sidebar-section' }, h('h2', { textContent: label }));
     for (const [id, routeTitle, ic] of tabs) section.append(h('button', {
-      type: 'button', className: 'sidebar-link', dataset: { route: id },
+      type: 'button', className: 'sidebar-link', dataset: { route: id }, title: routeTitle,
       onclick: () => { App.show(id); close(); title.focus(); }
     }, icon(ic), h('span', { textContent: routeTitle })));
     sections.append(section);
@@ -90,4 +90,20 @@
   window.visualViewport?.addEventListener('resize', fitViewport);
   fitViewport();
   if (App.pages.length) ready();
+})();
+/* Bảng → thẻ khi cửa sổ hẹp: gắn nhãn cột (data-label) cho từng ô, CSS lo phần hiển thị (≤ 900px). */
+(() => {
+  const tag = t => {
+    const heads = [...t.querySelectorAll(':scope > thead th')].map(th => th.textContent.trim());
+    if (!heads.length) return;
+    t.classList.add('rt-cards');
+    for (const tr of t.querySelectorAll(':scope > tbody > tr')) {
+      let i = 0;
+      for (const td of tr.children) { if (!td.hasAttribute('data-label')) td.setAttribute('data-label', heads[i] || ''); i += Number(td.colSpan) || 1; }
+    }
+  };
+  let t = 0;
+  const run = () => { clearTimeout(t); t = setTimeout(() => document.querySelectorAll('main table, dialog table').forEach(x => { if (!x.closest('.cal')) tag(x); }), 120); };
+  new MutationObserver(run).observe(document.body, { childList: true, subtree: true });
+  run();
 })();

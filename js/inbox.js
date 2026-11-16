@@ -163,7 +163,11 @@
           h('div', { className: 'list', id: 'ibList' }),
           h('button', { type: 'button', className: 'ib-more', id: 'ibMore', hidden: true, textContent: 'Tải thêm hội thoại', onclick: loadMore })),
         h('div', { className: 'card' },
-          h('div', { className: 'card-head' }, h('h3', { className: 'card-title', id: 'ibTitle', textContent: 'Chưa chọn hội thoại' }),
+          h('div', { className: 'card-head' },
+            // Cửa sổ hẹp: 1 màn hình — nút ← về danh sách khách; nút ⋯ mở / gập thanh CRM (Giai đoạn / Đơn / nhãn).
+            h('button', { type: 'button', className: 'icon-btn ib-back', title: 'Về danh sách khách', 'aria-label': 'Về danh sách khách', textContent: '←', onclick: () => setPane('list') }),
+            h('h3', { className: 'card-title', id: 'ibTitle', textContent: 'Chưa chọn hội thoại' }),
+            h('button', { type: 'button', className: 'icon-btn ib-crm-toggle', title: 'Giai đoạn · Đơn · Nhãn', 'aria-label': 'Hiện thanh khách hàng', textContent: '⋯', onclick: e => { const sp = e.currentTarget.closest('.split'); sp.classList.toggle('crm-open'); } }),
             h('button', { className: 'btn btn-ghost', id: 'ibReload', hidden: true, textContent: '↻ Đọc lại', title: 'Đọc lại tin của hội thoại', onclick: () => S.conv && (S.conv.bs ? openBs(S.conv, { silent: true }) : openConv(S.conv)) })),
           h('div', { className: 'thread-wrap' }, h('div', { className: 'thread', id: 'ibThread' }, empty('Chọn một hội thoại bên trái để xem tin nhắn.')),
             h('button', { type: 'button', className: 'ib-newmsg', id: 'ibNewMsg', hidden: true, textContent: '↓ Tin mới', onclick: () => toBottom(true) })),
@@ -985,7 +989,11 @@
       }) : [empty(S.plat === 'zalo' && !S.convs.some(c => platOf(c) === 'zalo') ? (S.zErr === 'login' ? 'Zalo Web đang ở trang đăng nhập: mở cột Zalo (Ctrl+Shift+Z) và quét mã QR. Quét xong danh sách tự hiện ở đây.' : S.zErr && S.zErr !== 'loading' ? 'Chưa đọc được Zalo: ' + S.zErr : S.zSince && Date.now() - S.zSince > 60e3 ? 'Zalo Web chưa mở xong sau 1 phút: bấm Ctrl+Shift+Z xem cột Zalo đang hiện gì (trang đăng nhập / quay vòng), chụp màn hình gửi người hỗ trợ.' : 'Đang mở Zalo Web để đọc tin… (lần đầu mất khoảng 10–20 giây)') : S.convs.length ? 'Không có hội thoại khớp bộ lọc.' : 'Chưa có tin nhắn.')]);
     flipList($('ibList'), [...errors, ...rowEls], `${S.filter}|${S.plat}|${lab}|${q}|${S.showN || 15}`);
   }
+  // Cửa sổ hẹp: chỉ hiện danh sách HOẶC hội thoại (như Messenger trên điện thoại).
+  function setPane(p) { const sp = document.querySelector('[data-panel=inbox] .split'); if (!sp) return; sp.dataset.pane = p; if (p === 'list') sp.classList.remove('crm-open'); }
+  App.inbox.setPane = setPane;
   function resetThread() {
+    setPane(S.conv ? 'thread' : 'list'); // đang mở khách (resetThread trước khi vẽ khách mới) → giữ màn hội thoại
     S.reply = null; drawReply(); closePop();
     S.draftReady = false; S.image = ''; S.tpl = null;
     if(!$('ibText'))return; // Đổi Page trước khi mở Hộp thư vẫn hợp lệ.
