@@ -556,3 +556,17 @@ body.dark-mode .tone-gray{background:#2a2a2a;color:#d4d4d4}
 
 [data-panel=inbox] .ib-mini-btn{flex:none;margin-left:auto;font-size:15px}
 [data-panel=inbox] .ib-mini-btn+.ib-crm-toggle{margin-left:4px}
+
+/* Chọn nhiều cảm xúc khi tạo đơn */
+.svc-react-chips{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0}
+.svc-react-chip{display:inline-flex;align-items:center;gap:5px;border:1px solid var(--border);background:var(--bg-input);color:var(--text-secondary);border-radius:999px;padding:5px 11px;font-size:12px;font-weight:700;cursor:pointer;transition:transform .1s}
+.svc-react-chip .e{font-size:16px;line-height:1}
+.svc-react-chip:hover{transform:translateY(-1px)}
+.svc-react-chip.on{border-color:var(--primary);background:var(--primary-soft);color:var(--text-primary)}
+.svc-react-ctl{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:4px 0 8px;font-size:12px}
+.svc-react-ctl label{display:inline-flex;align-items:center;gap:6px;font-weight:700}
+.svc-react-total{width:110px!important}
+.svc-react-ctl .svc-chip[aria-pressed=true]{border-color:var(--primary);background:var(--primary-soft);color:var(--text-primary)}
+.svc-react-sum{font-weight:800;font-size:12px;margin-left:auto}
+.svc-react-sum.ok{color:#10b981}.svc-react-sum.bad{color:#ef4444}
+.svc-react-cell[hidden]{display:none!important}

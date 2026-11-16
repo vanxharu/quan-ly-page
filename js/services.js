@@ -569,13 +569,47 @@
       // Cảm xúc: ô số lượng từng cảm xúc; tổng = số lượng.
       if (!fam.length) { reactBox.hidden = true; reactRoot = ''; reactIns = new Map(); }
       else if (fam[0].id !== reactRoot) {
+        // Chọn nhiều cảm xúc: bấm chip để bật / tắt từng cảm xúc, nhập TỔNG một lần, app chia tự động (Chia đều / Tự nhiên).
+        // Sửa tay ô của một cảm xúc vẫn được; tổng luôn hiện "đã chia x/y". Mỗi cảm xúc vẫn là 1 đơn Baostar riêng.
         reactRoot = fam[0].id; reactIns = new Map();
-        const start = p?.kind === 'fixed' ? Number(p.qty) : Number(qty.value) || 1000;
-        reactBox.replaceChildren(h('div', { className: 'svc-react-head' }, h('strong', { textContent: 'Số lượng từng cảm xúc' }), h('span', { className: 'hint', textContent: ' · để trống = không làm · mỗi cảm xúc là 1 đơn Baostar' })),
-          h('div', { className: 'svc-react-grid' }, ...fam.map(x => { const inp = h('input', { type: 'number', min: 0, step: 1, value: x.id === svc.id ? start : '', placeholder: '0',
-            oninput: () => { dirty = true; reset(total, costIn); recalc(); } }); reactIns.set(x.id, inp);
-            return h('label', { className: 'svc-react-cell' }, h('span', { textContent: x.child }), inp); })));
-        reactBox.hidden = false;
+        const EMO = { like: '👍', love: '❤️', care: '🥰', haha: '😆', wow: '😮', sad: '😢', angry: '😡', tim: '❤️', 'thả tim': '❤️', 'thương thương': '🥰' };
+        const WEIGHT = { like: 50, love: 25, care: 10, haha: 8, wow: 4, sad: 2, angry: 1, tim: 25, 'thả tim': 25, 'thương thương': 10 };
+        const fixedQty = p?.kind === 'fixed' ? Number(p.qty) : 0;
+        const on = new Set([svc.id]); let mode = 'deu';
+        const totalIn = h('input', { type: 'number', min: 1, step: 1, value: fixedQty || Number(qty.value) || 1000, readOnly: !!fixedQty, className: 'svc-react-total', title: fixedQty ? 'Số lượng của gói' : 'Tổng số cảm xúc cần tăng' });
+        const sumEl = h('span', { className: 'svc-react-sum' });
+        const chips = new Map(), cells = new Map();
+        const split = () => { const ids = fam.filter(x => on.has(x.id)), T = Math.max(0, Math.round(Number(totalIn.value) || 0)); if (!ids.length) return;
+          const w = ids.map(x => mode === 'deu' ? 1 : WEIGHT[String(x.child).toLowerCase()] || 5), W = w.reduce((a, b) => a + b, 0);
+          const parts = ids.map((x, i) => Math.floor(T * w[i] / W)); let rest = T - parts.reduce((a, b) => a + b, 0);
+          for (let i = 0; rest > 0; i = (i + 1) % parts.length, rest--) parts[i]++;
+          ids.forEach((x, i) => { reactIns.get(x.id).value = parts[i]; }); };
+        const sync = () => {
+          for (const x of fam) { const c = chips.get(x.id), sel = on.has(x.id); c.classList.toggle('on', sel); c.setAttribute('aria-pressed', String(sel)); cells.get(x.id).hidden = !sel; if (!sel) reactIns.get(x.id).value = ''; }
+          const sum = fam.reduce((t, x) => t + (on.has(x.id) ? Math.round(Number(reactIns.get(x.id).value)) || 0 : 0), 0), T = Math.round(Number(totalIn.value) || 0);
+          const low = fam.filter(x => on.has(x.id) && (Number(reactIns.get(x.id).value) || 0) > 0 && Number(reactIns.get(x.id).value) < x.min);
+          sumEl.className = 'svc-react-sum ' + (sum === T && !low.length ? 'ok' : 'bad');
+          sumEl.textContent = (sum === T ? `✓ Đã chia ${sum.toLocaleString('vi-VN')}/${T.toLocaleString('vi-VN')}` : `Đã chia ${sum.toLocaleString('vi-VN')}/${T.toLocaleString('vi-VN')}`) + (low.length ? ` · ${low.map(x => x.child).join(', ')} dưới mức tối thiểu ${low[0].min}` : '');
+          for (const [m, b] of modeBtns) b.setAttribute('aria-pressed', String(m === mode));
+          dirty = true; reset(total, costIn); recalc(); };
+        const modeBtns = [['deu', 'Chia đều'], ['tn', 'Tự nhiên'], ['tay', 'Tự nhập']].map(([m, t]) => [m, h('button', { type: 'button', className: 'svc-chip', textContent: t,
+          title: m === 'tn' ? 'Like nhiều nhất, rồi Love, Care, Haha… như bài thật' : m === 'tay' ? 'Tự gõ số từng cảm xúc' : 'Chia đều cho các cảm xúc đã chọn',
+          onclick: () => { mode = m; if (m !== 'tay') split(); sync(); } })]);
+        for (const x of fam) {
+          const inp = h('input', { type: 'number', min: 0, step: 1, placeholder: '0', oninput: () => { mode = 'tay'; sync(); } }); reactIns.set(x.id, inp);
+          chips.set(x.id, h('button', { type: 'button', className: 'svc-react-chip', title: `${x.child} · tối thiểu ${x.min}`,
+            onclick: () => { if (on.has(x.id) && on.size > 1) on.delete(x.id); else on.add(x.id); if (mode !== 'tay') split(); sync(); } },
+            h('span', { className: 'e', textContent: EMO[String(x.child).toLowerCase()] || '•' }), h('span', { textContent: x.child })));
+          cells.set(x.id, h('label', { className: 'svc-react-cell' }, h('span', { textContent: (EMO[String(x.child).toLowerCase()] || '') + ' ' + x.child }), inp));
+        }
+        totalIn.oninput = () => { if (mode === 'tay') mode = 'deu'; split(); sync(); };
+        reactBox.replaceChildren(
+          h('div', { className: 'svc-react-head' }, h('strong', { textContent: 'Cảm xúc' }), h('span', { className: 'hint', textContent: ' · bấm để chọn nhiều loại · mỗi loại là 1 đơn Baostar' })),
+          h('div', { className: 'svc-react-chips' }, ...chips.values(),
+            h('button', { type: 'button', className: 'svc-chip', textContent: 'Tất cả', onclick: () => { fam.forEach(x => on.add(x.id)); if (mode !== 'tay') split(); sync(); } })),
+          h('div', { className: 'svc-react-ctl' }, h('label', {}, 'Tổng ', totalIn), ...modeBtns.map(([, b]) => b), sumEl),
+          h('div', { className: 'svc-react-grid' }, ...cells.values()));
+        split(); reactBox.hidden = false; setTimeout(sync, 0);
       }
       const reactSum = fam.length ? [...reactIns.values()].reduce((t, i) => t + (Math.round(Number(i.value)) || 0), 0) : 0;
       qty.readOnly = p?.kind === 'fixed' || cm || !!fam.length;
