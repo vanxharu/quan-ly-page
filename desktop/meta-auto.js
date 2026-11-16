@@ -247,7 +247,24 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
     }
     return out;
   }
-  function lsIngest(pageId, raw) {
+  // Link bài trong thẻ chia sẻ: gỡ lớp bọc l.php?u= / media_fallback?original_url= (mã hoá 1–2 lần), bỏ link ảnh fbcdn.
+function lsUnwrap(u) {
+  u = String(u || '');
+  for (let i = 0; i < 4; i++) {
+    const m = u.match(/[?&](?:u|original_url|url)=([^&]+)/); if (!m || !/l\.php|media_fallback|\/emg1\/|safe_image|lookaside/.test(u)) break;
+    let x = m[1]; for (let j = 0; j < 3 && /%[0-9a-f]{2}/i.test(x); j++) { try { x = decodeURIComponent(x); } catch { break; } }
+    u = x;
+  }
+  if (u.startsWith('/')) return '';
+  return /^https?:\/\//.test(u) ? u : '';
+}
+const LS_POST = /\/(share|posts|reel|reels|videos|watch|story\.php|permalink|photo|photos|groups|p)\b|fb\.watch|tiktok\.com|youtu|instagram\.com|threads\.(net|com)|shopee|lazada/i;
+function lsShareUrl(vals) {
+  const urls = (vals || []).filter(x => typeof x === 'string' && /https?:|original_url=|l\.php/.test(x)).map(lsUnwrap)
+    .filter(u => u && !/fbcdn\.net|tiktokcdn|lookaside|\.(jpe?g|png|webp|gif|mp4)(\?|$)/i.test(u));
+  return urls.find(u => LS_POST.test(u)) || urls.find(u => !/^https?:\/\/(www\.|m\.)?facebook\.com\/[^/?#]+\/?$/.test(u)) || '';
+}
+function lsIngest(pageId, raw) {
     if (!/payload/.test(raw)) return null;
     const ps = lsPayloads(raw); if (!ps.length) return null;
     const st = lsStore(pageId), pid = String(pageId), threads = new Set(), rc = new Set(), pr = new Set(); let list = false, seen = 0;
@@ -269,18 +286,19 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
           const blob = n === 'insertBlobAttachment', uid = String(v[blob ? 27 : 25] || ''), mid = v[blob ? 32 : 30];
           if (/^\d+$/.test(uid) && mid) { const x = lsMsg(st, uid, String(mid)); x.ts = x.ts || Number(v[blob ? 31 : 29]) || 0;
             const url = [v[8], v[3]].find(u => /^https:\/\//.test(u || '')); if (url) x.pic = url;
-            if (!blob && !x.text && v[58]) x.text = String(v[58]); threads.add(uid); }
+            if (!blob && !x.text && v[58]) x.text = String(v[58]);
+            // Thẻ chia sẻ (khách bấm Chia sẻ bài / reel / TikTok, tin không có chữ link): link bài nằm bọc trong ảnh dự phòng (original_url=…).
+            if (!blob && !st.shares.has(String(mid))) { const su = lsShareUrl(v); if (su) st.shares.set(String(mid), su); }
+            threads.add(uid); }
         } else if (n === 'deleteThenInsertThread') {
           const uid = String(v[7] || ''); if (/^\d+$/.test(uid) && uid !== pid && (!v[18] || String(v[18]) === pid)) {
             st.threads.set(uid, { uid, at: Number(v[0]) || 0, read: Number(v[1]) || 0, snippet: String(v[2] || ''), pic: /^https/.test(v[4] || '') ? v[4] : '', folder: String(v[10] || '') }); list = true; seen++; }
         } else if (n === 'deleteThenInsertContact') {
           const id = String(v[0] || ''); if (/^\d+$/.test(id) && v[9]) st.contacts.set(id, { name: String(v[9]), pic: /^https/.test(v[2] || '') ? v[2] : '' });
-        } else if (n === 'insertXmaAttachment') {
-          // Khách chia sẻ bài / video / reel (thẻ chia sẻ, tin không có chữ link): lấy link bài trong thẻ, gắn vào tin theo mã tin.
-          const mid = v.find(x => typeof x === 'string' && /^mid\./.test(x)), urls = v.filter(x => typeof x === 'string' && /^https?:\/\//.test(x) && !/fbcdn\.net|\/l\.php\?|lookaside/.test(x));
-          const POST = /\/(share|posts|reel|reels|videos|watch|story\.php|permalink|photo|photos|groups)\b|fb\.watch|tiktok\.com|youtu|instagram\.com|threads\.(net|com)|shopee|lazada/i;
-          const url = urls.find(u => POST.test(u)) || urls.find(u => !/^https?:\/\/(www\.)?facebook\.com\/[^/?#]+\/?$/.test(u));
-          if (mid && url) { st.shares.set(mid, url); for (const [uid, ms] of st.msgs) if (ms.has?.(mid)) threads.add(uid); }
+        } else if (n === 'insertAttachmentCta') {
+          // Nút của thẻ chia sẻ: 5 mã tin · 7 loại (xma_web_url) · 9 link đích (thường bọc l.php?u=…) → link bài thật.
+          const mid = String(v[5] || ''), url = lsShareUrl([v[9], v[8], v[10]]);
+          if (/^mid\./.test(mid) && url && /web_url|open_url|link/i.test(String(v[7] || 'web_url'))) { st.shares.set(mid, url); const uid = String(v[3] || ''); if (/^\d+$/.test(uid)) threads.add(uid); }
         } else if (n === 'upsertReaction' || n === 'deleteReaction') {
           // upsertReaction: 0 thread · 1 giờ tin · 2 mã tin · 3 người thả · 4 biểu tượng   ·  deleteReaction: 0 thread · 1 mã tin · 2 người
           const up = n === 'upsertReaction', uid = String(v[0] || ''), mid = String(up ? v[2] : v[1] || ''), who = String(up ? v[3] : v[2] || '');
