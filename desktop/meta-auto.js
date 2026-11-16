@@ -126,7 +126,9 @@ function readMessages(scrollUp) {
     const L = boxes.length ? Math.min(...boxes.map(b => b.left)) : r.left, R = boxes.length ? Math.max(...boxes.map(b => b.right)) : r.right;
     const mine = boxes.length ? (L - area.left) > (area.right - R) : r.left + r.width / 2 > mid;
     const text = parts.map(x => (x.innerText || '').trim()).filter(Boolean).join('\n');
-    if (text) items.push({ y: r.top, mine, text });
+    const un = u => { for (let i = 0; i < 4; i++) { const m = String(u).match(/[?&](?:u|original_url|url)=([^&]+)/); if (!m || !/l\.php|media_fallback|safe_image/.test(u)) break; let x = m[1]; for (let j = 0; j < 3 && /%[0-9a-f]{2}/i.test(x); j++) { try { x = decodeURIComponent(x); } catch { break; } } u = x; } return u; };
+    const share = [...el.querySelectorAll('a[href]')].map(a => un(a.href)).find(u => /^https?:\/\//.test(u) && !/fbcdn\.net|business\.facebook\.com\/latest|messenger\.com/.test(u) && /\/(share|posts|reel|reels|videos|watch|story\.php|permalink|photo|photos|groups|p)\b|fb\.watch|tiktok\.com|youtu|instagram\.com/i.test(u));
+    if (text || share) items.push({ y: r.top, mine, text, ...(share ? { share } : {}) });
     for (const img of el.querySelectorAll('img')) {
       const b = img.getBoundingClientRect(), src = img.currentSrc || img.src;
       if (Math.max(b.width, b.height, img.naturalWidth || 0) >= 60 && /fbcdn\.net|scontent|^blob:/.test(src)) items.push({ y: b.top + 0.1, mine, pic: src });
@@ -145,6 +147,18 @@ function readMessages(scrollUp) {
   const marks = [...col.querySelectorAll('[aria-label],img[alt],[title]')].map(lab);
   const domRc = marks.some(t => /^(Đã xem|Seen)( bởi| by|$)/i.test(t)) ? 'seen' : marks.some(t => /^(Đã nhận|Delivered)$/i.test(t)) ? 'dlv' : marks.some(t => /^(Đã gửi|Sent)$/i.test(t)) ? 'sent' : '';
   return { messages: items.map(({ y, ...m }) => m), count: blocks.length, domRc };
+}
+
+// Chạy trong trang: link bài trong các thẻ chia sẻ đang hiện (mỗi khối tin [data-message-id] → link đã gỡ lớp bọc l.php?u=).
+function domShares() {
+  const un = u => { for (let i = 0; i < 4; i++) { const m = String(u).match(/[?&](?:u|original_url|url)=([^&]+)/); if (!m || !/l\.php|media_fallback|safe_image/.test(u)) break; let x = m[1]; for (let j = 0; j < 3 && /%[0-9a-f]{2}/i.test(x); j++) { try { x = decodeURIComponent(x); } catch { break; } } u = x; } return u; };
+  const out = {};
+  for (const el of document.querySelectorAll('[data-message-id]')) {
+    const hrefs = [...el.querySelectorAll('a[href]')].map(a => un(a.href)).filter(u => /^https?:\/\//.test(u) && !/fbcdn\.net|business\.facebook\.com\/latest|\/messages\/|messenger\.com/.test(u));
+    const u = hrefs.find(h => /\/(share|posts|reel|reels|videos|watch|story\.php|permalink|photo|photos|groups|p)\b|fb\.watch|tiktok\.com|youtu|instagram\.com/i.test(h)) || hrefs[0];
+    if (u) out[el.getAttribute('data-message-id')] = u;
+  }
+  return out;
 }
 
 // Chạy trong trang: tìm phần tử hiện trên màn hình theo selector / role / chữ / nhãn (aria-labelledby), cuộn vào giữa, trả toạ độ tâm.
@@ -288,6 +302,7 @@ function lsIngest(pageId, raw) {
           if (/^\d+$/.test(uid) && mid) { const x = lsMsg(st, uid, String(mid)); x.ts = x.ts || Number(v[blob ? 31 : 29]) || 0;
             const url = [v[8], v[3]].find(u => /^https:\/\//.test(u || '')); if (url) x.pic = url;
             if (!blob && !x.text && v[58]) x.text = String(v[58]);
+            if (!blob) (st.xma || (st.xma = new Set())).add(String(mid));
             // Thẻ chia sẻ (khách bấm Chia sẻ bài / reel / TikTok, tin không có chữ link): link bài nằm bọc trong ảnh dự phòng (original_url=…).
             if (!blob && !st.shares.has(String(mid))) { const su = lsShareUrl(v); if (su) st.shares.set(String(mid), su); }
             threads.add(uid); }
@@ -337,7 +352,7 @@ function lsIngest(pageId, raw) {
       if (m.ts - last > 30 * 60e3) { const d = new Date(m.ts), hm = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
         out.push({ sep: new Date().toDateString() === d.toDateString() ? hm : `${hm} ${d.getDate()} Tháng ${d.getMonth() + 1}, ${d.getFullYear()}` }); }
       const rx = lsStore(pageId).reacts.get(m.mid), re = rx?.size ? [...rx].map(([who, e]) => ({ e, mine: who === String(pageId) })) : null;
-      last = m.ts; out.push({ mine: m.mine, text: m.text, ...(m.pic ? { pic: m.pic } : {}), ...(sh.has(m.mid) ? { share: sh.get(m.mid) } : {}), ts: m.ts, mid: m.mid, ...(re ? { re } : {}) });
+      last = m.ts; out.push({ mine: m.mine, text: m.text, ...(m.pic ? { pic: m.pic } : {}), ...(sh.has(m.mid) ? { share: sh.get(m.mid) } : lsStore(pageId).xma?.has(m.mid) ? { xma: true } : {}), ts: m.ts, mid: m.mid, ...(re ? { re } : {}) });
     }
     return out;
   };
@@ -818,14 +833,29 @@ function lsIngest(pageId, raw) {
   // Hội thoại đã có dữ liệu gốc (đã tải một đoạn tin, tin mới tự đổ về): trả ngay, không phải mở trong khung ẩn.
   const lsReady = args => !args.older && lsStores.get(String(args.pageId))?.loaded.has(String(args.uid)) && lsMessages(args.pageId, args.uid).some(m => !m.sep);
   // Đọc cùng một hội thoại nhiều lần liền nhau (tin mới tới dồn dập, đọc định kỳ 20 giây) → dùng chung một lượt đọc đang chờ, không xếp hàng chồng lên làm tắc việc gửi tin.
-  const reading = new Map();
+  const reading = new Map(), shareTried = new Set();
   const readThread = args => { if (!threadArgs(args)) return Promise.resolve({ error: 'Thiếu Page hoặc khách.' });
     if (!args.bg && !args.older) preOpenSend(args.pageId, args.uid); // bạn đang xem khách này → khung gửi mở sẵn hội thoại
-    if (lsReady(args)) return Promise.resolve({ messages: lsMessages(args.pageId, args.uid), source: 'ls' });
+    if (lsReady(args)) { const ms = lsMessages(args.pageId, args.uid);
+      // Thẻ chia sẻ mà dữ liệu gốc không kèm link: đọc link trên màn hình hội thoại đang mở trong khung ngầm (không mở lại, không xếp hàng).
+      if (ms.some(m => m.xma) && slot(args.pageId).opened === `${args.pageId}:${args.uid}`) return fillShares(args).then(() => ({ messages: lsMessages(args.pageId, args.uid), source: 'ls' }));
+      // Chưa mở hội thoại này trong khung ngầm: mở 1 lần (bạn đang xem khách) để đọc link thẻ chia sẻ trên màn hình.
+      const sk = `${args.pageId}:${args.uid}:${ms.filter(m => m.xma).length}`;
+      if (!(ms.some(m => m.xma) && !args.bg && !shareTried.has(sk))) return Promise.resolve({ messages: ms, source: 'ls' });
+      shareTried.add(sk); }
     const k = `${args.pageId}:${args.uid}:${args.older ? 'o' : ''}`;
     if (reading.has(k)) return reading.get(k);
     const pr = readThreadQ(args).finally(() => reading.delete(k)); reading.set(k, pr); return pr; };
   const lsWaited = new Set();
+  const fillShares = async args => { try { const wc = slot(args.pageId).win.webContents;
+      const got = await Promise.race([wc.executeJavaScript(`(${domShares})()`), sleep(1500).then(() => ({}))]).catch(() => ({})), st = lsStore(args.pageId);
+      const ent = Object.entries(got || {});
+      for (const [mid, u] of ent) if (/^mid\./.test(mid) && !st.shares.has(mid)) st.shares.set(mid, u);
+      // Mã khối trên màn hình không phải mã tin → ghép theo thứ tự từ cuối: thẻ chia sẻ thứ n từ dưới lên ↔ tin thẻ thứ n từ dưới lên.
+      if (ent.length && !ent.some(([k]) => /^mid\./.test(k))) {
+        const xs = [...(st.msgs.get(String(args.uid))?.values() || [])].filter(m => st.xma?.has(m.mid)).sort((a, b) => a.ts - b.ts), us = ent.map(e => e[1]);
+        for (let i = 1; i <= Math.min(xs.length, us.length); i++) { const m = xs[xs.length - i]; if (!st.shares.has(m.mid)) st.shares.set(m.mid, us[us.length - i]); }
+      } } catch {} };
   const readThreadQ = args => queue(args.pageId, async () => {
     const ok = await openThreadHidden(String(args.pageId), String(args.uid), slot(args.pageId), { bg: !!args.bg });
     if (ok === 'login') return { error: 'login' };
@@ -835,7 +865,7 @@ function lsIngest(pageId, raw) {
     if (args.older) { await wc.executeJavaScript(`(${readMessages})(true)`).catch(() => {}); await sleep(2500); }
     // Vừa mở hội thoại: dữ liệu gốc thường về trong ~1 giây → dùng nó (đủ, chính xác hơn đọc màn hình).
     if (!lsWaited.has(uid)) { lsWaited.add(uid); for (let i = 0; i < 6 && !st.loaded.has(uid); i++) await sleep(250); } // chỉ chờ lần đầu
-    if (st.loaded.has(uid) && lsMessages(args.pageId, uid).some(m => !m.sep)) return { messages: lsMessages(args.pageId, uid), source: 'ls' };
+    if (st.loaded.has(uid) && lsMessages(args.pageId, uid).some(m => !m.sep)) { if (lsMessages(args.pageId, uid).some(m => m.xma)) await fillShares(args); return { messages: lsMessages(args.pageId, uid), source: 'ls' }; }
     return await wc.executeJavaScript(`(${readMessages})(false)`).catch(() => null) || { error: 'Không đọc được tin.' };
   }, args.bg ? 0 : 1, args.bg ? 'đọc nền ' + String(args.uid).slice(-4) : 'đọc ' + String(args.uid).slice(-4)); // đọc trước (nền) nhường việc bạn đang chờ
   // Gửi tin như người dùng gõ trong Business Suite (không qua API → không bị giới hạn của app chưa duyệt).
