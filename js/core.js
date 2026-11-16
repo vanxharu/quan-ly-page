@@ -258,16 +258,29 @@ App.refreshToken = (opts = {}) => tokenRefresh ||= (async () => {
   if (window.metaDesktop?.refreshLogin) fresh = (await window.metaDesktop.refreshLogin({ appId: local.get('appId') || App.DEFAULT_APP_ID, configId: App.CONFIG_ID }).catch(() => ({})))?.token || '';
   else if (window.FB) fresh = await new Promise(r => { try { FB.getLoginStatus(s => r(s.authResponse?.accessToken || ''), true); } catch { r(''); } });
   if (!fresh) { if (!opts.quiet) askRelogin(); return false; }
+  local.set('fbTokLongUntil', 0);
   const pages = await apiPaged('/me/accounts', { fields: 'id,access_token', limit: 100 }, fresh, 3);
   const oldUser = App.userToken || local.get('fbTok'); // lúc mở app token đã lưu có thể đã hết hạn
   if (oldUser && oldUser !== fresh) tokenAlias.set(oldUser, fresh);
   for (const p of App.pages) { const n = pages.find(x => String(x.id) === String(p.id)); if (n?.access_token && n.access_token !== p.access_token) { tokenAlias.set(p.access_token, n.access_token); p.access_token = n.access_token; } }
   App.userToken = fresh; local.set('fbTok', fresh);
+  App.longToken(fresh).catch(() => {}); // đổi luôn sang token 60 ngày nếu máy chủ hỗ trợ
   return true;
 })().finally(() => { tokenRefresh = null; }); // lỗi dồn dập cùng lúc dùng chung một lần xin
-// Token đăng nhập Facebook chỉ sống ~1–2 giờ: app Windows tự xin token mới 45 phút/lần (ngầm, không hiện gì), để không bao giờ
-// tới lúc hết hạn giữa chừng. Xin không được thì thôi — chỉ khi một thao tác thật bị lỗi mới hiện nút Đăng nhập lại.
-if (window.metaDesktop?.refreshLogin) setInterval(() => { if (App.userToken || local.get('fbTok')) App.refreshToken({ quiet: true }).catch(() => {}); }, 45 * 60e3);
+// Token 60 ngày (máy chủ đổi giúp, cần FB_APP_SECRET): đổi xong thì token Page lấy từ đó không hết hạn → khỏi đăng nhập lại mỗi 1–2 giờ.
+// Máy chủ chưa có lệnh này / lỗi → im lặng, dùng cách xin token ngắn hạn như cũ.
+App.longToken = async (userToken = App.userToken) => {
+  const sb = App.server?.sb; if (!sb || !userToken) return false;
+  try {
+    const { data, error } = await sb.functions.invoke('fb-admin', { body: { action: 'long_token', userToken } });
+    if (error || !data?.token) return false;
+    if (data.token !== App.userToken && App.userToken) tokenAlias.set(App.userToken, data.token);
+    for (const p of App.pages || []) { const n = (data.pages || []).find(x => String(x.id) === String(p.id)); if (n?.access_token && n.access_token !== p.access_token) { tokenAlias.set(p.access_token, n.access_token); p.access_token = n.access_token; } }
+    App.userToken = data.token; local.set('fbTok', data.token); local.set('fbTokLongUntil', Date.now() + data.expires_in * 1000);
+    return true;
+  } catch { return false; }
+};
+const longValid = () => (Number(local.get('fbTokLongUntil')) || 0) - Date.now() > 3 * 86400e3 && local.get('fbTok') === App.userToken;
 function askRelogin() {
   if (document.getElementById('reloginBar')) return;
   const bar = h('div', { id: 'reloginBar', className: 'status err', style: 'position:fixed;left:50%;top:60px;transform:translateX(-50%);z-index:90;display:flex;gap:10px;align-items:center;box-shadow:0 8px 24px #0004' },
@@ -657,7 +670,9 @@ async function startSession(userToken) {
   $('token').value = '';
   App.userToken = userToken; // dùng để kết nối Page với máy chủ bot
   // App Windows: làm mới token mỗi 45 phút, trước khi Facebook cho hết hạn (lịch đăng, hộp thư chạy ngầm không bị ngắt).
-  if (window.metaDesktop?.refreshLogin && !App.tokenTimer) App.tokenTimer = setInterval(() => App.refreshToken().catch(() => {}), 45 * 60e3);
+  // Đã có token 60 ngày: không cần xin lại; chưa có thì xin token mới ngầm (không hiện nút Đăng nhập lại khi xin hụt).
+  if (window.metaDesktop?.refreshLogin && !App.tokenTimer) App.tokenTimer = setInterval(() => { if (!longValid()) App.refreshToken({ quiet: true }).catch(() => {}); }, 45 * 60e3);
+  if (!longValid()) setTimeout(() => App.longToken(userToken).catch(() => {}), 1500); // chờ kết nối máy chủ khởi tạo
   App.templateVars = (await DB.get('settings', {})).templateVars || {};
   const saved = await restoreSelectedPages();
   selected = new Set(saved.length ? saved : App.pages.map(p => p.id));

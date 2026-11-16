@@ -3,6 +3,7 @@
 //  - connect: đổi token Facebook của bạn thành token Page dài hạn, lưu vào page_tokens, đăng ký webhook cho Page;
 //  - profile: cài nút Bắt đầu, lời chào, menu cố định, câu hỏi gợi ý cho Messenger của Page;
 //  - status: Page đã kết nối và trạng thái đăng ký webhook.
+//  - long_token: đổi token đăng nhập ngắn hạn thành token 60 ngày + token Page không hết hạn (app khỏi phải đăng nhập lại mỗi 1–2 giờ).
 // Cần secret FB_APP_SECRET (dán ở Edge Functions › Secrets). Tắt "Verify JWT": hàm tự kiểm tra phiên đăng nhập qua /auth/v1/user.
 
 const GRAPH = 'https://graph.facebook.com/v25.0';
@@ -132,6 +133,16 @@ async function vault_set({ userToken, parts }) {
   return { user: id, data: cur };
 }
 
+// Đổi token đăng nhập ngắn hạn (1–2 giờ) của app thành token 60 ngày, kèm token Page lấy từ đó (không hết hạn).
+// Chỉ trả cho người đang cầm token hợp lệ của đúng app này và đúng tài khoản đó (debug_token) → không cần đăng nhập máy chủ.
+async function long_token({ userToken }) {
+  await fbUser(userToken);
+  const long = await fb(`/oauth/access_token?grant_type=fb_exchange_token&client_id=${APP_ID}&client_secret=${encodeURIComponent(env('FB_APP_SECRET'))}&fb_exchange_token=${encodeURIComponent(userToken)}`);
+  let next = `${GRAPH}/me/accounts?fields=id,access_token&limit=100&access_token=${long.access_token}`, pages = [];
+  for (let i = 0; next && i < 5; i++) { const r = await fb(next); pages.push(...(r.data || []).map(p => ({ id: p.id, access_token: p.access_token }))); next = r.paging?.next; }
+  return { token: long.access_token, expires_in: Number(long.expires_in) || 60 * 86400, pages };
+}
+
 async function serve(req) {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS });
   // Lịch đăng bài (pg_cron): khoá bí mật lưu trong bảng app_config, chỉ máy chủ đọc được.
@@ -147,6 +158,7 @@ async function serve(req) {
     if (peek.action === 'vault_get' || peek.action === 'vault_set') {
       try { return json(await (peek.action === 'vault_get' ? vault_get : vault_set)(peek)); } catch (e) { return json({ error: e.message }, 400); }
     }
+    if (peek.action === 'long_token') { try { return json(await long_token(peek)); } catch (e) { return json({ error: e.message }, 400); } }
   }
   // Chỉ tài khoản đã đăng nhập (chủ / nhân viên) mới gọi được.
   const user = await fetch(`${env('SUPABASE_URL')}/auth/v1/user`, { headers: { apikey: env('SUPABASE_ANON_KEY') || env('SUPABASE_SERVICE_ROLE_KEY'), Authorization: req.headers.get('authorization') || '' } });
