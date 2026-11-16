@@ -857,7 +857,9 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
       let wc = null;
       while (!wc) {
         wc = await directReady(sendSlots.get(pid), pid) || await directReady(slots.get(pid), pid);
-        const sw = sendSlots.get(pid)?.win?.webContents, swLoaded = (() => { try { return !!sw && !sw.isDestroyed() && !sw.isLoading() && sw.getURL().includes(`asset_id=${pid}`); } catch { return false; } })();
+        // Khung của Page (1 khung / Page: khung đọc; bản cũ: khung gửi) đã tải xong mà chưa gửi thẳng được → thôi chờ sau 2 giây, gửi bằng cách bấm nút.
+        // (Lỗi trước: chế độ 1 khung không có khung gửi → điều kiện này không bao giờ đúng → chờ đủ 25 giây trước khi gửi.)
+        const sw = (sendSlots.get(pid) || slots.get(pid))?.win?.webContents, swLoaded = (() => { try { return !!sw && !sw.isDestroyed() && !sw.isLoading() && sw.getURL().includes(`asset_id=${pid}`); } catch { return false; } })();
         // Thôi chờ: quá 25 giây; hoặc khung gửi đã tải xong mà vẫn chưa bám được kết nối (chờ thêm cũng vô ích); hoặc Page chưa có khung nào.
         if (wc || Date.now() - started > 25e3 || (swLoaded && Date.now() - started > 2000) || (!sendSlots.has(pid) && !slots.has(pid) && Date.now() - started > 3000)) break;
         await sleep(400);
