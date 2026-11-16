@@ -15,6 +15,14 @@ function zState() {
   if ((/quét mã|qr code|đăng nhập bằng|với mã qr/i.test(t) || document.querySelector('.qrcode, [class*="qr-code" i], img[src*="qr" i]')) && !document.querySelector('#main-tab')) return 'login';
   return 'loading';
 }
+// Zalo Web chưa vào được danh sách: tóm tắt màn hình đang hiện (để chẩn đoán) và tự bấm nút "Dùng tại đây / Dùng Zalo ở cửa sổ này" nếu có
+// (Zalo chỉ cho 1 cửa sổ web hoạt động; khung ngầm bị đẩy ra khi bạn mở Zalo Web ở nơi khác).
+function zDiag() {
+  const t = (document.body?.innerText || '').replace(/\s+/g, ' ').trim();
+  const btn = [...document.querySelectorAll('button, [role=button], .btn, a')].find(b => /dùng tại đây|dùng ở đây|sử dụng tại đây|use here|kích hoạt|dùng zalo (ở|trên) (cửa sổ|trình duyệt) này|tiếp tục sử dụng/i.test(b.innerText || ''));
+  if (btn) btn.click();
+  return { title: document.title.slice(0, 60), text: t.slice(0, 240), clicked: btn ? (btn.innerText || '').trim().slice(0, 40) : '', els: document.querySelectorAll('*').length };
+}
 function zList() {
   const box = document.querySelector('#conversationList');
   if (!box) return null;
@@ -295,6 +303,12 @@ function createZaloAuto({ wc, cdp = null, beginInput = async () => {}, endInput 
     stat.url = w.getURL().slice(0, 60);
     const s = await run(zState).catch(e => { stat.err = 'zState: ' + e.message; return 'loading'; });
     stat.state = s;
+    if (s !== 'ready') { const d = await run(zDiag).catch(e => ({ err: e.message }));
+      stat.screen = d; if (!stat.since) stat.since = Date.now();
+      // Kẹt "đang tải" quá 2 phút (không phải đang đăng nhập, không có nút để bấm) → tải lại khung ngầm 1 lần / 5 phút.
+      if (s === 'loading' && !d?.clicked && !/đang đăng nhập|logging in/i.test(d?.text || '') && Date.now() - stat.since > 120e3 && Date.now() - (stat.reloadAt || 0) > 300e3) {
+        stat.reloadAt = Date.now(); stat.reloads = (stat.reloads || 0) + 1; stat.since = 0; try { w.reload(); } catch {} }
+    } else { stat.since = 0; stat.screen = null; }
     if (s === 'ready') stat.watch = !!(await run(zWatch, TAG).catch(e => { stat.err = 'zWatch: ' + e.message; return false; }));
     return s;
   };
@@ -430,4 +444,4 @@ function createZaloAuto({ wc, cdp = null, beginInput = async () => {}, endInput 
   return { list, read, send, react, onConsole, ready, status: () => ({ ...stat }) };
 }
 
-module.exports = { createZaloAuto, _page: { zPrepInput, zCaret, zEdState, zInsPaste, zInsExec, zInsDom, zEdReset, zEnterJs, zSendBtn, zPasteImage, zInputDiag, zFocusInput, zInputLen, zReacts, zReact, zReplyTo, zState, zList, zListAll, zCurrent, zOpen, zRead, zPutText, zDropImage, zClickSend, zMineCount, zWatch } };
+module.exports = { createZaloAuto, _page: { zPrepInput, zCaret, zEdState, zInsPaste, zInsExec, zInsDom, zEdReset, zEnterJs, zSendBtn, zPasteImage, zInputDiag, zFocusInput, zInputLen, zReacts, zReact, zReplyTo, zState, zDiag, zList, zListAll, zCurrent, zOpen, zRead, zPutText, zDropImage, zClickSend, zMineCount, zWatch } };

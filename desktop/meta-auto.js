@@ -197,13 +197,14 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
       if (running || !tasks.length) return;
       running = true;
       tasks.sort((a, b) => b.prio - a.prio || a.n - b.n);
-      const t = tasks.shift(); q.runningSince = Date.now(); q.runningPrio = t.prio;
+      const t = tasks.shift(); q.runningSince = Date.now(); q.runningPrio = t.prio; q.runningWhat = t.what || '';
       // Một việc treo (trang đang chuyển, lệnh không trả lời) không được chặn cả hàng: quá 2,5 phút thì bỏ, làm việc sau.
       let timer; const limit = new Promise((_, bad) => { timer = setTimeout(() => bad(new Error('Khung Business Suite không phản hồi (quá 150 giây). Thử lại.')), 150e3); });
       try { t.ok(await Promise.race([t.fn(), limit])); } catch (e) { t.bad(e); } finally { clearTimeout(timer); running = false; q.runningSince = 0; next(); }
     };
     let n = 0;
-    const q = (fn, prio = 0) => new Promise((ok, bad) => { tasks.push({ fn, prio, ok, bad, n: n++ }); next(); });
+    const q = (fn, prio = 0, what = '') => new Promise((ok, bad) => { tasks.push({ fn, prio, ok, bad, n: n++, what }); next(); });
+    q.size = () => tasks.length;
     q.urgent = () => tasks.some(t => t.prio > 0);
     q.waiting = () => tasks.length; // có việc bạn đang chờ (mở hội thoại, gửi tin) → việc nền nên dừng sớm
     return q;
@@ -483,13 +484,13 @@ function lsIngest(pageId, raw) {
   // Tin chữ vẫn gửi thẳng qua kết nối của khung đọc nên không cần khung gửi.
   const SEND_IDLE = 5 * 60e3;
   setInterval(() => { for (const [id, ss] of sendSlots) if (Date.now() - ss.used > SEND_IDLE && !ss.queue.runningSince && !ss.queue.waiting?.()) { sendSlots.delete(id); try { ss.win.destroy(); } catch {} } }, 60e3);
-  const sendQueue = (pageId, fn, prio = 1) => { const ss = sendSlot(pageId); return ss.queue(async () => { ss.used = Date.now(); await ss.win.ready; await lighten(ss.win.webContents, ss.pageId, !!ss.send); return fn(ss); }, prio); };
+  const sendQueue = (pageId, fn, prio = 1, what = 'gửi') => { const ss = sendSlot(pageId); return ss.queue(async () => { ss.used = Date.now(); await ss.win.ready; await lighten(ss.win.webContents, ss.pageId, !!ss.send); return fn(ss); }, prio, what); };
   // Mở sẵn: tải Hộp thư của Page vào khung gửi (lúc app đọc danh sách), mở sẵn hội thoại bạn đang xem.
   const warmSend = pageId => { if (!makeWorker || !/^\d+$/.test(String(pageId))) return; const ss = sendSlot(pageId); if (ss.warmed) return; ss.warmed = true;
     sendQueue(pageId, async s => { const wc = s.win.webContents; if (!wc.getURL().includes(`asset_id=${pageId}`)) await wc.loadURL(`https://business.facebook.com/latest/inbox/messenger?asset_id=${pageId}&mailbox_id=${pageId}`).catch(() => {}); }, 0).catch(() => {}); };
   const preOpenSend = (pageId, uid) => { if (!makeWorker || !threadArgs({ pageId, uid })) return; const ss = sendSlot(pageId); if (ss.opened === `${pageId}:${uid}` || ss.queue.waiting()) return;
     sendQueue(pageId, s => openThreadHidden(String(pageId), String(uid), s), 0).catch(() => {}); };
-  const queue = (pageId, fn, prio = 0) => { const sl = slot(pageId); return sl.queue(async () => { await sl.win.ready; await lighten(sl.win.webContents, sl.pageId); return fn(); }, prio); };
+  const queue = (pageId, fn, prio = 0, what = 'đọc') => { const sl = slot(pageId); return sl.queue(async () => { await sl.win.ready; await lighten(sl.win.webContents, sl.pageId); return fn(); }, prio, what); };
 
   // Danh sách hội thoại Business Suite: mỗi dòng có data-maiba-contact-id (UID Facebook thật của khách), tên và ảnh.
   // Đọc cả danh sách của một Page một lần (lưu 10 phút), rồi so tên với khách trong app.
@@ -836,7 +837,7 @@ function lsIngest(pageId, raw) {
     if (!lsWaited.has(uid)) { lsWaited.add(uid); for (let i = 0; i < 6 && !st.loaded.has(uid); i++) await sleep(250); } // chỉ chờ lần đầu
     if (st.loaded.has(uid) && lsMessages(args.pageId, uid).some(m => !m.sep)) return { messages: lsMessages(args.pageId, uid), source: 'ls' };
     return await wc.executeJavaScript(`(${readMessages})(false)`).catch(() => null) || { error: 'Không đọc được tin.' };
-  }, args.bg ? 0 : 1); // đọc trước (nền) nhường việc bạn đang chờ
+  }, args.bg ? 0 : 1, args.bg ? 'đọc nền ' + String(args.uid).slice(-4) : 'đọc ' + String(args.uid).slice(-4)); // đọc trước (nền) nhường việc bạn đang chờ
   // Gửi tin như người dùng gõ trong Business Suite (không qua API → không bị giới hạn của app chưa duyệt).
   // ── Gửi thẳng tin CHỮ qua kết nối Lightspeed của Business Suite (đúng gói "label 46" mà Business Suite gửi khi bạn bấm Gửi) ──
   // Không cần mở hội thoại, gõ chữ hay bấm nút → thường < 1 giây. Mã otid/epoch = giờ(ms) << 22 | số ngẫu nhiên (như Business Suite).
@@ -896,6 +897,7 @@ function lsIngest(pageId, raw) {
         if (d) { T.chu_thang = true; args = { ...args, text: '', directText: true }; } // chữ đã đi thẳng → chỉ còn gửi ảnh
         else args.directTried = true;
       }
+      { const q = sendSlot(String(args.pageId)).queue; if (q.runningSince) T.dang_ban = { viec: q.runningWhat, giay: Math.round((Date.now() - q.runningSince) / 1000), xep_sau: q.size() }; }
       return sendQueue(args.pageId, ss => { mark('hang-doi-anh'); T.khung = T.khung || (ss.send ? 'gui' : 'doc'); return sendCore(args, mark, ss); }, 1)
         .then(r => { if (args.directText && r?.error && !/^Chữ đã gửi/.test(r.error)) r = { ...r, error: 'Chữ đã gửi, nhưng ' + String(r.error).replace(/^./, c => c.toLowerCase()) }; return finish(r); },
           e => { mark('xong'); T.ketqua = 'lỗi: ' + e.message; writeSendLog(T); throw e; });
@@ -945,7 +947,7 @@ function lsIngest(pageId, raw) {
       const att = await attachImage(wc, args.image);
       if (s.primed?.key === key) s.primed.ok = !!att; else if (att) await clearComposer(wc);
       return { ok: !!att };
-    }, 1).catch(e => ({ error: e.message }));
+    }, 1, 'gắn sẵn ảnh').catch(e => ({ error: e.message }));
   };
   const sendCore = async (args, mark, sl) => {
     const text = String(args.text || '').trim(), image = args.image || '';
