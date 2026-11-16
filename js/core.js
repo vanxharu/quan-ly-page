@@ -461,12 +461,21 @@ App.composeInBusinessSuite = async (page, text, imageData, when = 0) => {
     // Đã bấm Lên lịch/Đăng ngầm nhưng Business Suite không báo rõ: tra lịch thật trên Meta (≈1 phút) trước khi mở cột Meta, tránh đăng trùng.
     const key = t => String(t || '').normalize('NFC').toLowerCase().replace(/https?:\/\/\S+/g, '').replace(/\s+/g, ' ').trim().slice(0, 160);
     const want = key(text);
+    let apiOk = false;
     for (let i = 0; i < 6; i++) {
       await new Promise(ok => setTimeout(ok, i ? 10000 : 4000));
       const path = when ? `/${page.id}/scheduled_posts` : `/${page.id}/published_posts`;
-      const list = (await api(path, { fields: 'id,message', limit: 25 }, 'GET', page.access_token).catch(() => ({ data: [] }))).data || [];
-      const hit = want && list.find(p => key(p.message) === want);
+      // Lỗi tra cứu (vd phiên Facebook của trang web hết hạn) KHÔNG có nghĩa là bài chưa lên lịch.
+      const res = await api(path, { fields: 'id,message', limit: 100 }, 'GET', page.access_token).then(x => (apiOk = true, x)).catch(() => null);
+      const list = res?.data || [];
+      const hit = want && list.find(p => key(p.message) === want || (want.length > 30 && key(p.message).startsWith(want.slice(0, 60))));
       if (hit) { App.composeProgress?.({ id: 'publish', state: 'ok' }); return { id: hit.id, post_id: hit.id, viaBusinessSuite: true }; }
+      if (!res && i >= 1) break;
+    }
+    // Không tra được (cả trong Business Suite lẫn qua Facebook): không mở trình soạn mới — dễ lên lịch trùng 2 bài.
+    if (!apiOk || r.verify === 'unknown') {
+      App.composeProgress?.({ id: 'publish', state: 'fail', note: 'Đã bấm Lên lịch nhưng chưa xác nhận được — xem mục Bài đã lên lịch trong Business Suite' });
+      throw Error(`Đã bấm ${when ? 'Lên lịch' : 'Đăng'} ngầm nhưng chưa xác nhận được trên Meta${!apiOk ? ' (phiên Facebook của app đã hết hạn — bấm Đăng nhập lại)' : ''}. Xem mục "Bài đã lên lịch" trong Business Suite trước khi làm lại, tránh trùng bài.`);
     }
     toast('Chưa thấy bài trên Meta: mở cột Meta để bạn kiểm tra rồi bấm.', 8000);
     r = await globalThis.metaDesktop.composePost({ pageId: String(page.id), text: text || '', image, when, visibleOnly: true });

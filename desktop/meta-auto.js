@@ -1202,6 +1202,24 @@ function lsIngest(pageId, raw) {
 
   // Đăng ngay (không hẹn giờ): làm hết trong cửa sổ vẽ ngầm, đủ ảnh + chữ + nút thì tự bấm Đăng, không hiện cột Meta.
   // Hẹn giờ, hoặc làm ngầm còn thiếu bước: mở cột Meta, điền sẵn, bạn kiểm tra rồi bấm; xong cột tự ẩn lại như trước.
+  // Tìm bài trong danh sách của Business Suite: 'found' | 'missing' (danh sách đọc được mà không có) | 'unknown' (không đọc được).
+  const verifyInBS = async (wc, pageId, text, when) => {
+    const nn = t => String(t || '').normalize('NFC').toLowerCase().replace(/https?:\/\/\S+/g, '').replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+    const needle = nn(text).slice(0, 36); if (needle.length < 8) return 'unknown';
+    const url = `https://business.facebook.com/latest/posts/${when ? 'scheduled_posts' : 'published_posts'}?asset_id=${pageId}`;
+    let loaded = false;
+    for (let round = 0; round < 2; round++) {
+      await wc.loadURL(url).catch(() => {});
+      for (let i = 0; i < 20; i++) {
+        await sleep(1000);
+        // Danh sách dài: cuộn các vùng cuộn xuống dần để tải thêm bài (bài hẹn xa ngày có thể nằm dưới).
+        const body = await wc.executeJavaScript(`(() => { for (const el of document.querySelectorAll('div')) if (el.scrollHeight > el.clientHeight + 50 && /auto|scroll/.test(getComputedStyle(el).overflowY)) el.scrollTop += 900; scrollBy(0, 900); return document.body ? document.body.innerText : ''; })()`).catch(() => '');
+        if (nn(body).includes(needle)) return 'found';
+        if (/posts\//.test(wc.getURL()) && body.length > 1500) loaded = true;
+      }
+    }
+    return loaded ? 'missing' : 'unknown';
+  };
   const composePost = args => composeQueue(async () => {
     const { pageId, text, when } = args;
     if (!/^\d+$/.test(String(pageId))) return { error: 'Thiếu Page.' };
@@ -1226,27 +1244,35 @@ function lsIngest(pageId, raw) {
             // Xong khi: rời trình soạn, hoặc Business Suite báo đã lên lịch/đã đăng. Hộp xác nhận hiện ra thì bấm luôn;
             // nút Lên lịch còn nguyên và bấm được sau 8 giây = cú bấm chưa ăn → bấm lại một lần bằng element.click().
             const DONE = /đã (được )?lên lịch|đã đăng|đã chia sẻ|has been scheduled|scheduled your post|post (was )?(published|shared)/i;
-            let reclicked = false;
+            let reclicked = false, cleared = 0;
             for (let i = 0; i < 60 && !leftComposer(wc); i++) {
               await sleep(1000);
               const st = await wc.executeJavaScript(`(() => {
                 const t = [...document.querySelectorAll('[role="alert"],[role="status"],[aria-live]')].map(e => e.innerText || '').join('\\n');
                 const dlg = [...document.querySelectorAll('[role="dialog"] [role="button"],[role="dialog"] button')].find(b => /^(Lên lịch|Schedule|Tiếp tục|Continue|Xác nhận|Confirm|Đồng ý|OK)$/i.test((b.innerText || '').trim()) && b.getAttribute('aria-disabled') !== 'true');
-                if (dlg) { dlg.click(); return { text: t, dialog: true }; }
-                return { text: t };
-              })()`).catch(() => ({ text: '' }));
+                const kept = ${JSON.stringify(String(text || '').trim().slice(0, 20))};
+                const still = !kept || [...document.querySelectorAll('[contenteditable="true"]')].some(e => (e.innerText || '').includes(kept));
+                if (dlg) { dlg.click(); return { text: t, dialog: true, still }; }
+                return { text: t, still };
+              })()`).catch(() => ({ text: '', still: true }));
               if (DONE.test(st.text)) break;
+              // Lên lịch xong Business Suite dọn trình soạn về trống (vẫn cùng địa chỉ) → nội dung bài biến mất 2 lần liền = đã lên lịch.
+              if (text && st.still === false) { if (++cleared >= 2) break; } else cleared = 0;
               if (!reclicked && i >= 8 && !st.dialog) {
                 const again = await r.find(publish);
                 if (again) { reclicked = true; await wc.executeJavaScript(`(() => { const re = new RegExp(${JSON.stringify(publish.text)}, 'i'); const b = [...document.querySelectorAll('[role="button"],button')].filter(x => re.test((x.innerText || '').trim()) && x.getAttribute('aria-disabled') !== 'true').pop(); if (b) b.click(); })()`).catch(() => {}); }
               }
             }
-            const ok = leftComposer(wc) || DONE.test(await wc.executeJavaScript(`[...document.querySelectorAll('[role="alert"],[role="status"],[aria-live]')].map(e => e.innerText || '').join('\\n')`).catch(() => ''));
+            const ok = leftComposer(wc) || cleared >= 2 || DONE.test(await wc.executeJavaScript(`[...document.querySelectorAll('[role="alert"],[role="status"],[aria-live]')].map(e => e.innerText || '').join('\\n')`).catch(() => ''));
             if (ok) { progress({ id: 'publish', state: 'ok' }); savePostLog({ ketqua: 'xong ngầm', luot: attempt }); wc.loadURL('about:blank').catch(() => {}); return { done: true, filled: r.done, hidden: true }; }
             // Đã bấm mà không chắc kết quả: KHÔNG mở cột Meta ngay (dễ đăng trùng). Trang web kiểm tra lịch thật trên Meta trước.
-            progress({ id: 'publish', state: 'run', note: 'Đang kiểm tra trên Meta xem bài đã lên lịch chưa…' });
-            savePostLog({ ketqua: 'đã bấm, chưa chắc', luot: attempt });
-            return { uncertain: true, filled: r.done };
+            // Kiểm tra ngay trong Business Suite (danh sách bài đã lên lịch / đã đăng) — dùng phiên Business Suite, không cần mã Facebook của trang web.
+            progress({ id: 'publish', state: 'run', note: 'Đang kiểm tra trong Business Suite xem bài đã lên lịch chưa…' });
+            const v = await verifyInBS(wc, pageId, text, when);
+            postLog.steps.push({ s: 'kiem-tra-bs', st: v, away: !!isAway() });
+            if (v === 'found') { progress({ id: 'publish', state: 'ok' }); savePostLog({ ketqua: 'xong ngầm (kiểm tra danh sách)', luot: attempt }); wc.loadURL('about:blank').catch(() => {}); return { done: true, filled: r.done, hidden: true }; }
+            savePostLog({ ketqua: 'đã bấm, chưa chắc', kiem_tra: v, luot: attempt });
+            return { uncertain: true, verify: v, filled: r.done };
           }
           postLog.steps.push({ s: 'publish', st: 'không thấy / không bấm được nút', away: !!isAway() });
         } catch (e) { postLog.steps.push({ s: 'publish', st: 'lỗi', note: e.message, away: !!isAway() }); }
