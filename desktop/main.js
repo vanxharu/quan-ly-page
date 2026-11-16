@@ -383,7 +383,7 @@ app.whenReady().then(async () => {
     // Trang Facebook / Instagram / Threads dùng chung phiên đăng nhập Business Suite → phải cùng "thiết bị" với các khung khác của app
     // (cùng kiểu trình duyệt máy tính). Một phiên mà lúc là Chrome máy tính, lúc là iPhone là dấu hiệu Facebook dễ bắt xác minh (checkpoint).
     // Trang khác (TikTok…) chụp kiểu điện thoại bằng phiên riêng, không đăng nhập.
-    const w = new BrowserWindow({ show: false, width: fbLike ? 900 : 430, height: fbLike ? 1000 : 932, webPreferences: { partition: fbLike ? META : 'persist:snap', offscreen: true, sandbox: true, contextIsolation: true, backgroundThrottling: false } });
+    const w = new BrowserWindow({ show: false, width: fbLike ? 900 : 430, height: fbLike ? 1500 : 932, webPreferences: { partition: fbLike ? META : 'persist:snap', offscreen: true, sandbox: true, contextIsolation: true, backgroundThrottling: false } });
     try {
       w.webContents.setAudioMuted(true); w.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
       const MOBILE = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1';
@@ -399,8 +399,36 @@ app.whenReady().then(async () => {
       // Trang không đăng nhập: đóng hộp "mở ứng dụng / đăng nhập" che trang (nếu có). Trang Facebook đang đăng nhập: chỉ xem, không bấm gì.
       if (!fbLike) await w.webContents.executeJavaScript(`(() => { for (const b of document.querySelectorAll('[aria-label*="Close" i],[aria-label*="Đóng" i],[data-e2e*="close" i]')) try { b.click(); } catch (e) {} scrollTo(0, 0); })()`).catch(() => {});
       await new Promise(r => setTimeout(r, 600));
-      // Facebook bản máy tính: bỏ thanh trên cùng (thông báo, ảnh đại diện của bạn), chụp phần bài viết.
-      const img = await w.webContents.capturePage(fbLike ? { x: 0, y: 56, width: 900, height: 720 } : { x: 0, y: 0, width: 430, height: 620 });
+      // Facebook bản máy tính: tìm dòng số liệu của bài (cảm xúc · bình luận · chia sẻ), cuộn tới (chỉ cuộn, không bấm) và cắt khung ảnh
+      // từ đầu bài tới hết dòng số liệu + thanh Thích/Bình luận/Chia sẻ. Bài dài (ảnh to) thì giữ phần dưới có số liệu.
+      let clip = fbLike ? { x: 0, y: 56, width: 900, height: 720 } : { x: 0, y: 0, width: 430, height: 620 };
+      if (fbLike) {
+        const box = await w.webContents.executeJavaScript(`(() => {
+          const vis = el => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
+          const LAB = /^(Tất cả cảm xúc|All reactions|Xem ai đã bày tỏ cảm xúc|See who reacted)/i;
+          const TXT = /^(Tất cả cảm xúc:?\\s*)?[\\d][\\d.,]*\\s*(K|N|Tr|M)?\\s*(bình luận|comments?|lượt chia sẻ|chia sẻ|shares?|lượt xem|views?)$/i;
+          const cands = [...document.querySelectorAll('[aria-label]')].filter(el => LAB.test(el.getAttribute('aria-label') || '') && vis(el))
+            .concat([...document.querySelectorAll('span, div')].filter(el => el.childElementCount <= 1 && TXT.test((el.innerText || '').trim()) && vis(el)));
+          if (!cands.length) return null;
+          const el = cands.sort((a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top)[0];
+          el.scrollIntoView({ block: 'center' });
+          const art = el.closest('[role="article"]') || el.closest('[role="dialog"]') || el.closest('[role="main"]');
+          const mr = el.getBoundingClientRect(), ar = art ? art.getBoundingClientRect() : null;
+          // Cả dòng số liệu: các số cùng hàng (cảm xúc bên trái, bình luận / chia sẻ bên phải) → lấy đáy thấp nhất trong hàng.
+          const row = cands.map(c => c.getBoundingClientRect()).filter(r => Math.abs(r.top - mr.top) < 30);
+          return { mTop: mr.top, mBot: Math.max(...row.map(r => r.bottom), mr.bottom), aTop: ar ? ar.top : null, aL: ar ? ar.left : 0, aR: ar ? ar.right : innerWidth, H: innerHeight, W: innerWidth };
+        })()`).catch(() => null);
+        if (box) {
+          await new Promise(r => setTimeout(r, 700)); // ảnh / số vừa cuộn tới kịp vẽ
+          const bot = Math.min(box.H, Math.round(box.mBot + 56)); // + thanh Thích / Bình luận / Chia sẻ
+          let top = Math.max(56, Math.round(box.aTop != null ? box.aTop - 8 : bot - 720));
+          if (bot - top > 1000) top = bot - 1000; // bài quá dài: giữ phần dưới (có số liệu)
+          if (bot - top < 260) top = Math.max(56, bot - 260);
+          const L = Math.max(0, Math.round(box.aL - 8)), R = Math.min(box.W, Math.round(box.aR + 8));
+          clip = { x: L, y: top, width: Math.max(320, R - L), height: bot - top };
+        }
+      }
+      const img = await w.webContents.capturePage(clip);
       if (img.isEmpty()) return { error: 'không chụp được trang' };
       const dataUrl = 'data:image/jpeg;base64,' + img.toJPEG(82).toString('base64');
       // Đọc số thật đang hiện trên trang (TikTok: follower / following / thích của kênh, hoặc tim / bình luận / chia sẻ của video).
