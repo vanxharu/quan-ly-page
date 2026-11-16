@@ -77,9 +77,11 @@ async function zRead(older) {
     let text = (el.querySelector('[data-component="text-container"]')?.textContent || '').trim(); // textContent: giữ xuống dòng của tin
     const img = [...el.querySelectorAll('img.zimg-el')].find(i => !i.closest('.link-message'));
     const m = { mine, text, ts, mid: ts ? 'z' + ts : '' };
+    // Thẻ link (khách chia sẻ bài Facebook / TikTok…): lấy link của thẻ.
+    const la = el.querySelector('.link-message a[href^="http"], [class*="link-message"] a[href^="http"]'); if (la && !text.includes(la.href)) m.share = la.href;
     if (img) { const d = toData(img); if (d) m.pic = d; }
     const re = zReacts(el); if (re.length) m.re = re;
-    if (!m.text && !m.pic) {
+    if (!m.text && !m.pic && !m.share) {
       if (el.querySelector('z-instant')) m.text = '[Tin nhắn mẫu Zalo]';
       else if (el.querySelector('[class*="sticker" i]')) m.text = '[Sticker]';
       else if (el.querySelector('[class*="file" i]')) m.text = '[Tệp] ' + (el.innerText.split('\n').find(s => s.trim()) || '').trim();

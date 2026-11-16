@@ -431,7 +431,7 @@
     if (silent && !older && c.bsSig === sig) return;
     if (!older) { c.bsSig = sig; const keep = { snippet: c.snippet, messages: (r.messages || []).filter(m => !/^blob:/.test(m.pic || '')).slice(-60) }; bsMsgCache.set(c.id, keep); DB.set('bsMsg:' + c.id, keep).catch(() => {}); }
     drawBs(c, r, older ? { silent: true, keepTop: true } : { silent, older });
-    S.messages = (r.messages || []).filter(m => !m.sep).map(m => ({ isCustomer: !m.mine, text: m.text || '' }));
+    S.messages = (r.messages || []).filter(m => !m.sep).map(m => ({ isCustomer: !m.mine, text: [m.text, m.share].filter(Boolean).join(' ') }));
     S.lastMsgs = (r.messages || []).filter(m => !m.sep).slice(-6).map(m => ({ mine: !!m.mine, text: m.text || '', pic: !!m.pic, ts: m.ts || 0 })); pushMini();
     // Tin cuối trong hội thoại khác dòng trên danh sách (danh sách chưa kịp cập nhật): sửa luôn dòng đó + đưa lên đầu nếu mới hơn.
     const lastMsg = (r.messages || []).filter(m => !m.sep && (m.text || m.pic)).pop();
@@ -513,7 +513,11 @@
   const EMO = ['👍', '❤️', '😆', '😮', '😢', '😡'];
   const canAct = (c, m) => !!(c.bs && m.mid && window.metaDesktop?.reactThread);
   function msgBubble(c, m) {
-    const bub = h('div', { className: 'msg' + (m.mine ? ' me' : '') }, m.text || null, m.mine ? null : linkActions(c, m.text), m.pic ? picEl(m.pic) : null,
+    // Khách chia sẻ bài (thẻ chia sẻ, không có chữ link): hiện thẻ link + nút Tạo đơn như link thường.
+    const share = m.share && !String(m.text || '').includes(m.share) ? m.share : '';
+    const bub = h('div', { className: 'msg' + (m.mine ? ' me' : '') }, m.text || null,
+      share ? h('a', { className: 'msg-share', href: share, target: '_blank', rel: 'noopener', title: share }, h('span', { textContent: '🔗 Bài chia sẻ' }), h('small', { textContent: share.replace(/^https?:\/\/(www\.|m\.)?/, '').slice(0, 46) })) : null,
+      m.mine ? null : linkActions(c, [m.text, share].filter(Boolean).join(' ')), m.pic ? picEl(m.pic) : null,
       m.re?.length ? h('div', { className: 'msg-re', title: m.re.map(x => (x.mine ? 'Bạn' : c.other.name) + ' ' + x.e).join(' · ') }, ...m.re.map(x => h('span', { className: x.mine ? 'mine' : '', textContent: x.e }))) : null);
     if (!canAct(c, m)) return bub;
     const acts = h('div', { className: 'msg-acts' },

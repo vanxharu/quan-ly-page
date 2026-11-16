@@ -232,7 +232,7 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
   //  deleteThenInsertThread: 0 giờ hoạt động · 1 đã đọc tới · 2 tin cuối · 4 ảnh · 7 thread · 10 thư mục · 18 Page
   //  deleteThenInsertContact: 0 id · 2 ảnh · 9 tên   ·  insertNewMessageRange: 0 thread (đã tải 1 đoạn tin của hội thoại)
   const lsStores = new Map(); // pageId -> { threads, contacts, msgs: Map(uid -> Map(mid -> tin)), loaded:Set(uid), at }
-  const lsStore = pageId => { pageId = String(pageId); let st = lsStores.get(pageId); if (!st) lsStores.set(pageId, st = { threads: new Map(), contacts: new Map(), msgs: new Map(), loaded: new Set(), rcpt: new Map(), reacts: new Map(), at: 0 }); return st; };
+  const lsStore = pageId => { pageId = String(pageId); let st = lsStores.get(pageId); if (!st) lsStores.set(pageId, st = { threads: new Map(), contacts: new Map(), msgs: new Map(), loaded: new Set(), rcpt: new Map(), reacts: new Map(), shares: new Map(), at: 0 }); return st; };
   const lsVal = x => Array.isArray(x) ? (x[0] === 19 ? x[1] : x[0] === 9 ? null : x) : x;
   const lsMsg = (st, uid, mid) => { let m = st.msgs.get(uid); if (!m) st.msgs.set(uid, m = new Map()); let x = m.get(mid); if (!x) m.set(mid, x = { mid, ts: 0, text: '', mine: false, pic: '' }); return x; };
   // Lấy các gói Lightspeed { step: [...] } từ bất kỳ dạng bọc nào: gói WebSocket {"payload":"…"}, phản hồi GraphQL
@@ -275,6 +275,12 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
             st.threads.set(uid, { uid, at: Number(v[0]) || 0, read: Number(v[1]) || 0, snippet: String(v[2] || ''), pic: /^https/.test(v[4] || '') ? v[4] : '', folder: String(v[10] || '') }); list = true; seen++; }
         } else if (n === 'deleteThenInsertContact') {
           const id = String(v[0] || ''); if (/^\d+$/.test(id) && v[9]) st.contacts.set(id, { name: String(v[9]), pic: /^https/.test(v[2] || '') ? v[2] : '' });
+        } else if (n === 'insertXmaAttachment') {
+          // Khách chia sẻ bài / video / reel (thẻ chia sẻ, tin không có chữ link): lấy link bài trong thẻ, gắn vào tin theo mã tin.
+          const mid = v.find(x => typeof x === 'string' && /^mid\./.test(x)), urls = v.filter(x => typeof x === 'string' && /^https?:\/\//.test(x) && !/fbcdn\.net|\/l\.php\?|lookaside/.test(x));
+          const POST = /\/(share|posts|reel|reels|videos|watch|story\.php|permalink|photo|photos|groups)\b|fb\.watch|tiktok\.com|youtu|instagram\.com|threads\.(net|com)|shopee|lazada/i;
+          const url = urls.find(u => POST.test(u)) || urls.find(u => !/^https?:\/\/(www\.)?facebook\.com\/[^/?#]+\/?$/.test(u));
+          if (mid && url) { st.shares.set(mid, url); for (const [uid, ms] of st.msgs) if (ms.has?.(mid)) threads.add(uid); }
         } else if (n === 'upsertReaction' || n === 'deleteReaction') {
           // upsertReaction: 0 thread · 1 giờ tin · 2 mã tin · 3 người thả · 4 biểu tượng   ·  deleteReaction: 0 thread · 1 mã tin · 2 người
           const up = n === 'upsertReaction', uid = String(v[0] || ''), mid = String(up ? v[2] : v[1] || ''), who = String(up ? v[3] : v[2] || '');
@@ -298,20 +304,21 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
     // Tin mới của hội thoại: cập nhật luôn dòng hội thoại (giờ, tin cuối) để danh sách đúng ngay.
     for (const uid of threads) {
       const ms = [...(st.msgs.get(uid)?.values() || [])].sort((a, b) => b.ts - a.ts)[0], t = st.threads.get(uid);
-      if (ms && t && ms.ts > t.at) { t.at = ms.ts; t.snippet = (ms.mine ? 'Bạn: ' : '') + (ms.text || (ms.pic ? 'Đã gửi một ảnh.' : '')); if (!ms.mine) t.read = 1; list = true; } // read=1 (< giờ tin) = chưa đọc
+      if (ms && t && ms.ts > t.at) { t.at = ms.ts; t.snippet = (ms.mine ? 'Bạn: ' : '') + (ms.text || (ms.pic ? 'Đã gửi một ảnh.' : st.shares.has(ms.mid) ? 'Đã chia sẻ một bài viết.' : '')); if (!ms.mine) t.read = 1; list = true; } // read=1 (< giờ tin) = chưa đọc
     }
     if (threads.size || list) st.at = Date.now();
     return { threads, list, rc, pr };
   }
   // Tin của một hội thoại từ dữ liệu gốc → định dạng như readMessages (mốc giờ khi cách nhau > 30 phút).
   const lsMessages = (pageId, uid) => {
-    const all = [...(lsStore(pageId).msgs.get(String(uid))?.values() || [])].filter(m => m.ts && (m.text || m.pic)).sort((a, b) => a.ts - b.ts);
+    const sh = lsStore(pageId).shares;
+    const all = [...(lsStore(pageId).msgs.get(String(uid))?.values() || [])].filter(m => m.ts && (m.text || m.pic || sh.has(m.mid))).sort((a, b) => a.ts - b.ts);
     const out = []; let last = 0;
     for (const m of all) {
       if (m.ts - last > 30 * 60e3) { const d = new Date(m.ts), hm = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
         out.push({ sep: new Date().toDateString() === d.toDateString() ? hm : `${hm} ${d.getDate()} Tháng ${d.getMonth() + 1}, ${d.getFullYear()}` }); }
       const rx = lsStore(pageId).reacts.get(m.mid), re = rx?.size ? [...rx].map(([who, e]) => ({ e, mine: who === String(pageId) })) : null;
-      last = m.ts; out.push({ mine: m.mine, text: m.text, ...(m.pic ? { pic: m.pic } : {}), ts: m.ts, mid: m.mid, ...(re ? { re } : {}) });
+      last = m.ts; out.push({ mine: m.mine, text: m.text, ...(m.pic ? { pic: m.pic } : {}), ...(sh.has(m.mid) ? { share: sh.get(m.mid) } : {}), ts: m.ts, mid: m.mid, ...(re ? { re } : {}) });
     }
     return out;
   };
@@ -325,7 +332,7 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
     // Kèm tin cuối của hội thoại → Hộp thư sửa ngay dòng khách (tin cuối, giờ, đưa lên đầu) không cần đọc lại danh sách.
     const st = lsStore(pageId);
     for (const uid of r.threads) {
-      const m = [...(st.msgs.get(uid)?.values() || [])].filter(x => x.ts && (x.text || x.pic)).sort((a, b) => b.ts - a.ts)[0];
+      const m = [...(st.msgs.get(uid)?.values() || [])].filter(x => x.ts && (x.text || x.pic || st.shares.has(x.mid))).sort((a, b) => b.ts - a.ts)[0];
       const info = m ? { ts: m.ts, mid: m.mid, streak: lsStreak(st, uid), mine: m.mine, pic: m.pic || '', text: m.text || (m.pic ? 'Đã gửi một ảnh.' : ''), name: st.contacts.get(uid)?.name || '' } : null;
       try { threadChanged(`${pageId}:${uid}`, info); } catch {}
     }
