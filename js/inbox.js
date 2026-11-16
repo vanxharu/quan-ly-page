@@ -1163,7 +1163,18 @@
     S.image = t.imageData || '';
     drawAttach(); saveDraft(); togglePicker(false); $('ibText').focus();
   }
+  // Chọn ảnh xong là cho khung ngầm gắn sẵn + tải ảnh lên Meta (Business Suite), bấm Gửi chỉ còn bấm nút.
+  let primeT = 0;
+  function primeImage() {
+    clearTimeout(primeT); const c = S.conv, image = S.image;
+    // Bỏ ảnh / đang gửi: không báo gì (lần gửi sau tự dọn ô nhập; báo "bỏ" lúc đang gửi sẽ xoá mất ảnh đã gắn sẵn).
+    if (!image || S.sending || !c?.bs || c.zalo || !window.metaDesktop?.primeImage) return;
+    primeT = setTimeout(async () => { if (S.conv !== c || S.image !== image) return;
+      const data = image ? await asDataUrl(image).catch(() => '') : '';
+      if (S.conv === c && S.image === image) window.metaDesktop.primeImage({ pageId: String(c.page.id), uid: c.uid, image: data }).catch(() => {}); }, 400);
+  }
   function drawAttach() {
+    primeImage();
     $('ibAttach').hidden = !S.image;
     $('ibAttach').replaceChildren(...(S.image ? [h('img', { className: 'thumb', src: S.image, alt: '' }), h('span', { className: 'hint', textContent: 'Ảnh gửi sau chữ' }),
       h('button', { className: 'btn btn-ghost btn-sm', textContent: 'Bỏ ảnh', onclick: () => { S.image = ''; drawAttach(); saveDraft(); } })] : []));

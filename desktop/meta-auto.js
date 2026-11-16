@@ -899,6 +899,27 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
   const directReady = async (sl, pageId) => { try { const wc = sl?.win?.webContents; if (!wc || wc.isDestroyed() || wc.isLoading() || !wc.getURL().includes(`asset_id=${pageId}`)) return null;
     const cfg = lsStore(pageId).lsCfg; if (!cfg?.app || !cfg?.ver) return null;
     return await Promise.race([wc.executeJavaScript(`(window.__gaWS || []).some(w => w.readyState === 1 && w.__ls)`).catch(() => false), sleep(500).then(() => false)]) ? wc : null; } catch { return null; } };
+  // ── Gắn sẵn ảnh: bạn chọn ảnh / mẫu có ảnh trong Hộp thư → khung của Page mở hội thoại, gắn ảnh vào ô nhập để Meta tải lên trước
+  //    trong lúc bạn còn gõ chữ. Bấm Gửi chỉ còn bấm nút. Ảnh đổi / bỏ / đổi khách thì lần gửi sau tự dọn và gắn lại như thường.
+  const primeKey = (pageId, uid, image) => image ? `${pageId}:${uid}:${String(image).length}:${String(image).slice(-48)}` : '';
+  const primedStill = (wc, sl) => wc.executeJavaScript(`(() => [...document.querySelectorAll('img, video')].some(e => /^(blob|data):/.test(e.currentSrc || e.src || ''))
+    || !!document.querySelector('[data-surface*="attachment-preview-button-close"], [aria-label*="Gỡ tệp" i], [aria-label*="Remove attachment" i]'))()`).catch(() => false);
+  const primeImage = args => {
+    if (!threadArgs(args)) return Promise.resolve({ error: 'Thiếu Page hoặc khách.' });
+    const pid = String(args.pageId), key = primeKey(pid, String(args.uid), args.image), sl = sendSlot(pid);
+    if (!key) { sl.primed = null; return Promise.resolve({ ok: true }); }
+    if (sl.primed?.key === key) return Promise.resolve({ ok: !!sl.primed.ok });
+    sl.primed = { key, ok: false, at: Date.now() };
+    return sendQueue(pid, async s => {
+      if (s.primed?.key !== key) return { skip: true }; // đã đổi ảnh / đổi khách trong lúc chờ
+      const ok = await openThreadHidden(pid, String(args.uid), s); if (ok !== true) { s.primed = null; return { error: 'Không mở được hội thoại.' }; }
+      const wc = s.win.webContents;
+      if (await findComposer(wc, 4000)) await clearComposer(wc);
+      const att = await attachImage(wc, args.image);
+      if (s.primed?.key === key) s.primed.ok = !!att; else if (att) await clearComposer(wc);
+      return { ok: !!att };
+    }, 1).catch(e => ({ error: e.message }));
+  };
   const sendCore = async (args, mark, sl) => {
     const text = String(args.text || '').trim(), image = args.image || '';
     if (!text && !image) return { error: 'Thiếu nội dung.' };
@@ -908,14 +929,17 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
     mark('mo-hoi-thoai');
     if (ok !== true) return { error: ok === 'login' ? 'login' : 'Không mở được hội thoại trong Business Suite.' };
     const wc = sl.win.webContents, dbg = wc.debugger;
+    // Ảnh đã được gắn sẵn (và tải lên Meta) từ lúc bạn chọn ảnh → bỏ qua bước dọn + gắn ảnh, chỉ còn bấm Gửi.
+    const pk = primeKey(args.pageId, args.uid, image), primed = !!image && sl.primed?.key === pk && sl.primed.ok && await primedStill(wc, sl);
+    sl.primed = null;
     // Dọn ô nhập tại chỗ (gỡ ảnh sót, xoá chữ cũ). Không tải lại trang nữa: dấu hiệu "còn ảnh sót" hay nhận nhầm, tốn 20+ giây.
-    if (await findComposer(wc, 4000)) await clearComposer(wc);
-    mark('don-o-nhap');
+    if (!primed && await findComposer(wc, 4000)) await clearComposer(wc);
+    mark(primed ? 'anh-gan-san' : 'don-o-nhap');
     const read = () => wc.executeJavaScript(`(${readMessages})(false)`).catch(() => null);
     const myPics = r => (r?.messages || []).filter(m => m.mine && m.pic).length;
     const allPics = r => (r?.messages || []).filter(m => m.pic).length;
     const r0 = await read(), picsBefore = myPics(r0), allBefore = allPics(r0);
-    const attached = image ? await attachImage(wc, image) : true;
+    const attached = image ? primed || await attachImage(wc, image) : true;
     if (image) mark('dinh-anh');
     if (!attached) {
       const d = attachImage.last;
@@ -1225,6 +1249,6 @@ function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMet
     }
     return { ok: true, messages: lsMessages(pid, uid), source: 'ls' };
   }
-  return { react, lookupProfile, listThreads, readThread: args => readThread(args).then(r => withRcpt(args, r)), sendThread: args => sendThread(args).then(r => withRcpt(args, r)), composePost, hiddenStatus };
+  return { primeImage, react, lookupProfile, listThreads, readThread: args => readThread(args).then(r => withRcpt(args, r)), sendThread: args => sendThread(args).then(r => withRcpt(args, r)), composePost, hiddenStatus };
 }
 module.exports = { readThreads, createMetaAuto, extractProfile, findTarget };

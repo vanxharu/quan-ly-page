@@ -493,6 +493,7 @@ app.whenReady().then(async () => {
     const r = await zalo.list(args || {});
     return r.error && /đang tải/i.test(r.error) && zalo.status().state === 'login' ? { error: 'login' } : r; });
   ipcMain.handle('meta-thread-read', (e, args) => !fromPage(e) ? { error: 'denied' } : args?.pageId === 'zalo' ? zalo.read(args) : auto.readThread(args || {}));
+  ipcMain.handle('meta-thread-prime', (e, args) => !fromPage(e) || args?.pageId === 'zalo' ? { ok: false } : auto.primeImage(args || {}));
   ipcMain.handle('meta-thread-send', (e, args) => !fromPage(e) ? { error: 'denied' } : args?.pageId === 'zalo' ? zalo.send(args) : auto.sendThread(args || {}));
   ipcMain.handle('meta-threads', (e, args) => fromPage(e) ? auto.listThreads(args || {}) : { error: 'denied' });
   // ── Cửa sổ chat nhỏ nổi trên cùng: phản chiếu hội thoại đang mở trong Hộp thư (5 tin gần nhất), gửi tin, đổi nhanh giữa khách đang chờ ──

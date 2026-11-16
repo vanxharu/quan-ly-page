@@ -9,6 +9,7 @@ contextBridge.exposeInMainWorld('metaDesktop', {
   zaloStatus: () => ipcRenderer.invoke('zalo-status'),
   readThread: args => ipcRenderer.invoke('meta-thread-read', args),
   sendThread: args => ipcRenderer.invoke('meta-thread-send', args),
+  primeImage: args => ipcRenderer.invoke('meta-thread-prime', args),
   reactThread: args => ipcRenderer.invoke('thread-react', args),
   openZalo: () => ipcRenderer.send('open-zalo'),
   miniOpen: () => ipcRenderer.send('mini-open'),
