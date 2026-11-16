@@ -195,6 +195,15 @@ app.whenReady().then(async () => {
   zaloWorker.webContents.setAudioMuted(true); zaloWorker.webContents.setFrameRate(10);
   zaloWorker.webContents.setWindowOpenHandler(({ url }) => { if (/^https?:/i.test(url)) shell.openExternal(url); return { action: 'deny' }; });
   const ZW = () => zaloWorker.webContents;
+  // Khung Zalo ngầm (không hiện ra) phải được Zalo Web coi là cửa sổ đang mở, đang được chọn: nếu không, Zalo chờ mãi ở "Đang đăng nhập…"
+  // / không tải danh sách. Gắn sẵn từ trước khi trang chạy: giả "đang hiện + đang được chọn" và giữ trang ở trạng thái hoạt động.
+  const zaloAwake = async () => { try { const d = ZW().debugger; if (!d.isAttached()) d.attach('1.3');
+      if (!zaloAwake.done) { zaloAwake.done = 1; await d.sendCommand('Page.enable');
+        await d.sendCommand('Page.addScriptToEvaluateOnNewDocument', { source: `try { Object.defineProperty(document, 'visibilityState', { get: () => 'visible', configurable: true }); Object.defineProperty(document, 'hidden', { get: () => false, configurable: true }); document.hasFocus = () => true; } catch (e) {}` }); }
+      await d.sendCommand('Emulation.setFocusEmulationEnabled', { enabled: true }).catch(() => {});
+      await d.sendCommand('Page.setWebLifecycleState', { state: 'active' }).catch(() => {}); } catch {} };
+  ZW().on('did-start-loading', () => { if (ZW().getURL() !== 'about:blank') zaloAwake(); });
+  zaloAwake();
   // Web dịch vụ (vd dichvu.baostar.net): cột riêng, phiên đăng nhập riêng.
   const svcSes = session.fromPartition('persist:svc');
   svcSes.setUserAgent(app.userAgentFallback);
@@ -278,7 +287,8 @@ app.whenReady().then(async () => {
     const stuck = await (zaloColOpen ? zaloView.webContents : ZW()).executeJavaScript(`/Đang đăng nhập|Logging in/i.test(document.body?.innerText || '') && !document.querySelector('canvas, img[src*="qr"], [class*="qr" i]')`).catch(() => false);
     if (!stuck) { zaloFix = 0; return; }
     if (zaloFix >= 2) return; // đã thử 2 lần: để bạn bấm "Đăng nhập lại Zalo"
-    if (side !== 'zalo') { watchZalo(); return; } // Zalo đang ẩn: không tự tải lại trang, chờ bạn mở cột Zalo
+    // Zalo đang chạy ngầm: chỉ dọn bộ nhớ đệm + service worker rồi tải lại (giữ đăng nhập), tối đa 2 lần; không bao giờ xoá phiên khi ẩn.
+    if (side !== 'zalo') { if (zaloFix < 2) { zaloFix++; await resetZalo(false); } watchZalo(); return; }
     await resetZalo(zaloFix++ === 1); watchZalo();
   }, 25000); };
   zaloView.webContents.on('did-finish-load', () => { if (zaloView.webContents.getURL().startsWith('https://chat.zalo.me')) watchZalo(); });
