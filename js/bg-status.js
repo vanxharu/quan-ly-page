@@ -18,13 +18,13 @@
     let list = []; try { list = await window.metaDesktop.hiddenStatus(); } catch {}
     let z = null; try { z = await window.metaDesktop.zaloStatus?.(); } catch {}
     const zKept = (App.inbox?.zaloCount?.() ?? 0);
-    const ZST = { ready: '✓ Đã mở', loading: '⏳ Đang mở', login: '⚠ Chưa đăng nhập', closed: '— Chưa mở' };
+    const ZST = { ready: '✓ Đã mở', loading: '⏳ Đang mở', login: '⚠ Chưa đăng nhập', closed: '— Chưa mở', blocked: '⛔ Bị mạng chặn' };
     const by = new Map(list.map(x => [String(x.page), x])), pages = App.selected();
     const rows = pages.map(p => ({ p, st: by.get(String(p.id)) || { read: 'none', send: 'none' } }));
     const sendOk = r => r.st.send !== 'loading'; // khung gửi nghỉ / chưa mở vẫn ổn: tin chữ đi qua khung đọc
     for (const r of rows) if (r.st.send !== 'fast' && r.st.readFast) r.st = { ...r.st, send: r.st.send === 'loading' ? 'loading' : 'fast' };
     // Đếm cả khung Zalo (nếu có) vào tổng số khung ngầm.
-    const zOk = z?.state === 'ready', zN = z ? 1 : 0;
+    const zOk = z?.state === 'ready', zN = z && z.state !== 'blocked' ? 1 : 0; // Zalo bị mạng chặn: không tính vào "đang mở" (chờ mãi vô ích)
     const ready = rows.filter(r => r.st.read === 'ready' && sendOk(r)).length + (zOk ? 1 : 0), fast = rows.filter(r => r.st.send === 'fast').length, n = rows.length + zN;
     const state = ready < n ? 'loading' : fast === rows.length ? 'fast' : 'ready';
     btn.hidden = false; btn.className = 'bg-status ' + state;
@@ -39,7 +39,7 @@
         h('span', { className: 'st ' + (z.state === 'ready' ? 'ready' : z.state === 'loading' ? 'loading' : 'none'), title: z.err || '', textContent: ZST[z.state] || z.state }),
         h('span', { className: 'st ' + (zKept ? 'ready' : 'none'), title: `Đọc được ${z.rows} hội thoại trên Zalo Web · ${zKept} khách hiện trong Hộp thư` + (z.err ? ' · lỗi: ' + z.err : ''), textContent: z.state === 'ready' ? `${zKept} khách` : '' })) : null,
       z && z.state !== 'ready' ? h('div', { className: 'hint', style: 'margin:4px 0 0;padding:6px 8px;border-radius:6px;background:var(--surface-2,rgba(127,127,127,.12))' },
-        h('div', { textContent: 'Zalo ngầm đang hiện: ' + ((z.screen?.text || '').slice(0, 140) || '(trang trống)') + (z.reloads ? ` · đã tự tải lại ${z.reloads} lần` : '') }),
+        h('div', { textContent: z.state === 'blocked' ? '⛔ Zalo Web bị phần mềm bảo mật / mạng công ty chặn (chat.zalo.me) — app không vượt được. Nhờ quản trị mạng mở chặn, hoặc dùng mạng khác (vd 4G).' : 'Zalo ngầm đang hiện: ' + ((z.screen?.text || '').slice(0, 140) || '(trang trống)') + (z.reloads ? ` · đã tự tải lại ${z.reloads} lần` : '') }),
         h('div', { style: 'margin-top:4px;display:flex;gap:6px' },
           h('button', { className: 'btn btn-sm', textContent: 'Mở cột Zalo', onclick: () => window.metaDesktop?.openZalo?.() }),
           h('button', { className: 'btn btn-sm', textContent: 'Tải lại Zalo ngầm', onclick: () => window.metaDesktop?.resetZalo?.(false) }))) : null,

@@ -10,6 +10,8 @@ const TAG = '__GA_ZALO__';
 // ── Chạy trong trang Zalo ──
 function zState() {
   if (document.querySelector('#conversationList')) return 'ready';
+  // Phần mềm bảo mật / tường lửa công ty chặn Zalo (vd Kaspersky "Block Access Zalo"): trang chặn thay cho Zalo Web.
+  if (/Kaspersky|ESET|Fortinet|FortiGuard|Sophos|Bitdefender|Symantec|web page has been blocked|cannot be provided|trang web (đã )?bị chặn|bị chặn bởi/i.test((document.title || '') + ' ' + (document.body?.innerText || '').slice(0, 600))) return 'blocked';
   const t = document.body?.innerText || '';
   if (/Đang đăng nhập|Logging in/i.test(t)) return 'loading';
   if ((/quét mã|qr code|đăng nhập bằng|với mã qr/i.test(t) || document.querySelector('.qrcode, [class*="qr-code" i], img[src*="qr" i]')) && !document.querySelector('#main-tab')) return 'login';
@@ -312,7 +314,7 @@ function createZaloAuto({ wc, cdp = null, beginInput = async () => {}, endInput 
     if (s === 'ready') stat.watch = !!(await run(zWatch, TAG).catch(e => { stat.err = 'zWatch: ' + e.message; return false; }));
     return s;
   };
-  const err = s => ({ error: s === 'login' || s === 'closed' ? 'login' : 'Zalo Web đang tải, thử lại sau vài giây.' });
+  const err = s => ({ error: s === 'login' || s === 'closed' ? 'login' : s === 'blocked' ? 'Zalo Web đang bị phần mềm bảo mật / mạng công ty chặn (chat.zalo.me). Nhờ quản trị mạng mở chặn hoặc dùng mạng khác.' : 'Zalo Web đang tải, thử lại sau vài giây.' });
   let lastList = [];
   const list = ({ deep = false } = {}) => queue(async () => {
     const s = await ready(); if (s !== 'ready') return err(s);
