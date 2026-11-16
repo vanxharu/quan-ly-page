@@ -597,8 +597,26 @@ app.whenReady().then(async () => {
       const q = new URLSearchParams({ client_id: a.appId, redirect_uri: LOGIN_PAGE, response_type: 'token', state });
       if (/^\d+$/.test(String(a.configId))) q.set('config_id', a.configId);
       const win = new BrowserWindow({ show: false, webPreferences: { partition: META, offscreen: true, sandbox: true, contextIsolation: true } });
-      const done = token => { clearTimeout(timer); refreshing = null; if (!win.isDestroyed()) win.destroy(); resolve(token ? { token } : {}); };
-      const timer = setTimeout(() => done(''), 20000);
+      const done = token => { clearTimeout(timer); clearInterval(nudge); refreshing = null; if (!win.isDestroyed()) win.destroy(); resolve(token ? { token } : {}); };
+      // Không lấy được token: chụp màn hình hộp thoại Facebook (dang-nhap-fb.png) để biết vì sao (đòi mật khẩu, đòi xác nhận…).
+      const shot = () => win.webContents.capturePage().then(img => { const dir = path.join(app.getPath('downloads'), 'GetHelps-debug'); require('fs').mkdirSync(dir, { recursive: true }); require('fs').writeFileSync(path.join(dir, 'dang-nhap-fb.png'), img.toPNG()); }).catch(() => {});
+      const timer = setTimeout(async () => { if (!win.isDestroyed()) await shot(); done(''); }, 30000);
+      // Hộp thoại Đăng nhập cho doanh nghiệp hay hỏi lại "Tiếp tục dưới tên …" dù đã cấp quyền → tự bấm Tiếp tục / OK (tối đa 4 lần).
+      // Gặp trang đòi mật khẩu / mã xác minh thì dừng ngay: cần bạn đăng nhập lại thật.
+      let clicks = 0;
+      const nudge = setInterval(async () => {
+        if (win.isDestroyed()) return clearInterval(nudge);
+        const r = await win.webContents.executeJavaScript(`(() => {
+          if (document.querySelector('input[type=password], input[name=approvals_code], input[name=email]')) return 'login';
+          const want = /^(tiếp tục|continue|tiếp tục dưới tên.*|continue as.*|ok|đồng ý|xác nhận|cho phép|allow)$/i;
+          const el = [...document.querySelectorAll('button, [role=button], input[type=submit], a[role=button]')].find(b => { const t = (b.innerText || b.value || b.getAttribute('aria-label') || '').trim(); const r = b.getBoundingClientRect(); return want.test(t) && r.width > 0 && r.height > 0 && !b.disabled && b.getAttribute('aria-disabled') !== 'true'; });
+          if (el) { el.click(); return 'clicked'; }
+          return '';
+        })()`).catch(() => '');
+        if (r === 'login') { clearInterval(nudge); await shot(); done(''); }
+        else if (r === 'clicked' && ++clicks >= 4) clearInterval(nudge);
+      }, 1500);
+      win.on('closed', () => clearInterval(nudge));
       const check = (ev, url) => {
         if (!String(url).startsWith(LOGIN_PAGE)) return;
         ev?.preventDefault?.();

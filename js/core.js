@@ -253,11 +253,11 @@ async function api(path, params = {}, method = 'GET', token = App.page()?.access
 let tokenRefresh = null;
 const tokenAlias = new Map();
 const currentToken = t => { for (let i = 0; i < 20 && tokenAlias.has(t); i++) t = tokenAlias.get(t); return t; };
-App.refreshToken = () => tokenRefresh ||= (async () => {
+App.refreshToken = (opts = {}) => tokenRefresh ||= (async () => {
   let fresh = '';
   if (window.metaDesktop?.refreshLogin) fresh = (await window.metaDesktop.refreshLogin({ appId: local.get('appId') || App.DEFAULT_APP_ID, configId: App.CONFIG_ID }).catch(() => ({})))?.token || '';
   else if (window.FB) fresh = await new Promise(r => { try { FB.getLoginStatus(s => r(s.authResponse?.accessToken || ''), true); } catch { r(''); } });
-  if (!fresh) { askRelogin(); return false; }
+  if (!fresh) { if (!opts.quiet) askRelogin(); return false; }
   const pages = await apiPaged('/me/accounts', { fields: 'id,access_token', limit: 100 }, fresh, 3);
   const oldUser = App.userToken || local.get('fbTok'); // lúc mở app token đã lưu có thể đã hết hạn
   if (oldUser && oldUser !== fresh) tokenAlias.set(oldUser, fresh);
@@ -265,6 +265,9 @@ App.refreshToken = () => tokenRefresh ||= (async () => {
   App.userToken = fresh; local.set('fbTok', fresh);
   return true;
 })().finally(() => { tokenRefresh = null; }); // lỗi dồn dập cùng lúc dùng chung một lần xin
+// Token đăng nhập Facebook chỉ sống ~1–2 giờ: app Windows tự xin token mới 45 phút/lần (ngầm, không hiện gì), để không bao giờ
+// tới lúc hết hạn giữa chừng. Xin không được thì thôi — chỉ khi một thao tác thật bị lỗi mới hiện nút Đăng nhập lại.
+if (window.metaDesktop?.refreshLogin) setInterval(() => { if (App.userToken || local.get('fbTok')) App.refreshToken({ quiet: true }).catch(() => {}); }, 45 * 60e3);
 function askRelogin() {
   if (document.getElementById('reloginBar')) return;
   const bar = h('div', { id: 'reloginBar', className: 'status err', style: 'position:fixed;left:50%;top:60px;transform:translateX(-50%);z-index:90;display:flex;gap:10px;align-items:center;box-shadow:0 8px 24px #0004' },
