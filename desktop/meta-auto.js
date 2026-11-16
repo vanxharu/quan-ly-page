@@ -197,7 +197,7 @@ async function putImage(dbg, objectId, image, base) {
   return r?.result?.value === 1;
 }
 
-function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMeta = () => () => {}, metaShown = () => true, notify = () => {}, progress = () => {}, threadChanged = () => {}, listChanged = () => {}, receiptChanged = () => {}, threadRead = () => {} }) {
+function createMetaAuto({ worker, makeWorker = null, composer, metaView, showMeta = () => () => {}, metaShown = () => true, notify = () => {}, progress = () => {}, threadChanged = () => {}, listChanged = () => {}, receiptChanged = () => {}, threadRead = () => {}, isAway = () => false }) {
   // Hội thoại đang mở trong khung ẩn có tin mới/đổi → báo ngay cho Hộp thư (không phải chờ chu kỳ đọc lại).
   // Trang ẩn theo dõi khung tin bằng MutationObserver và in một dấu hiệu ra console; ở đây bắt dấu hiệu đó.
   const watchThread = wc => wc.executeJavaScript(`(() => { try { window.__gaObs?.disconnect(); } catch {}
@@ -1077,8 +1077,14 @@ function lsIngest(pageId, raw) {
   // pagelet BusinessComposerTextEditor (tải chậm), mục "Nút" là combobox, "Đặt ngày và giờ" là công tắc.
   // Mỗi bước làm riêng, bước nào hỏng thì báo để bạn làm tay; luôn chép sẵn nội dung vào clipboard.
   // Điền trình soạn trong một webContents (cột Meta đang hiện, hoặc cửa sổ vẽ ngầm). Trả về bước nào đã xong.
+  const keepAwake = async dbg => { await dbg.sendCommand('Emulation.setFocusEmulationEnabled', { enabled: true }).catch(() => {});
+    await dbg.sendCommand('Page.setWebLifecycleState', { state: 'active' }).catch(() => {}); };
+  // Nhật ký lần đăng / hẹn giờ gần nhất (Downloads/GetHelps-debug/dang-bai.json): bước nào hỏng, lúc đó app có đang khoá / ở dưới không.
+  let postLog = { t0: Date.now(), steps: [] }; const postLogs = [];
+  const savePostLog = (extra = {}) => { try { postLogs.unshift({ at: new Date(postLog.t0).toISOString(), ...extra, steps: postLog.steps }); postLogs.splice(10);
+    const dir = path.join(app.getPath('downloads'), 'GetHelps-debug'); fs.mkdirSync(dir, { recursive: true }); fs.writeFileSync(path.join(dir, 'dang-bai.json'), JSON.stringify(postLogs, null, 1)); } catch {} };
   const fill = async (wc, { pageId, text, image, when }) => {
-    const step = (id, state, note = '') => progress({ id, state, note });
+    const step = (id, state, note = '') => { postLog.steps.push({ s: id, st: state, note, t: Math.round((Date.now() - postLog.t0) / 1000), away: !!isAway() }); progress({ id, state, note }); };
     step('open', 'run');
     await wc.loadURL(`https://business.facebook.com/latest/composer/?asset_id=${pageId}`).catch(() => {});
     const find = spec => wc.executeJavaScript(`(${findTarget})(${JSON.stringify(spec)})`).catch(() => null);
@@ -1113,6 +1119,9 @@ function lsIngest(pageId, raw) {
     const waitFor = async (spec, ms = 5000) => { for (let t = 0; t < ms; t += 250) { if (await find(spec)) return true; await sleep(250); } return false; };
     try {
       if (!dbg.isAttached()) dbg.attach('1.3');
+      // Khung soạn ngầm phải luôn được coi là "đang hiện + đang được chọn". Thiếu bước này, khi app không ở trên cùng
+      // (khoá app, chuyển sang cửa sổ khác) trang mất focus → gõ chữ / chọn ngày giờ / bấm Lên lịch không ăn → app phải mở cột Meta.
+      await keepAwake(dbg);
       // 1) Nội dung TRƯỚC ảnh: ô "Văn bản" chỉ có khi trình soạn đang ở dạng bài viết; thêm ảnh trước có lúc làm ô này biến mất.
       if (text) step('text', 'run');
       if (text && await waitFor({ selector: '[data-pagelet="BusinessComposerTextEditor"] [contenteditable="true"], [contenteditable="true"][role="textbox"]' }, 15000)) {
@@ -1197,13 +1206,18 @@ function lsIngest(pageId, raw) {
     const { pageId, text, when } = args;
     if (!/^\d+$/.test(String(pageId))) return { error: 'Thiếu Page.' };
     if (text) clipboard.writeText(String(text));
-    if (composer && !args.visibleOnly) {
+    postLog = { t0: Date.now(), steps: [] };
+    // Làm ngầm tối đa 2 lượt (lượt 2 chỉ khi lượt 1 thiếu bước): lỗi thoáng qua (trang tải chậm, mất focus) không bắt bạn bấm tay.
+    for (let attempt = 1; composer && !args.visibleOnly && attempt <= 2; attempt++) {
       const wc = composer.webContents, r = await fill(wc, args);
-      if (r.error === 'login') return r;
-      if (!r.error && r.done.image && r.done.text && r.done.button && r.done.schedule === true) {
+      if (r.error === 'login') { savePostLog({ ketqua: 'login' }); return r; }
+      const full = !r.error && r.done.image && r.done.text && r.done.button && r.done.schedule === true;
+      if (!full) { postLog.steps.push({ s: 'luot-' + attempt, st: 'thieu', note: r.error || JSON.stringify(r.done) }); if (attempt < 2) { progress({ id: 'reset', state: 'reset' }); continue; } }
+      if (full) {
         const dbg = wc.debugger;
         try {
           if (!dbg.isAttached()) dbg.attach('1.3');
+          await keepAwake(dbg);
           const publish = { role: 'button', text: (when ? /^Lên lịch$|^Schedule$/i : /^Đăng$|^Publish$|^Post$/i).source, enabled: true };
           // Đặt giờ xong trang có thể dựng lại form: kiểm tra nút Gửi tin nhắn lần cuối trước khi bấm.
           if (!(await r.ensureButton())) throw Error('Mất lựa chọn nút Gửi tin nhắn');
@@ -1228,18 +1242,27 @@ function lsIngest(pageId, raw) {
               }
             }
             const ok = leftComposer(wc) || DONE.test(await wc.executeJavaScript(`[...document.querySelectorAll('[role="alert"],[role="status"],[aria-live]')].map(e => e.innerText || '').join('\\n')`).catch(() => ''));
-            if (ok) { progress({ id: 'publish', state: 'ok' }); wc.loadURL('about:blank').catch(() => {}); return { done: true, filled: r.done, hidden: true }; }
+            if (ok) { progress({ id: 'publish', state: 'ok' }); savePostLog({ ketqua: 'xong ngầm', luot: attempt }); wc.loadURL('about:blank').catch(() => {}); return { done: true, filled: r.done, hidden: true }; }
             // Đã bấm mà không chắc kết quả: KHÔNG mở cột Meta ngay (dễ đăng trùng). Trang web kiểm tra lịch thật trên Meta trước.
             progress({ id: 'publish', state: 'run', note: 'Đang kiểm tra trên Meta xem bài đã lên lịch chưa…' });
+            savePostLog({ ketqua: 'đã bấm, chưa chắc', luot: attempt });
             return { uncertain: true, filled: r.done };
           }
-        } catch {}
+          postLog.steps.push({ s: 'publish', st: 'không thấy / không bấm được nút', away: !!isAway() });
+        } catch (e) { postLog.steps.push({ s: 'publish', st: 'lỗi', note: e.message, away: !!isAway() }); }
+        // Đã đủ bước mà chưa bấm được nút Đăng / Lên lịch: thử lại lượt 2 trước khi bắt bạn làm tay.
+        if (attempt < 2) { progress({ id: 'reset', state: 'reset' }); continue; }
       }
+      savePostLog({ ketqua: 'chuyển sang làm tay', khoa: !!isAway() });
+      // Giữ nguyên trang soạn ngầm để "Lưu chẩn đoán" chụp được (xem vì sao thiếu bước).
+    }
+    if (composer && !args.visibleOnly) {
       notify('Đăng ngầm chưa xong (Business Suite thiếu bước). Mở cột Meta để bạn hoàn tất…');
       progress({ id: 'reset', state: 'reset' }); // chạy lại các bước trong cột Meta, bảng tiến độ làm mới
       progress({ id: 'publish', state: 'manual', note: 'Mở cột Meta: hoàn tất bước đỏ rồi bấm Đăng / Lên lịch' });
-      // Giữ nguyên trang soạn ngầm để "Lưu chẩn đoán" chụp được (xem vì sao thiếu bước).
     }
+    // App đang khoá: chưa mở cột Meta (bạn không thấy để bấm, và 15 phút chờ sẽ trôi mất) — chờ bạn mở khoá rồi mới mở.
+    if (isAway()) { notify('Bài cần bạn bấm tay trong Business Suite — mở khoá app để hoàn tất.'); for (let i = 0; i < 3600 && isAway(); i++) await sleep(1000); }
     const wc = metaView.webContents, restore = showMeta();
     const r = await fill(wc, args);
     if (r.error) { restore(); return r; }

@@ -486,6 +486,7 @@ app.whenReady().then(async () => {
     return w;
   };
   const auto = createMetaAuto({ worker, makeWorker, composer, metaView, showMeta: showMetaTemp, metaShown: () => side === 'meta',
+    isAway: () => { try { return !!appLock?.isLocked?.(); } catch { return false; } }, // app đang khoá (màn che mật khẩu)
     progress: data => pageView.webContents.executeJavaScript(`window.App?.composeProgress?.(${JSON.stringify(data)})`).catch(() => {}),
     notify: msg => pageView.webContents.executeJavaScript(`typeof toast === 'function' && toast(${JSON.stringify(msg)}, 30000)`).catch(() => {}),
     threadRead: (id, at) => pageView.webContents.executeJavaScript(`window.App?.inbox?.bsRead?.(${JSON.stringify(String(id))}, ${Number(at) || 0})`).catch(() => {}),
