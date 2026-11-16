@@ -8,7 +8,7 @@
   };
   const pageName = id => id ? (App.pageById(id)?.name || connected.find(p => p.id === id)?.name || id) : 'Mọi Page';
   const scopeSelect = (value = '') => h('select', { name: 'page_id' }, h('option', { value: '', textContent: 'Mọi Page' }),
-    ...connected.map(p => h('option', { value: p.id, textContent: p.name, selected: p.id === value })));
+    ...[...new Map([...connected, ...App.selected().map(p => ({ id: String(p.id), name: p.name }))].map(p => [String(p.id), p])).values()].map(p => h('option', { value: p.id, textContent: p.name, selected: String(p.id) === String(value) })));
   const flowSelect = (name, value = '', none = '— không —') => h('select', { name }, h('option', { value: '', textContent: none }),
     ...flowsCache.map(f => h('option', { value: f.id, textContent: f.name, selected: f.id === value })));
   const lines = v => String(v || '').split('\n').map(s => s.trim()).filter(Boolean);
@@ -27,13 +27,24 @@
     }
   });
 
+  // Bot chạy trong app máy tính (js/local-bot.js): công tắc + trạng thái.
+  const localBotCard = kind => {
+    const B = App.localBot; if (!B) return null;
+    const pages = App.selected();
+    return h('div', { className: 'card' }, h('div', { className: 'row', style: 'gap:10px;align-items:center' },
+      h('label', { className: 'row', style: 'gap:6px;font-weight:600' }, h('input', { type: 'checkbox', checked: B.on, onchange: e => { B.setOn(e.target.checked); toast(e.target.checked ? 'Đã bật bot trong app.' : 'Đã tắt bot trong app.'); } }), '🤖 Bot chạy trong app'),
+      h('span', { className: 'hint grow', textContent: `${pages.length} Page đang chọn · ${kind === 'message' ? 'trả lời tin nhắn trong ~1 giây' : 'kiểm tra bình luận mới 90 giây/lần'}${B.status ? ' · ' + B.status : ''}` })),
+      h('p', { className: 'hint', style: 'margin:6px 0 0', textContent: kind === 'message'
+        ? 'Chạy khi app đang mở (kể cả lúc khoá), cho các Page đang chọn ở góc trên. Không cần Meta duyệt ứng dụng. Nút bấm của kịch bản được gửi thành danh sách đánh số — khách trả lời số hoặc tên mục. Bạn chat tay với khách thì bot im lặng với khách đó theo số phút ở Menu & lời chào.'
+        : 'Chạy khi app đang mở, cho các Page đang chọn: ẩn bình luận có SĐT / link, tự thích, trả lời công khai và nhắn riêng theo quy tắc bên dưới. Không trả lời lại bình luận có từ trước khi mở app.' }));
+  };
   // ── Quy tắc (dùng chung cho từ khoá tin nhắn và bình luận) ──
   function ruleList(el, kind, rerender) {
     let editing = null;
     const draw = async () => {
       const rules = await q(sb().from('rules').select('*').eq('kind', kind).order('priority', { ascending: false }).order('created_at'));
       const box = h('div', {});
-      el.replaceChildren(...[kind === 'message' && App.selected().length ? routingCard(App.selected()) : null, notConnected(), box].filter(Boolean));
+      el.replaceChildren(...[localBotCard(kind), kind === 'message' && App.selected().length && !App.localBot ? routingCard(App.selected()) : null, App.localBot ? null : notConnected(), box].filter(Boolean));
       box.append(
         h('div', { className: 'toolbar' }, h('h3', { className: 'card-title grow', textContent: kind === 'message' ? `Quy tắc trả lời tin nhắn (${rules.length})` : `Quy tắc trả lời bình luận (${rules.length})` }),
           h('button', { className: 'btn btn-primary', textContent: '+ Quy tắc mới', onclick: () => { editing = {}; draw(); } })),
@@ -95,7 +106,7 @@
   panel('botcomments', async el => {
     const settings = await q(sb().from('page_settings').select('*'));
     const top = h('div', { className: 'card' }, h('div', { className: 'card-head' }, h('h3', { className: 'card-title', textContent: 'Với mọi bình luận (các Page đang chọn)' })));
-    const rows = App.selected().filter(p => connected.some(c => c.id === p.id));
+    const rows = App.localBot ? App.selected() : App.selected().filter(p => connected.some(c => c.id === p.id));
     // Page chưa có dòng cài đặt (vừa kết nối) thì update không ghi gì: dùng upsert theo page_id.
     const toggle = (s, key, label, pageId) => h('label', { className: 'row', style: 'gap:4px' }, h('input', { type: 'checkbox', checked: !!s[key], onchange: async e => {
       const on = e.target.checked;
