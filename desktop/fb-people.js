@@ -5,7 +5,7 @@
 // - Chỉ đọc; chỉ bấm vào chỗ mở danh sách để xem (xem fb-people-page.js).
 const PAGE = require('./fb-people-page');
 
-module.exports = function createFbPeople({ BrowserWindow, partition, asChrome }) {
+module.exports = function createFbPeople({ BrowserWindow, partition, asChrome, saveDebug }) {
   const wait = ms => new Promise(r => setTimeout(r, ms));
   const jitter = (a, b) => wait(a + Math.random() * (b - a));
   let chain = Promise.resolve();
@@ -22,6 +22,12 @@ module.exports = function createFbPeople({ BrowserWindow, partition, asChrome })
     return w;
   };
   const run = (w, code) => w.webContents.executeJavaScript(`(${PAGE}, ${code})`);
+  // Đóng hộp cảm xúc / chia sẻ: bấm Đóng, rồi phím Esc thật; kiểm tra lại cho tới khi chỉ còn hộp của bài.
+  const closeAll = async w => { for (let i = 0; i < 4; i++) {
+    if ((await run(w, '__fbp.extraDialogs()').catch(() => 0)) <= 0) return true;
+    if (i < 2) await run(w, '__fbp.closeDialog()').catch(() => {});
+    else { w.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Escape' }); w.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Escape' }); }
+    await jitter(900, 1400); } return false; };
   const isWall = href => { try { const x = new URL(href); return /facebook\.com$/i.test(x.hostname) && (/^\/(home\.php)?$/.test(x.pathname) || /^\/(login|checkpoint|two_step)/.test(x.pathname)); } catch { return false; } };
 
   // Đọc hết một danh sách trong hộp đang mở: cuộn tới khi không thêm người (3 lượt) hoặc đủ giới hạn.
@@ -47,6 +53,7 @@ module.exports = function createFbPeople({ BrowserWindow, partition, asChrome })
     try {
       await jitter(3500, 5000);
       if (isWall(w.webContents.getURL())) return { error: 'Facebook không mở được bài này (bài riêng tư, đã xoá, link hết hạn, hoặc phiên Facebook trong app cần đăng nhập lại ở cột Meta).' };
+      await run(w, '__fbp.markRoot()');
       const post = await run(w, '__fbp.stats()');
       if (post.loginWall) return { error: 'Phiên Facebook trong app đã đăng xuất. Mở cột Meta và đăng nhập lại.' };
       const people = new Map(); // link → người
@@ -67,10 +74,11 @@ module.exports = function createFbPeople({ BrowserWindow, partition, asChrome })
             for (const p of await drain(w, max)) { const x = person(p); x.reaction ||= t.type; x.reacted = true; }
           }
           if (list.length < (post.reactions || 0)) notes.push(`Facebook chỉ hiện ${list.length}/${post.reactions} người thả cảm xúc.`);
-          await run(w, '__fbp.closeDialog()'); await jitter(1000, 1600);
+          if (!await closeAll(w)) notes.push('Không đóng được hộp cảm xúc.');
         } else notes.push('Không thấy nút mở danh sách cảm xúc.');
       }
 
+      if (post.comments == null || post.shares == null) { const again = await run(w, '__fbp.stats()').catch(() => ({})); for (const k of ['reactions', 'comments', 'shares', 'author', 'authorLink']) if (post[k] == null && again[k] != null) post[k] = again[k]; }
       if (comments && post.comments !== 0) {
         progress({ step: 'Đang mở tất cả bình luận…' });
         if (await run(w, '__fbp.allCommentsMenu()')) { await jitter(900, 1400); await run(w, '__fbp.allCommentsPick()'); await jitter(2200, 3000); }
@@ -90,25 +98,28 @@ module.exports = function createFbPeople({ BrowserWindow, partition, asChrome })
           if (c.reply) x.replies++; else x.comments.push(c.text);
           if (!c.reply && author && c.replyNames.includes(author)) x.answered = true;
         }
-        if (!list.length && post.comments) notes.push('Không đọc được bình luận (Facebook có thể đã đổi giao diện).');
+        if (!list.length && post.comments !== 0) notes.push('Không đọc được bình luận nào. Bạn mở mục Thông tin chẩn đoán bên dưới, chụp gửi người hỗ trợ.');
       }
 
-      if (shares && post.shares) {
+      if (shares && post.shares !== 0) {
         progress({ step: 'Đang đọc người chia sẻ…' });
         if (await run(w, '__fbp.openShares()')) {
           await jitter(2500, 3500);
           const list = await drain(w, max, n => progress({ step: `Đang đọc người chia sẻ… ${n}` }));
           for (const p of list) person(p).shared++;
-          notes.push(`Người chia sẻ: Facebook chỉ cho xem ${list.length}/${post.shares} lượt chia sẻ công khai.`);
-          await run(w, '__fbp.closeDialog()');
-        } else notes.push('Không mở được danh sách chia sẻ.');
+          notes.push(post.shares ? `Người chia sẻ: Facebook chỉ cho xem ${list.length}/${post.shares} lượt chia sẻ công khai.` : `Người chia sẻ công khai: ${list.length}.`);
+          await closeAll(w);
+        } else if (post.shares) notes.push('Không mở được danh sách chia sẻ.');
       }
 
       // Bỏ tác giả bài khỏi danh sách người tương tác.
       if (post.authorLink) people.delete(post.authorLink);
       if (post.reactions == null && post.comments == null && post.shares == null && !people.size) notes.push('Không nhận ra bài viết trên trang này (link có đúng là một bài viết không?).');
       const out = { post, people: [...people.values()], notes };
-      if (!out.people.length) out.debug = await run(w, '__fbp.debug()').catch(() => null);
+      out.debug = await run(w, '__fbp.debug()').catch(() => null);
+      out.debug && (out.debug.counts = { people: out.people.length, reacted: out.people.filter(p => p.reacted).length, typed: out.people.filter(p => p.reaction).length,
+        commented: out.people.filter(p => p.comments.length).length, shared: out.people.filter(p => p.shared).length }, out.debug.post = post, out.debug.notes = notes);
+      saveDebug?.(out.debug);
       return out;
     } catch (err) { return { error: err.message }; } finally { if (!w.isDestroyed()) w.destroy(); }
   });

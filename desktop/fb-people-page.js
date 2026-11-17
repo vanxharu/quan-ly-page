@@ -24,15 +24,25 @@ module.exports = String.raw`(() => {
     return null;
   };
   const topDialog = () => { const ds = [...document.querySelectorAll('[role="dialog"]')].filter(vis); return ds[ds.length - 1] || null; };
-  // Gốc của bài: hộp xem bài (ảnh / video / bài trong nhóm mở dạng hộp) hoặc bài đầu tiên của trang.
-  const postRoot = () => topDialog() || document.querySelector('[role="main"] [role="article"]') || document.querySelector('[role="article"]') || document.querySelector('[role="main"]') || document.body;
+  // Gốc của bài, chốt một lần lúc mới mở (trước khi mở hộp cảm xúc / chia sẻ): hộp xem bài nếu bài mở dạng hộp (ảnh, video, bài nhóm),
+  // không thì cả trang. Không lấy [role=article] đầu tiên: ở trang ảnh, đó có thể là một bình luận.
+  let ROOT = null, BASE_DIALOGS = 0;
+  const markRoot = () => { BASE_DIALOGS = [...document.querySelectorAll('[role="dialog"]')].filter(vis).length; ROOT = topDialog() || document.body; return BASE_DIALOGS; };
+  const postRoot = () => (ROOT && ROOT.isConnected ? ROOT : (markRoot(), ROOT));
+  const extraDialogs = () => [...document.querySelectorAll('[role="dialog"]')].filter(vis).length - BASE_DIALOGS;
   const REACT = [['like', '👍', /^(thích|like)$/i], ['love', '❤️', /^(yêu thích|love)$/i], ['care', '🥰', /^(thương thương|care)$/i], ['haha', '😆', /^haha$/i],
     ['wow', '😮', /^wow$/i], ['sad', '😢', /^(buồn|sad)$/i], ['angry', '😡', /^(phẫn nộ|angry)$/i]];
-  const reactOf = label => { const l = String(label || '').replace(/[,:]?\s*[\d.,]+\s*(K|N|Tr|M)?\s*$/i, '').trim(); const r = REACT.find(x => x[2].test(l)); return r ? r[0] : ''; };
+  // Nhãn thẻ có thể là "Thích, 25", "Hiển thị 25 người đã bày tỏ cảm xúc Yêu thích"…: tìm tên cảm xúc ở bất kỳ đâu ("Yêu thích" trước "Thích").
+  const REACT_ANY = [['love', /yêu thích|\blove\b/i], ['care', /thương thương|\bcare\b/i], ['angry', /phẫn nộ|\bangry\b/i], ['haha', /haha/i], ['wow', /\bwow\b/i], ['sad', /buồn|\bsad\b/i], ['like', /thích|\blike\b/i]];
+  const reactOf = label => { const l = String(label || '').trim(); if (!l || /^(tất cả|all)\b/i.test(l) || /^(khác|more|thêm)\b/i.test(l)) return '';
+    const r = REACT.find(x => x[2].test(l.replace(/[,:]?\s*[\d.,]+\s*(K|N|Tr|M)?\s*$/i, '').trim())) || REACT_ANY.find(x => x[1].test(l)); return r ? r[0] : ''; };
 
   // Số liệu + tác giả bài.
   const stats = () => {
-    const root = postRoot(), t = txt(root), out = { url: location.href };
+    const root = postRoot(), out = { url: location.href };
+    let t = txt(root); const m0 = t.search(/(Phù hợp nhất|Most relevant|Bình luận hàng đầu|Top comments|Mới nhất|Newest|Tất cả bình luận|All comments|Viết bình luận|Write a comment)/i);
+    const tHead = m0 > 0 ? t.slice(0, m0) : t; // số liệu nằm trên phần bình luận
+    t = tHead;
     const g = (k, re) => { const m = t.match(re); if (m) { const v = num(m[1]); if (v != null) out[k] = v; } };
     const lab = [...root.querySelectorAll('[aria-label]')].map(e => e.getAttribute('aria-label')).find(a => /^(Tất cả cảm xúc|All reactions)/i.test(a || ''));
     if (lab) { const m = lab.match(new RegExp(NUM)); if (m) out.reactions = num(m[1]); }
@@ -41,7 +51,8 @@ module.exports = String.raw`(() => {
     // (không dùng \\b: chữ có dấu như "sẻ" không được coi là chữ cái)
     g('comments', new RegExp(NUM + '\\s*(?:bình luận|comments?)(?![A-Za-z])', 'i'));
     g('shares', new RegExp(NUM + '\\s*(?:lượt chia sẻ|chia sẻ|shares?)(?![A-Za-z])', 'i'));
-    const a = [...root.querySelectorAll('h2 a[href], h3 a[href], h4 a[href], strong a[href]')].find(x => txt(x) && profileOf(x.href));
+    const art = root.querySelector('[role="main"] [role="article"]:not([aria-label^="Bình luận"]):not([aria-label^="Comment"])') || root;
+    const a = [...art.querySelectorAll('h2 a[href], h3 a[href], h4 a[href], strong a[href], span a[href][role="link"]')].find(x => txt(x) && profileOf(x.href) && !x.closest('[role="article"][aria-label]'));
     if (a) { out.author = txt(a); out.authorLink = profileOf(a.href).link; }
     const body = [...root.querySelectorAll('[data-ad-preview="message"], [data-ad-comet-preview="message"]')].map(txt).join('\n') ||
       [...root.querySelectorAll('div[dir="auto"]')].map(txt).find(s => s.length > 20) || '';
@@ -86,11 +97,12 @@ module.exports = String.raw`(() => {
   // Thẻ loại cảm xúc trong hộp (bỏ thẻ "Tất cả" và "Khác/More").
   const reactionTabs = () => { const d = topDialog(); if (!d) return [];
     return [...d.querySelectorAll('[role="tab"]')].filter(vis).map((t, i) => {
-      const label = t.getAttribute('aria-label') || [...t.querySelectorAll('img[alt], [aria-label]')].map(x => x.getAttribute('alt') || x.getAttribute('aria-label')).find(Boolean) || txt(t);
+      const labels = [t.getAttribute('aria-label'), ...[...t.querySelectorAll('img[alt], [aria-label], image')].map(x => x.getAttribute('alt') || x.getAttribute('aria-label')), txt(t)].filter(Boolean);
+      const label = labels.find(l => reactOf(l)) || labels[0] || '';
       return { i, label, type: reactOf(label), selected: t.getAttribute('aria-selected') === 'true' };
     }).filter(t => t.type); };
   const clickTab = i => { const d = topDialog(); const t = d && [...d.querySelectorAll('[role="tab"]')].filter(vis)[i]; return clickEl(t); };
-  const closeDialog = () => { const d = topDialog(); if (!d) return true;
+  const closeDialog = () => { if (extraDialogs() <= 0) return true; const d = topDialog(); if (!d) return true;
     const b = [...d.querySelectorAll('[aria-label]')].find(e => /^(Đóng|Close)$/i.test(e.getAttribute('aria-label') || '') && vis(e));
     if (b) return clickEl(b);
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', keyCode: 27, bubbles: true })); return true; };
@@ -115,20 +127,30 @@ module.exports = String.raw`(() => {
       const t = txt(e); if (!t || t.length > 40 || !RE.test(t) || !vis(e) || e.__fbpClicked) continue;
       e.__fbpClicked = true; clickEl(e); n++;
     }
-    const sc = topDialog() ? scroller(topDialog()) : null; if (sc) sc.scrollTop = sc.scrollHeight; else window.scrollBy(0, 1200);
+    // Facebook chỉ dựng bình luận khi cuộn tới: cuộn khung bài (hộp) hoặc cả trang xuống dần.
+    const sc = ROOT && ROOT !== document.body ? scroller(ROOT) : null;
+    if (sc) sc.scrollTop = Math.min(sc.scrollHeight, sc.scrollTop + 1400); else window.scrollBy(0, 1400);
+    const arts = commentArts(); if (arts.length) arts[arts.length - 1].scrollIntoView({ block: 'center' });
     return n;
   };
+  // Bình luận = [role=article] có nhãn "Bình luận …/Phản hồi …/Comment …/Reply …", hoặc article nằm trong bài (không phải bài chính).
+  const CM = /^(Bình luận|Phản hồi|Comment|Reply)/i;
+  const commentArts = () => { const root = postRoot();
+    let arts = [...root.querySelectorAll('[role="article"]')].filter(a => CM.test(a.getAttribute('aria-label') || '') && !(extraDialogs() > 0 && topDialog()?.contains(a) && topDialog() !== ROOT));
+    if (!arts.length) { const main = root.querySelector('[role="main"] [role="article"]'); arts = main ? [...main.querySelectorAll('[role="article"]')] : []; }
+    return arts; };
   // Đọc các bình luận đang hiện.
   const comments = () => {
-    const root = postRoot(), out = [], seen = new Set();
-    const arts = [...root.querySelectorAll('[role="article"]')].filter(a => /^(Bình luận|Phản hồi|Comment|Reply)/i.test(a.getAttribute('aria-label') || ''));
+    const out = [], seen = new Set();
+    const arts = commentArts();
     for (const a of arts) {
       const label = a.getAttribute('aria-label') || '';
       const link = [...a.querySelectorAll('a[href]')].find(x => txt(x) && profileOf(x.href) && !/comment_id=.*reply_comment_id|^\d/.test(txt(x)));
       if (!link) continue;
       const p = profileOf(link.href), name = txt(link);
       // Nội dung: các khối chữ trong bình luận, bỏ tên người và các bình luận con lồng bên trong.
-      const own = [...a.querySelectorAll('div[dir="auto"], span[dir="auto"]')].filter(x => x.closest('[role="article"]') === a && !x.closest('a') && !x.querySelector('div[dir="auto"], span[dir="auto"]'));
+      const own = [...a.querySelectorAll('div[dir="auto"], span[dir="auto"]')].filter(x => x.closest('[role="article"]') === a && !x.closest('a') && !x.querySelector('div[dir="auto"], span[dir="auto"]')
+        && !/^(Thích|Like|Phản hồi|Reply|Chia sẻ|Share|Đã chỉnh sửa|Edited|Tác giả|Author|Fan cứng|Top fan|\d+\s*(giây|phút|giờ|ngày|tuần|năm|s|m|h|d|w|y))$/i.test(txt(x)));
       let text = [...new Set(own.map(txt).filter(s => s && s !== name))].join('\n').trim();
       const key = p.link + '|' + text.slice(0, 80) + '|' + label.slice(-30); if (seen.has(key)) continue; seen.add(key);
       const reply = /^(Phản hồi|Reply)/i.test(label);
@@ -159,10 +181,13 @@ module.exports = String.raw`(() => {
     return out;
   };
   // Ghi lại cấu trúc trang khi không đọc được gì (để chẩn đoán, không có nội dung riêng tư ngoài tên hiển thị).
-  const debug = () => ({ url: location.href, title: document.title, dialogs: document.querySelectorAll('[role="dialog"]').length,
+  const debug = () => ({ url: location.href, title: document.title, dialogs: document.querySelectorAll('[role="dialog"]').length, base: BASE_DIALOGS, root: ROOT === document.body ? 'body' : 'dialog',
+    articleCount: document.querySelectorAll('[role="article"]').length, comments: commentArts().length,
+    tabs: [...document.querySelectorAll('[role="tab"]')].slice(0, 12).map(t => [t.getAttribute('aria-label'), ...[...t.querySelectorAll('img[alt],[aria-label]')].map(x => x.getAttribute('alt') || x.getAttribute('aria-label'))].filter(Boolean).join(' | ').slice(0, 120)),
+    text: txt(postRoot()).slice(0, 1500),
     articles: [...document.querySelectorAll('[role="article"]')].slice(0, 12).map(a => (a.getAttribute('aria-label') || '').slice(0, 60)),
     labels: [...document.querySelectorAll('[aria-label]')].map(e => e.getAttribute('aria-label')).filter(l => /cảm xúc|react|chia sẻ|share|bình luận|comment/i.test(l)).slice(0, 25),
     buttons: [...document.querySelectorAll('[role="button"]')].map(txt).filter(t => t && t.length < 40).slice(0, 60) });
-  window.__fbp = { stats, openReactions, openShares, dialogPeople, reactionTabs, clickTab, closeDialog, allCommentsMenu, allCommentsPick, moreComments, comments, profile, debug, profileOf, num };
+  window.__fbp = { markRoot, extraDialogs, commentArts, stats, openReactions, openShares, dialogPeople, reactionTabs, clickTab, closeDialog, allCommentsMenu, allCommentsPick, moreComments, comments, profile, debug, profileOf, num };
   return true;
 })()`;

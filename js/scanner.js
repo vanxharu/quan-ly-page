@@ -248,6 +248,7 @@ row.appendChild(c);row.appendChild(r);row.appendChild(x);box.appendChild(row);do
     if (!link) return toast('Dán link bài viết Facebook trước.');
     if (!pp.want.react && !pp.want.cmt && !pp.want.share) return toast('Chọn ít nhất một loại: Cảm xúc, Bình luận hoặc Chia sẻ.');
     if (pp.loading) return toast('Đang quét một bài, đợi xong rồi quét tiếp.');
+    if (batch.running) return toast('Đang xem bạn bè / follow cả danh sách. Bấm Dừng trước rồi quét bài khác.');
     Object.assign(pp, { post: { url: link }, people: [], notes: [], error: '', debug: null, loading: true, step: 'Đang mở bài trên Facebook…' });
     drawPeople(); $('snPeople').scrollIntoView?.({ block: 'start', behavior: 'smooth' });
     const btn = $('snPeopleGo'); if (btn) btn.disabled = true;
@@ -258,17 +259,50 @@ row.appendChild(c);row.appendChild(r);row.appendChild(x);box.appendChild(row);do
     } catch (e) { pp.error = 'App chưa có chức năng này, hãy cập nhật app (bấm số phiên bản ở góc trên).'; }
     pp.loading = false; if (btn) btn.disabled = false; drawPeople();
   }
-  async function lookupCounts(p) {
-    if (pp.busy.has(p.link)) return;
-    pp.busy.add(p.link); drawPeople();
+  // Trả 'ok' | 'hidden' | 'error:<lý do>'. quiet: không hiện thông báo (khi xem cả danh sách).
+  async function lookupCounts(p, quiet = false) {
+    if (pp.busy.has(p.link)) return 'busy';
+    pp.busy.add(p.link); drawPeople(); let res = 'ok';
     try {
       const d = await window.metaDesktop.fbProfileCounts({ url: p.link });
-      if (d?.error) toast(`${p.name}: ${d.error}`, 6000);
-      else if (d?.unavailable) { pcSet(p.link, {}); toast(`${p.name}: trang cá nhân không xem được (đã khoá hoặc chặn).`, 5000); }
-      else { pcSet(p.link, d); if (d.friends == null && d.followers == null && d.likes == null) toast(`${p.name}: người này ẩn số bạn bè và người theo dõi.`, 5000); }
-    } catch { toast('App chưa có chức năng này, hãy cập nhật app.', 6000); }
-    pp.busy.delete(p.link); drawPeople();
+      if (d?.error) { res = 'error:' + d.error; if (!quiet) toast(`${p.name}: ${d.error}`, 6000); }
+      else if (d?.unavailable) { pcSet(p.link, {}); res = 'hidden'; if (!quiet) toast(`${p.name}: trang cá nhân không xem được (đã khoá hoặc chặn).`, 5000); }
+      else { pcSet(p.link, d); if (d.friends == null && d.followers == null && d.likes == null) { res = 'hidden'; if (!quiet) toast(`${p.name}: người này ẩn số bạn bè và người theo dõi.`, 5000); } }
+    } catch { res = 'error:App chưa có chức năng này, hãy cập nhật app.'; if (!quiet) toast('App chưa có chức năng này, hãy cập nhật app.', 6000); }
+    pp.busy.delete(p.link); drawPeople(); return res;
   }
+  // Xem bạn bè / follow cả danh sách đang hiện, lần lượt từng người (app tự giãn cách 8–12 giây mỗi người),
+  // nghỉ 1–2 phút sau mỗi 25 người; tự dừng khi Facebook báo lỗi 3 lần liền (đăng xuất, checkpoint, chặn).
+  const batch = { running: false, stop: false, done: 0, total: 0, hidden: 0, failed: 0, note: '' };
+  const fmtMin = s => s >= 3600 ? `${Math.floor(s / 3600)} giờ ${Math.round(s % 3600 / 60)} phút` : `${Math.max(1, Math.round(s / 60))} phút`;
+  async function lookupAll() {
+    if (batch.running) { batch.stop = true; batch.note = 'Đang dừng sau người hiện tại…'; return drawPeople(); }
+    const todo = ppSorted().filter(p => !pcGet(p.link));
+    if (!todo.length) return toast('Mọi người đang hiện đều đã có số bạn bè / follow.');
+    if (todo.length > 40 && !confirm(`Xem bạn bè / follow của ${todo.length} người, mất khoảng ${fmtMin(todo.length * 14 + Math.floor(todo.length / 25) * 90)}.\n\nApp mở lần lượt trang cá nhân từng người bằng tài khoản Facebook trong app. Mở nhiều trang cá nhân liên tục có thể khiến Facebook bắt xác minh (checkpoint).\nApp giãn cách 8–12 giây mỗi người, nghỉ 1–2 phút sau mỗi 25 người, tự dừng nếu Facebook báo lỗi. Bạn bấm Dừng lúc nào cũng được.\n\nBắt đầu?`)) return;
+    Object.assign(batch, { running: true, stop: false, done: 0, total: todo.length, hidden: 0, failed: 0, note: '' });
+    let errRun = 0, lastErr = '';
+    for (const p of todo) {
+      if (batch.stop || !pp.post) break;
+      if (batch.done && batch.done % 25 === 0) {
+        const rest = 60 + Math.round(Math.random() * 60);
+        for (let i = rest; i > 0 && !batch.stop; i--) { batch.note = `Nghỉ ${i} giây cho an toàn…`; drawBatch(); await new Promise(r => setTimeout(r, 1000)); }
+        batch.note = ''; if (batch.stop) break;
+      }
+      const r = await lookupCounts(p, true);
+      batch.done++;
+      if (r === 'hidden') batch.hidden++;
+      if (r.startsWith('error:')) { batch.failed++; errRun++; lastErr = r.slice(6); } else errRun = 0;
+      if (errRun >= 3 || /đăng xuất|đăng nhập/i.test(lastErr)) { batch.stop = true; batch.note = `Đã tự dừng: ${lastErr}`; break; }
+      drawBatch();
+    }
+    const msg = batch.note.startsWith('Đã tự dừng') ? batch.note : `Đã xem ${batch.done}/${batch.total} người` + (batch.hidden ? `, ${batch.hidden} người ẩn số` : '') + (batch.failed ? `, ${batch.failed} lỗi` : '') + '.';
+    Object.assign(batch, { running: false, stop: false, note: '' }); toast(msg, 8000); drawPeople();
+  }
+  // Chỉ vẽ lại dòng tiến độ (không vẽ lại cả bảng mỗi giây).
+  const batchText = () => { const left = batch.total - batch.done;
+    return batch.note || `Đang xem bạn bè / follow: ${batch.done}/${batch.total}` + (batch.hidden ? ` · ${batch.hidden} người ẩn số` : '') + (batch.failed ? ` · ${batch.failed} lỗi` : '') + (left ? ` · còn khoảng ${fmtMin(left * 14 + Math.floor(left / 25) * 90)}` : ''); };
+  const drawBatch = () => { const el = $('snBatch'); if (el) el.textContent = batchText(); };
   const ppVisible = () => { const q = norm(pp.q);
     return pp.people.map(enrich).filter(p => (!q || norm(p.name + ' ' + p.comments.join(' ')).includes(q)) && (!pp.both || (p.reacted && p.comments.length)) && (!pp.phone || p.phones.length)
       && (!pp.unanswered || (p.comments.length && !p.answered)) && (!pp.shared || p.shared) && (!pp.react || p.reaction === pp.react) && (!pp.minFollow || (p.followers ?? -1) >= pp.minFollow)); };
@@ -285,7 +319,7 @@ row.appendChild(c);row.appendChild(r);row.appendChild(x);box.appendChild(row);do
     const head = h('div', { className: 'card-head' },
       h('div', {}, h('h3', { className: 'card-title', textContent: '👥 Người tương tác' }),
         h('a', { className: 'hint', href: P.url, target: '_blank', rel: 'noopener', textContent: [P.author, (P.text || '').slice(0, 70) || P.url, stat].filter(Boolean).join(' · ') })),
-      h('button', { className: 'btn btn-ghost btn-sm', textContent: 'Đóng', disabled: pp.loading, onclick: () => { pp.post = null; drawPeople(); } }));
+      h('button', { className: 'btn btn-ghost btn-sm', textContent: 'Đóng', disabled: pp.loading, onclick: () => { if (batch.running) batch.stop = true; pp.post = null; drawPeople(); } }));
     if (pp.loading) return box.replaceChildren(h('div', { className: 'sn-comments' }, head,
       h('div', { className: 'status pending', id: 'snPeopleStep', textContent: pp.step }),
       h('div', { className: 'hint', textContent: 'App mở bài bằng phiên Facebook trong app (cột Meta), cuộn và đọc như người xem thật, nên mất khoảng 1–3 phút với bài nhiều tương tác.' })));
@@ -304,7 +338,12 @@ row.appendChild(c);row.appendChild(r);row.appendChild(x);box.appendChild(row);do
           h('input', { type: 'number', min: 0, value: pp.minFollow || '', placeholder: '0', style: 'width:90px', oninput: e => { pp.minFollow = Number(e.target.value) || 0; drawPeople(); } }))),
       h('div', { className: 'toolbar' },
         h('span', { className: 'hint', textContent: `Đang hiện ${num(list.length)}/${num(all.length)} người.` + (pp.minFollow ? ' Lọc follow chỉ tính người đã xem số follow.' : '') }),
+        batch.running ? h('span', { className: 'status pending', id: 'snBatch', textContent: batchText() }) : null,
         h('span', { className: 'grow' }),
+        (() => { const n = list.filter(p => !pcGet(p.link)).length;
+          return h('button', { className: 'btn btn-sm ' + (batch.running ? 'btn-danger' : 'btn-primary'), disabled: !batch.running && !n,
+            title: 'Mở lần lượt trang cá nhân của những người đang hiện (chưa xem) để đọc số bạn bè và người theo dõi',
+            textContent: batch.running ? `⏸ Dừng (${batch.done}/${batch.total})` : `Xem bạn bè/follow tất cả (${n})`, onclick: lookupAll }); })(),
         h('button', { className: 'btn btn-ghost btn-sm', textContent: `Chép ${phones.length} SĐT`, disabled: !phones.length, onclick: () => navigator.clipboard.writeText(phones.join('\n')).then(() => toast(`Đã chép ${phones.length} số điện thoại.`)) }),
         h('button', { className: 'btn btn-ghost btn-sm', textContent: 'Chép link', disabled: !list.length, onclick: () => navigator.clipboard.writeText(list.map(p => p.link).join('\n')).then(() => toast(`Đã chép ${list.length} link trang cá nhân.`)) }),
         h('button', { className: 'btn btn-ghost btn-sm', textContent: 'Xuất CSV', disabled: !list.length, onclick: () => csvDownload(`nguoi-tuong-tac-${Pure.dayKeyOf(Date.now())}.csv`,
@@ -329,7 +368,7 @@ row.appendChild(c);row.appendChild(r);row.appendChild(x);box.appendChild(row);do
               title: p.friends != null || p.followers != null ? 'Đọc lại số bạn bè / follow' : 'Mở trang cá nhân người này bằng phiên Facebook trong app để đọc số bạn bè và người theo dõi',
               onclick: () => lookupCounts(p) })))))))
         : empty(pp.people.length ? 'Không có người khớp bộ lọc.' : 'Không đọc được người tương tác nào.'),
-      !pp.people.length && pp.debug ? h('details', { className: 'hint' }, h('summary', { textContent: 'Thông tin chẩn đoán (gửi cho người hỗ trợ)' }),
+      pp.debug ? h('details', { className: 'hint' }, h('summary', { textContent: 'Thông tin chẩn đoán (gửi cho người hỗ trợ, cũng lưu ở Downloads › GetHelps-debug › nguoi-tuong-tac.json)' }),
         h('pre', { style: 'white-space:pre-wrap;font-size:11px', textContent: JSON.stringify(pp.debug, null, 1) })) : null));
   }
   App.scannerPhones = phonesIn;

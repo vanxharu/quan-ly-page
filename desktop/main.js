@@ -498,7 +498,10 @@ app.whenReady().then(async () => {
   worker.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   // Quét bài viết › Người tương tác: đọc người thả cảm xúc / bình luận / chia sẻ của bài bất kỳ bằng phiên Facebook trong app;
   // số bạn bè / theo dõi chỉ đọc khi bạn bấm từng người.
-  const fbPeople = createFbPeople({ BrowserWindow, partition: META, asChrome });
+  const fbPeople = createFbPeople({ BrowserWindow, partition: META, asChrome,
+    // Downloads/GetHelps-debug/nguoi-tuong-tac.json: cấu trúc trang bài lần quét gần nhất (để chẩn đoán khi đọc thiếu).
+    saveDebug: d => { try { const dir = path.join(app.getPath('downloads'), 'GetHelps-debug'); require('fs').mkdirSync(dir, { recursive: true });
+      require('fs').writeFileSync(path.join(dir, 'nguoi-tuong-tac.json'), JSON.stringify({ app: app.getVersion(), at: new Date().toISOString(), ...d }, null, 1)); } catch {} } });
   ipcMain.handle('fb-post-people', (e, args) => !fromPage(e) ? { error: 'denied' } : fbPeople.postPeople(args || {},
     p => pageView.webContents.executeJavaScript(`window.App?.scannerProgress?.(${JSON.stringify(p)})`).catch(() => {})));
   ipcMain.handle('fb-profile-counts', (e, args) => !fromPage(e) ? { error: 'denied' } : fbPeople.profileCounts(args || {}));

@@ -10,6 +10,7 @@ const FIX = f => fs.readFileSync(path.join(__dirname, 'fixtures', f), 'utf8');
   await ctx.route('https://www.facebook.com/**', r => {
     const u = new URL(r.request().url());
     if (u.pathname.startsWith('/shopabc/posts/')) return r.fulfill({ contentType: 'text/html', body: FIX('fb-post.html') });
+    if (u.pathname.startsWith('/photo')) return r.fulfill({ contentType: 'text/html', body: FIX('fb-photo.html') });
     if (u.pathname.startsWith('/lan.nguyen')) return r.fulfill({ contentType: 'text/html', body: FIX('fb-profile.html') });
     return r.fulfill({ contentType: 'text/html', body: '<html><body><div role="main">feed</div></body></html>' });
   });
@@ -41,6 +42,14 @@ const FIX = f => fs.readFileSync(path.join(__dirname, 'fixtures', f), 'utf8');
   assert.deepEqual(by['Quân Hồ'].comments, ['Đặt 2 cái'], 'đã bấm Xem thêm bình luận'); assert.equal(by['Quân Hồ'].shared, 1);
   assert.equal(by['Hoa Lê'].shared, 1); assert.equal(r.people.length, 8);
   assert.equal(r.people.filter(p => p.reacted).length, 7, 'đủ 7 người thả cảm xúc'); assert.equal(by['Quân Hồ'].reacted, false);
+
+  // Trang ảnh: bình luận chỉ dựng khi cuộn, thẻ cảm xúc nhãn dài, không có article cho bài.
+  const ph = await fp.postPeople({ url: 'https://www.facebook.com/photo/?fbid=55' });
+  const pb = Object.fromEntries(ph.people.map(p => [p.name, p]));
+  console.log('photo', JSON.stringify(ph.post), ph.notes, ph.people.map(p => `${p.name}:${p.reaction || (p.reacted ? '✓' : '')}:${p.comments.join('/')}:${p.shared}`).join(' ; '));
+  assert.equal(ph.post.reactions, 4); assert.equal(ph.post.comments, 3); assert.equal(ph.post.shares, 1); assert.equal(ph.post.author, 'Mầm non ABC');
+  assert.equal(pb['Lan Nguyễn'].reaction, 'love'); assert.equal(pb['Minh Trần'].reaction, 'like');
+  assert.deepEqual(pb['Lan Nguyễn'].comments, ['Bé dễ thương quá 0905111222']); assert.equal(pb['Mai Võ'].answered, true); assert.equal(pb['Quân Hồ'].shared, 1); assert.ok(!pb['Mầm non ABC']);
 
   const t0 = Date.now();
   const pc = await fp.profileCounts({ url: 'https://www.facebook.com/lan.nguyen' });

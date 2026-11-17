@@ -1,0 +1,40 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Facebook</title>
+<style>[role=dialog]{position:fixed;inset:40px;background:#fff;border:1px solid #ccc}.sc{overflow-y:auto;height:200px}.row{height:90px}.photo{height:1600px;background:#eee}</style></head>
+<body>
+<!-- Giả trang ảnh (/photo/?fbid=…): không có [role=article] cho bài; bình luận chỉ dựng khi cuộn tới; thẻ cảm xúc ghi nhãn dài. -->
+<div role="main"><div class="photo">ảnh</div></div>
+<div role="complementary">
+  <h2><a href="https://www.facebook.com/mamnonabc">Mầm non ABC</a></h2>
+  <div dir="auto">CUỘC THI ẢNH - NGƯỜI GIEO MẦM XANH MS08</div>
+  <span aria-label="Tất cả cảm xúc:" role="button" id="rx"><span>Tất cả cảm xúc:</span><span>4</span></span>
+  <span>3 bình luận</span> <span role="button" id="sh">1 lượt chia sẻ</span>
+  <div role="button">Thích</div><div role="button">Bình luận</div>
+  <div role="button" id="flt">Phù hợp nhất</div>
+  <ul id="cmts"></ul>
+</div>
+<script>
+const R = [['Lan Nguyễn','lan.nguyen','love'],['Minh Trần','minh.tran','like'],['Hoa Lê','hoa.le','like'],['Tuấn Phạm','tuan.pham','like']];
+const NAMES = { like: 'Thích', love: 'Yêu thích' };
+function dialog(rows, tabs) {
+  const d = document.createElement('div'); d.setAttribute('role', 'dialog');
+  d.innerHTML = '<div class="tabs"></div><div class="sc"></div><div role="button" aria-label="Đóng">x</div>'; document.body.append(d);
+  d.querySelector('[aria-label="Đóng"]').onclick = () => d.remove();
+  let shown = 0, list = rows; const sc = d.querySelector('.sc');
+  const render = () => { sc.innerHTML = list.slice(0, shown).map(r => `<div class="row"><a href="https://www.facebook.com/${r[1]}?__tn__=R"><span>${r[0]}</span></a></div>`).join(''); };
+  const more = () => { shown = Math.min(list.length, shown + 3); render(); };
+  sc.onscroll = () => { if (sc.scrollTop + sc.clientHeight >= sc.scrollHeight - 5) setTimeout(more, 300); }; more();
+  if (tabs) tabs.forEach((t, i) => { const e = document.createElement('div'); e.setAttribute('role', 'tab');
+    e.setAttribute('aria-label', t ? `Hiển thị ${rows.filter(r => r[2] === t).length} người đã bày tỏ cảm xúc ${NAMES[t]}` : 'Tất cả'); e.textContent = t ? rows.filter(r => r[2] === t).length : 'Tất cả';
+    e.onclick = () => { list = t ? rows.filter(r => r[2] === t) : rows; shown = 0; more(); }; d.querySelector('.tabs').append(e); });
+}
+document.getElementById('rx').onclick = () => dialog(R, ['', 'like', 'love']);
+document.getElementById('sh').onclick = () => dialog([['Quân Hồ', 'quan.ho']]);
+let built = false;
+addEventListener('scroll', () => { if (built || scrollY < 300) return; built = true; // bình luận chỉ dựng khi cuộn tới
+  document.getElementById('cmts').innerHTML = `
+  <li><div role="article" aria-label="Bình luận dưới tên Lan Nguyễn 1 tuần trước"><a href="https://www.facebook.com/lan.nguyen?comment_id=1"><span>Lan Nguyễn</span></a><div dir="auto">Bé dễ thương quá 0905111222</div><div dir="auto">1 tuần</div></div></li>
+  <li><div role="article" aria-label="Bình luận dưới tên Mai Võ 2 ngày trước"><a href="https://www.facebook.com/mai.vo?comment_id=2"><span>Mai Võ</span></a><div dir="auto">Bình chọn MS08</div></div>
+    <ul><li><div role="article" aria-label="Phản hồi dưới tên Mầm non ABC"><a href="https://www.facebook.com/mamnonabc?comment_id=3"><span>Mầm non ABC</span></a><div dir="auto">Cảm ơn chị</div></div></li></ul></li>`; });
+</script>
+</body></html>
