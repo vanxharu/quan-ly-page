@@ -1,10 +1,14 @@
 /* Quét bài viết (giống post-scanner-tab.js, nhưng chỉ trên Page bạn quản lý vì Graph API không đọc được nhóm/trang người khác):
  * - Quét theo khoảng ngày → bảng bài (ảnh, Page, loại, cảm xúc/bình luận/chia sẻ), tổng quan, lọc, sắp xếp, chép link, xuất CSV.
  * - Dán link/ID một bài → quét riêng bài đó.
- * - Quét bình luận của một bài → tên khách, nội dung, SĐT tự nhận, Page đã trả lời chưa; lọc, chép SĐT, xuất CSV khách. */
+ * - Quét bình luận của một bài → tên khách, nội dung, SĐT tự nhận, Page đã trả lời chưa; lọc, chép SĐT, xuất CSV khách.
+ * - Người tương tác (app máy tính): bài bất kỳ (Page khác, nhóm, trang cá nhân công khai) → ai thả cảm xúc (loại gì), bình luận, chia sẻ;
+ *   số bạn bè / người theo dõi đọc khi bấm từng người (mở trang cá nhân bằng phiên Facebook trong app, cách nhau ≥ 8 giây). */
 (() => {
   let rows = [], sortKey = 'created', asc = false, filter = { q: '', min: 0, type: '' };
   const cm = { post: null, list: [], q: '', phone: false, unanswered: false, hidePage: true, loading: false };
+  const pp = { want: { react: true, cmt: true, share: true }, post: null, people: [], notes: [], loading: false, step: '', error: '', debug: null,
+    q: '', both: false, phone: false, unanswered: false, shared: false, react: '', minFollow: 0, sortKey: 'score', asc: false, busy: new Set() };
   const PHONE = /(?:\+?84|0)(?:[\s.-]?\d){9}\b/g;
   const COLS = [['created', 'Ngày'], ['page', 'Page'], ['message', 'Bài viết'], ['type', 'Loại'], ['reactions', 'Cảm xúc'], ['comments', 'Bình luận'], ['shares', 'Chia sẻ'], ['total', 'Tổng']];
   const TYPES = { added_photos: 'Ảnh', photo: 'Ảnh', added_video: 'Video', video: 'Video', shared_story: 'Chia sẻ', share: 'Chia sẻ', link: 'Link', mobile_status_update: 'Chữ', status: 'Chữ', created_event: 'Sự kiện' };
@@ -54,6 +58,12 @@ row.appendChild(c);row.appendChild(r);row.appendChild(x);box.appendChild(row);do
           h('input', { type: 'text', id: 'snLink', placeholder: 'Dán link hoặc ID một bài viết của Page bạn quản lý…', 'aria-label': 'Link bài viết' }),
           h('button', { className: 'btn btn-soft', id: 'snLinkGo' }, 'Quét bài này'),
           h('span', { className: 'hint', textContent: 'Chỉ đọc được bài của các Page đang kết nối.' })),
+        window.metaDesktop?.fbPostPeople ? h('form', { className: 'toolbar sn-link sn-people-form', onsubmit: e => { e.preventDefault(); scanPeople($('snPeopleLink').value); } },
+          h('input', { type: 'text', id: 'snPeopleLink', placeholder: '👥 Dán link bài bất kỳ (Page khác, nhóm, trang cá nhân công khai) để quét người tương tác…', 'aria-label': 'Link bài để quét người tương tác' }),
+          ...[['react', 'Cảm xúc'], ['cmt', 'Bình luận'], ['share', 'Chia sẻ']].map(([k, t]) => h('label', { className: 'row', style: 'gap:5px' },
+            h('input', { type: 'checkbox', checked: pp.want[k], onchange: e => { pp.want[k] = e.target.checked; } }), t)),
+          h('button', { className: 'btn btn-primary', id: 'snPeopleGo' }, 'Quét người tương tác'))
+          : h('div', { className: 'hint', textContent: '👥 Quét người tương tác (cảm xúc, bình luận, chia sẻ, số bạn bè / follow) của bài bất kỳ: chỉ có trong app máy tính Get Helps.' }),
         h('details', { className: 'sn-links' },
           h('summary', {}, h('strong', { textContent: 'Lấy link bài của Page bất kỳ' }), h('span', { className: 'hint', textContent: ' · Page đối thủ, nhóm, trang cá nhân công khai' })),
           h('ol', { className: 'sn-steps' },
@@ -74,6 +84,7 @@ row.appendChild(c);row.appendChild(r);row.appendChild(x);box.appendChild(row);do
           h('button', { className: 'btn btn-ghost', textContent: 'Xuất CSV', onclick: () => csvDownload(`quet-bai-${Pure.dayKeyOf(Date.now())}.csv`,
             [['Ngày', 'Page', 'Nội dung', 'Loại', 'Cảm xúc', 'Bình luận', 'Chia sẻ', 'Tổng', 'Link'], ...visible().map(r => [fmtTime(r.created), r.page, r.message, r.type, r.reactions, r.comments, r.shares, r.total, r.link])]) })),
         h('div', { className: 'scroll', id: 'snTable' }),
+        h('div', { id: 'snPeople' }),
         h('div', { id: 'snComments' })));
       draw();
     }
@@ -168,7 +179,9 @@ row.appendChild(c);row.appendChild(r);row.appendChild(x);box.appendChild(row);do
         h('td', { className: 'left' }, h('a', { className: 'sn-post', href: r.link, target: '_blank', rel: 'noopener', title: r.message },
           r.img ? h('img', { src: r.img, alt: '', loading: 'lazy' }) : h('span', { className: 'sn-noimg', textContent: 'Aa' }), h('span', { textContent: r.message || '(xem bài)' }))),
         h('td', { textContent: r.type }), h('td', { textContent: num(r.reactions) }), h('td', { textContent: num(r.comments) }), h('td', { textContent: num(r.shares) }), h('td', {}, h('strong', { textContent: num(r.total) })),
-        h('td', {}, h('button', { className: 'btn btn-soft btn-sm', textContent: 'Quét bình luận', disabled: !r.comments, title: r.comments ? '' : 'Bài chưa có bình luận', onclick: () => openComments(r) }))))))
+        h('td', {}, h('div', { className: 'row', style: 'gap:6px;flex-wrap:nowrap' },
+          h('button', { className: 'btn btn-soft btn-sm', textContent: 'Quét bình luận', disabled: !r.comments, title: r.comments ? '' : 'Bài chưa có bình luận', onclick: () => openComments(r) }),
+          window.metaDesktop?.fbPostPeople ? h('button', { className: 'btn btn-ghost btn-sm', textContent: '👥 Người tương tác', disabled: !r.total || !r.link, title: 'Ai thả cảm xúc, bình luận, chia sẻ bài này', onclick: () => scanPeople(r.link) }) : null))))))
       : empty('Chọn Page, khoảng ngày rồi bấm Quét các Page, hoặc dán link một bài.'));
   }
 
@@ -213,6 +226,111 @@ row.appendChild(c);row.appendChild(r);row.appendChild(x);box.appendChild(row);do
             h('td', {}, h('span', { className: 'status ' + (c.fromPage ? 'ok' : c.answered ? 'ok' : 'pending'), textContent: c.fromPage ? 'Page' : c.answered ? 'Đã trả lời' : 'Chưa' })),
             h('td', {}, h('a', { className: 'btn btn-ghost btn-sm', href: c.link, target: '_blank', rel: 'noopener', textContent: 'Mở ↗' })))))))
           : empty(cm.list.length ? 'Không có bình luận khớp bộ lọc.' : 'Bài chưa có bình luận.'))));
+  }
+
+  // ── Người tương tác của một bài (app máy tính, phiên Facebook trong app) ──
+  const REACT = { like: '👍', love: '❤️', care: '🥰', haha: '😆', wow: '😮', sad: '😢', angry: '😡' };
+  const REACT_NAME = { like: 'Thích', love: 'Yêu thích', care: 'Thương thương', haha: 'Haha', wow: 'Wow', sad: 'Buồn', angry: 'Phẫn nộ' };
+  // Số bạn bè / follow đã đọc: lưu trên máy theo link trang cá nhân (không mở lại trang cá nhân khi quét bài khác).
+  const PC_KEY = 'fbProfileCounts';
+  const pcAll = () => { try { return JSON.parse(local.get(PC_KEY) || '{}'); } catch { return {}; } };
+  const pcGet = link => pcAll()[link] || null;
+  const pcSet = (link, d) => { const all = pcAll(); all[link] = { friends: d.friends ?? null, followers: d.followers ?? null, following: d.following ?? null, likes: d.likes ?? null, at: Date.now() };
+    const keys = Object.keys(all); if (keys.length > 3000) for (const k of keys.sort((a, b) => all[a].at - all[b].at).slice(0, keys.length - 3000)) delete all[k];
+    local.set(PC_KEY, JSON.stringify(all)); };
+  const enrich = p => { p = { ...p, reacted: p.reacted || !!p.reaction }; const c = pcGet(p.link) || {}; const phones = phonesIn(p.comments.join('\n'));
+    return { ...p, phones, nCmt: p.comments.length + p.replies, friends: c.friends ?? null, followers: c.followers ?? c.likes ?? null, following: c.following ?? null,
+      score: (p.reacted ? 1 : 0) + p.comments.length * 2 + p.replies + p.shared * 3 }; };
+  App.scannerProgress = p => { if (!pp.loading) return; pp.step = p?.step || pp.step; const el = $('snPeopleStep'); if (el) el.textContent = pp.step; };
+
+  async function scanPeople(raw) {
+    const link = String(raw || '').trim();
+    if (!link) return toast('Dán link bài viết Facebook trước.');
+    if (!pp.want.react && !pp.want.cmt && !pp.want.share) return toast('Chọn ít nhất một loại: Cảm xúc, Bình luận hoặc Chia sẻ.');
+    if (pp.loading) return toast('Đang quét một bài, đợi xong rồi quét tiếp.');
+    Object.assign(pp, { post: { url: link }, people: [], notes: [], error: '', debug: null, loading: true, step: 'Đang mở bài trên Facebook…' });
+    drawPeople(); $('snPeople').scrollIntoView?.({ block: 'start', behavior: 'smooth' });
+    const btn = $('snPeopleGo'); if (btn) btn.disabled = true;
+    try {
+      const r = await window.metaDesktop.fbPostPeople({ url: link, reactions: pp.want.react, comments: pp.want.cmt, shares: pp.want.share });
+      if (r?.error) pp.error = r.error === 'denied' ? 'App chưa cho phép lệnh này.' : r.error;
+      else { pp.post = { ...r.post, url: link }; pp.people = r.people || []; pp.notes = r.notes || []; pp.debug = r.debug || null; }
+    } catch (e) { pp.error = 'App chưa có chức năng này, hãy cập nhật app (bấm số phiên bản ở góc trên).'; }
+    pp.loading = false; if (btn) btn.disabled = false; drawPeople();
+  }
+  async function lookupCounts(p) {
+    if (pp.busy.has(p.link)) return;
+    pp.busy.add(p.link); drawPeople();
+    try {
+      const d = await window.metaDesktop.fbProfileCounts({ url: p.link });
+      if (d?.error) toast(`${p.name}: ${d.error}`, 6000);
+      else if (d?.unavailable) { pcSet(p.link, {}); toast(`${p.name}: trang cá nhân không xem được (đã khoá hoặc chặn).`, 5000); }
+      else { pcSet(p.link, d); if (d.friends == null && d.followers == null && d.likes == null) toast(`${p.name}: người này ẩn số bạn bè và người theo dõi.`, 5000); }
+    } catch { toast('App chưa có chức năng này, hãy cập nhật app.', 6000); }
+    pp.busy.delete(p.link); drawPeople();
+  }
+  const ppVisible = () => { const q = norm(pp.q);
+    return pp.people.map(enrich).filter(p => (!q || norm(p.name + ' ' + p.comments.join(' ')).includes(q)) && (!pp.both || (p.reacted && p.comments.length)) && (!pp.phone || p.phones.length)
+      && (!pp.unanswered || (p.comments.length && !p.answered)) && (!pp.shared || p.shared) && (!pp.react || p.reaction === pp.react) && (!pp.minFollow || (p.followers ?? -1) >= pp.minFollow)); };
+  const PCOLS = [['name', 'Người tương tác', 'left'], ['reaction', 'Cảm xúc'], ['nCmt', 'Bình luận', 'left'], ['phones', 'SĐT'], ['shared', 'Chia sẻ'], ['friends', 'Bạn bè'], ['followers', 'Người theo dõi'], ['score', 'Mức']];
+  const ppSorted = () => { const k = pp.sortKey, v = x => k === 'phones' ? x.phones.length : k === 'name' || k === 'reaction' ? String(x[k] || '') : (x[k] ?? -1);
+    return ppVisible().sort((a, b) => (v(a) > v(b) ? 1 : v(a) < v(b) ? -1 : 0) * (pp.asc ? 1 : -1)); };
+  const n0 = v => v == null ? '' : num(v);
+  function drawPeople() {
+    const box = $('snPeople'); if (!box) return;
+    if (!pp.post) return box.replaceChildren();
+    const all = pp.people.map(enrich), list = ppSorted(), phones = [...new Set(list.flatMap(p => p.phones))];
+    const toggle = (key, label) => h('label', { className: 'row', style: 'gap:6px' }, h('input', { type: 'checkbox', checked: pp[key], onchange: e => { pp[key] = e.target.checked; drawPeople(); } }), label);
+    const P = pp.post, stat = [P.reactions != null && `${num(P.reactions)} cảm xúc`, P.comments != null && `${num(P.comments)} bình luận`, P.shares != null && `${num(P.shares)} chia sẻ`].filter(Boolean).join(' · ');
+    const head = h('div', { className: 'card-head' },
+      h('div', {}, h('h3', { className: 'card-title', textContent: '👥 Người tương tác' }),
+        h('a', { className: 'hint', href: P.url, target: '_blank', rel: 'noopener', textContent: [P.author, (P.text || '').slice(0, 70) || P.url, stat].filter(Boolean).join(' · ') })),
+      h('button', { className: 'btn btn-ghost btn-sm', textContent: 'Đóng', disabled: pp.loading, onclick: () => { pp.post = null; drawPeople(); } }));
+    if (pp.loading) return box.replaceChildren(h('div', { className: 'sn-comments' }, head,
+      h('div', { className: 'status pending', id: 'snPeopleStep', textContent: pp.step }),
+      h('div', { className: 'hint', textContent: 'App mở bài bằng phiên Facebook trong app (cột Meta), cuộn và đọc như người xem thật, nên mất khoảng 1–3 phút với bài nhiều tương tác.' })));
+    if (pp.error) return box.replaceChildren(h('div', { className: 'sn-comments' }, head, h('div', { className: 'status err', textContent: pp.error })));
+    box.replaceChildren(h('div', { className: 'sn-comments' }, head,
+      h('div', { className: 'sn-kpis' }, ...[['Người tương tác', all.length], ['Thả cảm xúc', all.filter(p => p.reacted).length],
+        ['Bình luận', all.filter(p => p.comments.length).length], ['Chia sẻ', all.filter(p => p.shared).length], ['Có SĐT', all.filter(p => p.phones.length).length],
+        ['Vừa cảm xúc vừa bình luận', all.filter(p => p.reacted && p.comments.length).length]].map(([k, v]) => h('div', { className: 'sn-kpi' }, h('span', { textContent: k }), h('strong', { textContent: num(v) })))),
+      ...pp.notes.map(n => h('div', { className: 'hint', textContent: 'ℹ️ ' + n })),
+      h('div', { className: 'toolbar' },
+        h('input', { type: 'search', placeholder: 'Tìm tên hoặc nội dung bình luận…', value: pp.q, style: 'flex:1 1 200px;max-width:280px', oninput: e => { pp.q = e.target.value; drawPeople(); } }),
+        h('select', { style: 'width:auto', onchange: e => { pp.react = e.target.value; drawPeople(); } }, h('option', { value: '', textContent: 'Mọi cảm xúc' }),
+          ...Object.keys(REACT).filter(k => all.some(p => p.reaction === k)).map(k => h('option', { value: k, selected: pp.react === k, textContent: `${REACT[k]} ${REACT_NAME[k]}` }))),
+        toggle('both', 'Vừa cảm xúc + bình luận'), toggle('phone', 'Có SĐT'), toggle('unanswered', 'Bình luận chưa được trả lời'), toggle('shared', 'Đã chia sẻ'),
+        h('label', { className: 'row', style: 'gap:6px', title: 'Chỉ tính người đã bấm Xem số bạn bè / follow' }, 'Follow ≥',
+          h('input', { type: 'number', min: 0, value: pp.minFollow || '', placeholder: '0', style: 'width:90px', oninput: e => { pp.minFollow = Number(e.target.value) || 0; drawPeople(); } }))),
+      h('div', { className: 'toolbar' },
+        h('span', { className: 'hint', textContent: `Đang hiện ${num(list.length)}/${num(all.length)} người.` + (pp.minFollow ? ' Lọc follow chỉ tính người đã xem số follow.' : '') }),
+        h('span', { className: 'grow' }),
+        h('button', { className: 'btn btn-ghost btn-sm', textContent: `Chép ${phones.length} SĐT`, disabled: !phones.length, onclick: () => navigator.clipboard.writeText(phones.join('\n')).then(() => toast(`Đã chép ${phones.length} số điện thoại.`)) }),
+        h('button', { className: 'btn btn-ghost btn-sm', textContent: 'Chép link', disabled: !list.length, onclick: () => navigator.clipboard.writeText(list.map(p => p.link).join('\n')).then(() => toast(`Đã chép ${list.length} link trang cá nhân.`)) }),
+        h('button', { className: 'btn btn-ghost btn-sm', textContent: 'Xuất CSV', disabled: !list.length, onclick: () => csvDownload(`nguoi-tuong-tac-${Pure.dayKeyOf(Date.now())}.csv`,
+          [['Tên', 'Link trang cá nhân', 'UID', 'Cảm xúc', 'Số bình luận', 'Bình luận', 'SĐT', 'Phản hồi', 'Đã chia sẻ', 'Tác giả đã trả lời', 'Bạn bè', 'Người theo dõi', 'Đang theo dõi', 'Link bài'],
+            ...list.map(p => [p.name, p.link, p.uid, p.reaction ? REACT_NAME[p.reaction] : p.reacted ? 'Có' : '', p.comments.length, p.comments.join(' | '), p.phones.join(' '), p.replies, p.shared ? 'Có' : '',
+              p.comments.length ? (p.answered ? 'Có' : 'Chưa') : '', p.friends ?? '', p.followers ?? '', p.following ?? '', P.url])]) })),
+      list.length ? h('div', { className: 'scroll sn-people' }, h('table', { className: 'sn-table' },
+        h('thead', {}, h('tr', {}, ...PCOLS.map(([k, t, c]) => h('th', { className: 'sort' + (c ? ' ' + c : ''), textContent: t + (pp.sortKey === k ? (pp.asc ? ' ▲' : ' ▼') : ''),
+          onclick: () => { pp.asc = pp.sortKey === k ? !pp.asc : ['name'].includes(k); pp.sortKey = k; drawPeople(); } })), h('th', {}))),
+        h('tbody', {}, ...list.slice(0, 1500).map(p => h('tr', {},
+          h('td', { className: 'left' }, h('a', { className: 'sn-person', href: p.link, target: '_blank', rel: 'noopener', title: p.link }, h('strong', { textContent: p.name }), ' ↗')),
+          h('td', { title: p.reaction ? REACT_NAME[p.reaction] : p.reacted ? 'Đã thả cảm xúc (chưa rõ loại)' : '', textContent: REACT[p.reaction] || (p.reacted ? '✓' : '') }),
+          h('td', { className: 'left sn-cmt' }, p.comments.length ? h('div', {}, h('div', { textContent: p.comments[0] || '(ảnh / nhãn dán)' }),
+              h('div', { className: 'sn-cmt-meta' }, h('span', { className: 'status ' + (p.answered ? 'ok' : 'pending'), textContent: p.answered ? 'Đã trả lời' : 'Chưa trả lời' }),
+                p.comments.length > 1 || p.replies ? h('span', { className: 'hint', textContent: `+${p.comments.length - 1 + p.replies} bình luận khác`, title: p.comments.slice(1).join('\n') }) : null))
+            : p.replies ? h('span', { className: 'hint', textContent: `${p.replies} phản hồi` }) : ''),
+          h('td', {}, ...p.phones.map(x => h('div', { className: 'tag tone-green', textContent: x }))),
+          h('td', { textContent: p.shared ? '🔁' : '' }),
+          h('td', { textContent: n0(p.friends) }), h('td', { textContent: n0(p.followers) }), h('td', { textContent: p.score }),
+          h('td', {}, pp.busy.has(p.link) ? h('span', { className: 'status pending', textContent: 'Đang xem…' })
+            : h('button', { className: 'btn btn-ghost btn-sm', textContent: p.friends != null || p.followers != null ? '↻' : 'Xem bạn bè/follow',
+              title: p.friends != null || p.followers != null ? 'Đọc lại số bạn bè / follow' : 'Mở trang cá nhân người này bằng phiên Facebook trong app để đọc số bạn bè và người theo dõi',
+              onclick: () => lookupCounts(p) })))))))
+        : empty(pp.people.length ? 'Không có người khớp bộ lọc.' : 'Không đọc được người tương tác nào.'),
+      !pp.people.length && pp.debug ? h('details', { className: 'hint' }, h('summary', { textContent: 'Thông tin chẩn đoán (gửi cho người hỗ trợ)' }),
+        h('pre', { style: 'white-space:pre-wrap;font-size:11px', textContent: JSON.stringify(pp.debug, null, 1) })) : null));
   }
   App.scannerPhones = phonesIn;
 })();

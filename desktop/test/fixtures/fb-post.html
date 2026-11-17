@@ -1,0 +1,64 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Facebook</title>
+<style>[role=dialog]{position:fixed;inset:40px;background:#fff;border:1px solid #ccc;display:flex;flex-direction:column}
+.sc{overflow-y:auto;height:200px}.row{height:90px}</style></head>
+<body>
+<!-- Giả cấu trúc bài Facebook bản máy tính (đã đăng nhập) để thử bộ đọc fb-people-page.js -->
+<div role="main">
+  <div role="article">
+    <h2><span><a href="https://www.facebook.com/shopabc?__cft__[0]=x">Shop ABC</a></span></h2>
+    <div data-ad-comet-preview="message"><div dir="auto">Sale 50% hôm nay, inbox shop nhé!</div></div>
+    <div role="button" id="rx" aria-label="Tất cả cảm xúc: 7"><span>7</span></div>
+    <div role="button"><span>4 bình luận</span></div>
+    <div role="button" id="sh"><span>3 lượt chia sẻ</span></div>
+    <div role="button">Thích</div><div role="button">Bình luận</div><div role="button">Chia sẻ</div>
+    <div role="button" id="flt">Phù hợp nhất</div>
+    <ul id="cmts">
+      <li><div role="article" aria-label="Bình luận dưới tên Lan Nguyễn 2 giờ trước">
+        <a href="https://www.facebook.com/lan.nguyen?comment_id=1&__cft__[0]=y"><span>Lan Nguyễn</span></a>
+        <div dir="auto">Giá bao nhiêu shop? sđt 0912 345 678</div></div>
+        <ul><li><div role="article" aria-label="Phản hồi dưới tên Shop ABC">
+          <a href="https://www.facebook.com/shopabc?comment_id=2"><span>Shop ABC</span></a><div dir="auto">Shop inbox chị nhé</div></div></li></ul>
+      </li>
+      <li><div role="article" aria-label="Bình luận dưới tên Minh Trần">
+        <a href="https://www.facebook.com/groups/999/user/100001234/?__cft__=z">Minh Trần</a>
+        <div dir="auto">Còn hàng không ạ</div></div></li>
+    </ul>
+    <div role="button" id="more">Xem thêm bình luận</div>
+  </div>
+</div>
+<script>
+const R = [['Lan Nguyễn','lan.nguyen','like'],['Minh Trần','profile.php?id=100001234','haha'],['Hoa Lê','hoa.le','like'],['Tuấn Phạm','tuan.pham','love'],
+  ['Mai Võ','mai.vo','like'],['Bình Đỗ','binh.do','haha'],['Khoa Bùi','khoa.bui','like']];
+const NAMES = { like: 'Thích', love: 'Yêu thích', haha: 'Haha' };
+function dialog(id, title, rows, tabs) {
+  document.querySelector('[role=dialog]')?.remove();
+  const d = document.createElement('div'); d.setAttribute('role', 'dialog'); d.id = id;
+  d.innerHTML = `<h2>${title}</h2><div aria-label="Đóng" role="button" id="close">x</div><div class="tabs"></div><div class="sc"></div>`;
+  document.body.append(d);
+  d.querySelector('#close').onclick = () => d.remove();
+  let shown = 0, list = rows;
+  const sc = d.querySelector('.sc');
+  const render = () => { sc.innerHTML = ''; for (const r of list.slice(0, shown)) sc.insertAdjacentHTML('beforeend',
+    `<div class="row"><a href="https://www.facebook.com/${r[1]}${r[1].includes('?') ? '&' : '?'}__tn__=R"><span>${r[0]}</span></a> <div role="button">Thêm bạn bè</div></div>`); };
+  const more = () => { shown = Math.min(list.length, shown + 3); render(); };
+  sc.onscroll = () => { if (sc.scrollTop + sc.clientHeight >= sc.scrollHeight - 5) setTimeout(more, 300); }; // tải dần khi cuộn tới đáy
+  more();
+  if (tabs) { const tb = d.querySelector('.tabs');
+    tabs.forEach((t, i) => { const e = document.createElement('div'); e.setAttribute('role', 'tab'); e.setAttribute('aria-selected', i ? 'false' : 'true');
+      e.setAttribute('aria-label', t ? `${NAMES[t]}, ${rows.filter(r => r[2] === t).length}` : `Tất cả, ${rows.length}`); e.textContent = t || 'Tất cả';
+      e.onclick = () => { list = t ? rows.filter(r => r[2] === t) : rows; shown = 0; more(); }; tb.append(e); }); }
+}
+document.getElementById('rx').onclick = () => dialog('react', 'Cảm xúc', R, ['', 'like', 'haha', 'love']);
+document.getElementById('sh').onclick = () => dialog('share', 'Những người đã chia sẻ', [['Hoa Lê', 'hoa.le'], ['Quân Hồ', 'quan.ho']]);
+document.getElementById('flt').onclick = () => { const m = document.createElement('div'); m.setAttribute('role', 'menu');
+  m.innerHTML = '<div role="menuitem">Mới nhất</div><div role="menuitem" id="all">Tất cả bình luận<br>Hiển thị tất cả bình luận</div>'; document.body.append(m);
+  m.querySelector('#all').onclick = () => { m.remove(); document.getElementById('cmts').insertAdjacentHTML('beforeend',
+    `<li><div role="article" aria-label="Bình luận dưới tên Tuấn Phạm"><a href="https://www.facebook.com/tuan.pham"><span>Tuấn Phạm</span></a><div dir="auto">Ship Đà Nẵng bao lâu</div></div></li>`); }; };
+document.getElementById('more').onclick = e => { e.target.remove(); document.getElementById('cmts').insertAdjacentHTML('beforeend',
+  `<li><div role="article" aria-label="Bình luận dưới tên Quân Hồ"><a href="https://www.facebook.com/quan.ho"><span>Quân Hồ</span></a><div dir="auto">Đặt 2 cái</div></div>
+   <div role="button">2 phản hồi</div></li>`); };
+document.addEventListener('click', e => { if (/^\d+ phản hồi$/.test(e.target.textContent)) { e.target.remove(); document.getElementById('cmts').insertAdjacentHTML('beforeend',
+  `<li><div role="article" aria-label="Phản hồi dưới tên Lan Nguyễn"><a href="https://www.facebook.com/lan.nguyen"><span>Lan Nguyễn</span></a><div dir="auto">Mình cũng muốn</div></div></li>`); } });
+</script>
+</body></html>

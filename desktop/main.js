@@ -7,6 +7,7 @@ const { createMetaAuto } = require('./meta-auto');
 const { createZaloAuto } = require('./zalo-auto');
 const { setupLock } = require('./app-lock');
 const { readCatalog } = require('./svc-catalog');
+const createFbPeople = require('./fb-people');
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 const WEB = process.env.META_ASSISTANT_URL || 'https://vanxharu.github.io/quan-ly-page/';
@@ -495,6 +496,12 @@ app.whenReady().then(async () => {
     listChanged: pageId => pageView.webContents.executeJavaScript(`window.App?.inbox?.bsListChanged?.(${JSON.stringify(String(pageId))})`).catch(() => {}) });
   worker.webContents.setAudioMuted(true);
   worker.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  // Quét bài viết › Người tương tác: đọc người thả cảm xúc / bình luận / chia sẻ của bài bất kỳ bằng phiên Facebook trong app;
+  // số bạn bè / theo dõi chỉ đọc khi bạn bấm từng người.
+  const fbPeople = createFbPeople({ BrowserWindow, partition: META, asChrome });
+  ipcMain.handle('fb-post-people', (e, args) => !fromPage(e) ? { error: 'denied' } : fbPeople.postPeople(args || {},
+    p => pageView.webContents.executeJavaScript(`window.App?.scannerProgress?.(${JSON.stringify(p)})`).catch(() => {})));
+  ipcMain.handle('fb-profile-counts', (e, args) => !fromPage(e) ? { error: 'denied' } : fbPeople.profileCounts(args || {}));
   ipcMain.handle('meta-lookup', (e, args) => fromPage(e) ? auto.lookupProfile(args || {}) : { error: 'denied' });
   // Lệnh trình duyệt (CDP) cho khung ngầm Zalo: bấm chuột / phím / chèn chữ thật như khung Business Suite.
   const zaloCdp = async (method, params) => { const d = ZW().debugger; if (!d.isAttached()) d.attach('1.3'); return d.sendCommand(method, params || {}); };

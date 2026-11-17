@@ -20,6 +20,8 @@ contextBridge.exposeInMainWorld('metaDesktop', {
   svcApi: args => ipcRenderer.invoke('svc-api', args),
   svcCatalog: args => ipcRenderer.invoke('svc-catalog', args),
   svcSnap: args => ipcRenderer.invoke('svc-snap', args),
+  fbPostPeople: args => ipcRenderer.invoke('fb-post-people', args),
+  fbProfileCounts: args => ipcRenderer.invoke('fb-profile-counts', args),
   svcWebBalance: args => ipcRenderer.invoke('svc-web-balance', args),
   svcImage: url => ipcRenderer.invoke('svc-image', String(url)),
   vaultGet: id => ipcRenderer.invoke('vault-get', String(id)),
