@@ -400,3 +400,7 @@ body.teams.teams-on #btnDark,body.teams.teams-on #btnLogout,body.teams.teams-on 
 body.teams .ib-toolbar:not(.open) #ibFilter .chip[data-f=today]:not([aria-pressed=true]){display:none}
 body.teams #ibFilter{overflow:visible}
 body.teams .tm-fold{position:static}
+/* Góc phải: chỉ 1 ảnh đại diện (Page đầu tiên đang chọn), như ảnh tài khoản của Teams */
+body.teams .page-btn .stack .avatar:not(:first-child){display:none!important}
+body.teams .page-btn .stack .avatar:first-child{width:28px!important;height:28px!important;border:0!important}
+body.teams .page-btn{padding:0 2px!important}
