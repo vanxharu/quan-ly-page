@@ -1,0 +1,15 @@
+<!doctype html><html><body><main><div id="log"></div>
+<form><div id="prompt-textarea" contenteditable="true" class="ProseMirror"></div>
+<button type="button" data-testid="send-button" disabled>Send</button></form></main>
+<script>
+const ed = document.getElementById('prompt-textarea'), btn = document.querySelector('[data-testid=send-button]'), log = document.getElementById('log');
+ed.addEventListener('input', () => { btn.disabled = !ed.innerText.trim(); });
+btn.onclick = () => {
+  const q = ed.innerText; ed.innerHTML = ''; btn.disabled = true; window.lastPrompt = q;
+  log.insertAdjacentHTML('beforeend', '<div data-message-author-role="user"></div>'); log.lastChild.textContent = q;
+  const stop = document.createElement('button'); stop.dataset.testid = 'stop-button'; document.body.append(stop);
+  const a = document.createElement('div'); a.dataset.messageAuthorRole = 'assistant'; a.innerHTML = '<div class="markdown"></div>'; log.append(a);
+  const full = '```json\n{"replies":["Dạ em chào anh, gói 1.000 like giá 90.000đ ạ","Dạ anh gửi em link bài nha","Dạ bên em có bảo hành 30 ngày ạ"],"order":{"package_id":"p1","qty":1000,"links":["https://facebook.com/x/posts/1"]}}\n```';
+  let i = 0; const t = setInterval(() => { i += 25; a.firstChild.textContent = full.slice(0, i); if (i >= full.length) { clearInterval(t); stop.remove(); } }, 120);
+};
+</script></body></html>

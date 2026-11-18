@@ -21,6 +21,8 @@ contextBridge.exposeInMainWorld('metaDesktop', {
   svcCatalog: args => ipcRenderer.invoke('svc-catalog', args),
   svcSnap: args => ipcRenderer.invoke('svc-snap', args),
   fbPostPeople: args => ipcRenderer.invoke('fb-post-people', args),
+  gptAsk: args => ipcRenderer.invoke('gpt-ask', args),
+  gptLogin: () => ipcRenderer.invoke('gpt-login'),
   titleBar: o => ipcRenderer.send('title-bar', o),
   uiFrame: native => ipcRenderer.invoke('ui-frame', native),
   fbProfileCounts: args => ipcRenderer.invoke('fb-profile-counts', args),

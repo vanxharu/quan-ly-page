@@ -569,6 +569,9 @@
     const markup = Number(s.markup ?? 600);
     // Gói đoán cho 1 link: lời khách ("1k like") › gói khách dùng lần trước cùng nền tảng › dạng link. Ưu tiên gói hay bán, không phải gói theo tháng.
     const pickFor = link => {
+      // Gợi ý AI (✨ trong Hộp thư): gói + số lượng AI đọc được từ tin khách, nếu gói còn bán.
+      const hint = ctx.hint; if (hint?.pkgId && pkgs.some(p => p.id === hint.pkgId) && ok(svcOfPkg(pkgs.find(p => p.id === hint.pkgId))) && (!hint.links?.length || hint.links.some(l => linkKey(l) === linkKey(link))))
+        return { pkgId: hint.pkgId, qty: Number(hint.qty) || 0, why: 'theo gợi ý AI' };
       const plat = LINK_PLAT[platformOf(link)] || '';
       const lastLine = last?.lines?.find(l => (LINK_PLAT[platformOf(l.link)] || '') === plat && pkgs.some(p => p.id === l.packageId) && ok(svcOfPkg(pkgs.find(p => p.id === l.packageId))));
       const lk = linkKind(link);
@@ -2403,5 +2406,20 @@
     return list.map(([l, t]) => ({ label: l.replace('{tang}', dukBonus()), tpl: t, text: dukFill(t, ctx) }));
   }
 
-  App.services = { hesitation, salesInfo, dukTexts, dukFill, dukBonus, DUK, STAGE_NAME, warrantyDialog, complaintInfo, checkWarranty, splitLinks, bulkDialog, orderedLinks, linkKey, nudgeCard, askCheck, platBadge, linkPlatform: l => LINK_PLAT[platformOf(l)] || '', createDialog, closeDock, orderStates, orderBar, inboxBox, refreshStatus, linksIn, call, openWeb, mapStatus, catalogProgress, noteLines, speedOf, invoiceDialog, invoiceText, paymentDialog, confirmCreate, quotes, renewQuote, vipTick, termOf, requestRefill, refreshRefills };
+  // ── Dữ liệu cho ✨ Gợi ý AI trong Hộp thư: bảng giá gói bán + đơn / báo giá của khách + thông tin hoá đơn ──
+  async function aiContext(key) {
+    const s = await settings(); let list = []; try { list = await services(); } catch {}
+    const byId = new Map(list.map(x => [x.id, x])), vnd = n => Math.round(Number(n) || 0).toLocaleString('vi-VN') + 'đ';
+    const prices = (s.packages || []).map(p => ({ p, v: byId.get(String(p.serviceId)) })).filter(({ v }) => !v || stateOf(v)[1] !== 'err').slice(0, 80).map(({ p, v }) => {
+      const days = v ? warrDays({}, v) : 0;
+      const price = p.kind === 'fixed' ? `${Number(p.qty || 0).toLocaleString('vi-VN')} = ${vnd(p.price)}` : `${vnd(Number(p.unitPrice) * 1000)} / 1.000 (đơn giá ${p.unitPrice}đ)`;
+      return `- [${p.id}] ${p.name}: ${price}${v ? `; mua từ ${Number(v.min).toLocaleString('vi-VN')} đến ${Number(v.max).toLocaleString('vi-VN')}` : ''}; ${days ? `bảo hành ${days} ngày` : 'không bảo hành'}${v?.avgTime ? `; thời gian chạy ${v.avgTime}` : ''}`; });
+    const os = key ? (await DB.get(ORDERS, [])).filter(o => o.customerKey === key && !o.warrantyFor).sort((a, b) => b.at - a.at).slice(0, 8) : [];
+    const orders = os.map(o => `- ${new Date(o.at).toLocaleDateString('vi-VN')}: ${o.displayName || o.serviceName || 'đơn'} · ${vnd(orderSell(o))} · ${o.status === 'done' ? 'đã xong' : o.status === 'cancelled' ? 'đã huỷ' : 'đang chạy'}${o.link ? ' · ' + o.link : ''}`);
+    const qs = key ? (await quotes()).filter(q => q.customerKey === key) : [];
+    const pending = qs.map(q => `- Báo giá #${q.payCode}: ${quoteShort(q)} · ${q.state === 'paid' ? 'đã chuyển tiền, chờ lên đơn' : `chờ chuyển ${vnd(amountDue(q) || q.sell)}${expired(q) ? ' (đã hết hạn giữ giá)' : ''}`}`);
+    return { prices, orders, pending, invoice: s.invoice || {}, bank: s.invoice?.acc ? `${bankName(s.invoice.bin) || 'Ngân hàng'} · STK ${s.invoice.acc}${s.invoice.holder ? ' · ' + s.invoice.holder : ''}` : '' };
+  }
+
+  App.services = { aiContext, hesitation, salesInfo, dukTexts, dukFill, dukBonus, DUK, STAGE_NAME, warrantyDialog, complaintInfo, checkWarranty, splitLinks, bulkDialog, orderedLinks, linkKey, nudgeCard, askCheck, platBadge, linkPlatform: l => LINK_PLAT[platformOf(l)] || '', createDialog, closeDock, orderStates, orderBar, inboxBox, refreshStatus, linksIn, call, openWeb, mapStatus, catalogProgress, noteLines, speedOf, invoiceDialog, invoiceText, paymentDialog, confirmCreate, quotes, renewQuote, vipTick, termOf, requestRefill, refreshRefills };
 })();

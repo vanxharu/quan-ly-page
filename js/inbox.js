@@ -194,6 +194,7 @@
             h('div', { className: 'attach', id: 'ibAttach', hidden: true }),
             h('div', { className: 'ib-reply', id: 'ibReply', hidden: true }),
             h('div', { id: 'ibWindow', className: 'status', hidden: true, style: 'margin-bottom:6px' }),
+            h('div', { className: 'ib-ai', id: 'ibAi', hidden: true }),
             h('div', { className: 'composer-row' },
               h('button', { className: 'tpl-btn', id: 'ibTplBtn', title: 'Mẫu tin (gõ / trong ô nhập)', 'aria-label': 'Mẫu tin', onclick: () => togglePicker() }, icon('i-tpl')),
               h('label', { className: 'tpl-btn', title: 'Đính kèm ảnh', 'aria-label': 'Đính kèm ảnh' }, icon('i-clip'), h('input', { type: 'file', accept: 'image/*', hidden: true, onchange: async e => {
@@ -203,6 +204,7 @@
               } })),
               App.services ? h('button', { type: 'button', className: 'tpl-btn ib-order-btn', id: 'ibOrderBtn', title: 'Tạo đơn dịch vụ cho khách này (mở khung bên trái, vẫn xem được tin nhắn)', disabled: true,
                 onclick: () => { const c = S.conv; if (c) App.services.createDialog({ page: c.page, key: c.key, name: c.other.name || '', messages: S.messages, dock: true }); } }, icon('i-receipt')) : null,
+              h('button', { type: 'button', className: 'tpl-btn ib-ai-btn', id: 'ibAiBtn', title: 'Gợi ý trả lời bằng AI (ChatGPT trong app)', 'aria-label': 'Gợi ý trả lời bằng AI', onclick: () => aiSuggest() }, icon('i-spark')),
               h('textarea', { id: 'ibText', 'aria-label': 'Nội dung trả lời', placeholder: 'Nhập tin trả lời… (gõ / để chọn mẫu)', title: 'Enter gửi · Shift+Enter xuống dòng · / chọn mẫu · quá 24 giờ: tự gửi kèm thẻ Nhân viên trả lời (tới 7 ngày)', rows: 1, disabled: true, oninput: onType, onkeydown: onKey }),
               h('button', { className: 'send-btn', id: 'ibSend', disabled: true, 'aria-label': 'Gửi', onclick: send }, icon('i-send')))))));
       // Menu ⋯: bấm ra ngoài hoặc chọn một mục thì đóng.
@@ -600,6 +602,75 @@
         onclick: () => App.inbox.compose({ key: c.key, text: it.text, autoSend: false }).then(() => $('ibText').focus()) })),
       h('label', { className: 'ib-duk-bonus', title: 'Mức tặng thêm dùng trong tin' }, '🎁', bonus, '%'),
       h('button', { type: 'button', className: 'btn btn-ghost btn-sm', textContent: 'Ẩn', onclick: () => { S.dukHide.add(sig); box.hidden = true; } }));
+  }
+  // ── ✨ Gợi ý trả lời bằng AI: hỏi ChatGPT (tài khoản đăng nhập trong app) với bảng giá, đơn cũ của khách, thông tin shop, mẫu tin ──
+  const AI_SHOP = 'aiShopV1';
+  App.inbox.aiStep = t => { const el = $('ibAiStep'); if (el) el.textContent = t; };
+  async function aiShop(inv = {}) { return { name: inv.shop || '', me: 'em', you: 'anh/chị', policy: '', notes: '', ...(await DB.get(AI_SHOP, {})) }; }
+  async function aiShopDialog(after) {
+    const inv = App.services ? (await App.services.aiContext('').catch(() => ({}))).invoice || {} : {}, v = await aiShop(inv);
+    const f = k => h('input', { type: 'text', value: v[k] || '' }), ta = (k, ph) => h('textarea', { rows: 3, value: v[k] || '', placeholder: ph });
+    const el = { name: f('name'), me: f('me'), you: f('you'), policy: ta('policy', 'VD: Like tụt trong 30 ngày bù miễn phí; lên đơn trong 5–30 phút; không cần mật khẩu'), notes: ta('notes', 'VD: Làm việc 8h–22h; khách quen giảm 5%; không nhận tăng cho trang vi phạm') };
+    const dlg = h('dialog', { className: 'svc-dialog', onclose: () => dlg.remove() });
+    dlg.append(h('div', { className: 'card-head' }, h('h3', { className: 'card-title', textContent: '✨ Thông tin shop cho AI' }), h('button', { type: 'button', className: 'icon-btn', 'aria-label': 'Đóng', textContent: '×', onclick: () => dlg.close() })),
+      h('label', { className: 'field' }, 'Tên shop', el.name), h('div', { className: 'row', style: 'gap:10px' }, h('label', { className: 'field grow' }, 'Shop xưng là', el.me), h('label', { className: 'field grow' }, 'Gọi khách là', el.you)),
+      h('label', { className: 'field' }, 'Chính sách (bảo hành, thời gian lên đơn, cam kết…)', el.policy), h('label', { className: 'field' }, 'Lưu ý khác cho AI', el.notes),
+      h('div', { className: 'hint' }, 'Số tài khoản lấy từ Dịch vụ › Cài đặt › Thông tin hoá đơn. Bảng giá lấy từ Gói bán của tôi.'),
+      h('div', { className: 'row', style: 'justify-content:flex-end;gap:8px' }, h('button', { type: 'button', className: 'btn btn-primary', textContent: 'Lưu', onclick: async () => {
+        await DB.set(AI_SHOP, Object.fromEntries(Object.entries(el).map(([k, x]) => [k, x.value.trim()]))); toast('Đã lưu thông tin shop cho AI.'); dlg.close(); after?.(); } })));
+    document.body.append(dlg); dlg.showModal();
+  }
+  function aiPrompt({ shop, cx, tpls, msgs, name, bank }) {
+    const cut = (t, n) => { t = String(t || '').replace(/\s+/g, ' ').trim(); return t.length > n ? t.slice(0, n) + '…' : t; };
+    const conv = msgs.slice(-20).map(m => (m.isCustomer ? 'Khách: ' : 'Shop: ') + (cut(m.text, 400) || '[ảnh / tệp]')).join('\n');
+    return [`Bạn là nhân viên chăm sóc khách của shop "${shop.name || 'shop'}", bán dịch vụ tăng tương tác mạng xã hội (like, follow, view, thành viên nhóm…). Shop xưng "${shop.me || 'em'}", gọi khách là "${shop.you || 'anh/chị'}". Viết tiếng Việt tự nhiên, thân thiện, ngắn như nhắn Messenger (1–3 câu, emoji vừa phải).`,
+      'Nhiệm vụ: soạn 3 câu trả lời KHÁC NHAU về cách tiếp cận cho tin nhắn mới nhất của khách ở HỘI THOẠI bên dưới, nhằm giải đáp đúng và giúp khách chốt đơn.',
+      'Quy tắc:', '- Chỉ báo giá đúng theo BẢNG GIÁ. Tiền = đơn giá × số lượng. Không bịa giá, gói, ưu đãi hay cam kết mà shop không có.',
+      '- Khách muốn mua mà chưa gửi link thì xin link. Số lượng dưới mức tối thiểu thì nói rõ mức tối thiểu.', '- Không nói mình là AI, không nhắc "bảng giá" hay mã gói trong ngoặc vuông.',
+      '- Nếu tin cuối là của shop (khách chưa nhắn thêm), soạn tin nhắc khéo để khách trả lời.',
+      'Chỉ trả về MỘT khối JSON, không viết thêm gì:', '{"replies":["câu 1","câu 2","câu 3"],"order":null}',
+      'Khi khách đã nói rõ muốn mua một dịch vụ, thay null bằng {"package_id":"mã trong ngoặc vuông ở BẢNG GIÁ","qty":số lượng,"links":["link khách gửi"]}.', '',
+      '## THÔNG TIN SHOP', bank ? 'Chuyển khoản: ' + bank : '', shop.policy ? 'Chính sách: ' + shop.policy : '', shop.notes ? 'Lưu ý: ' + shop.notes : '', '',
+      '## BẢNG GIÁ', cx.prices.length ? cx.prices.slice(0, 50).map(l => cut(l, 220)).join('\n') : '(chưa có gói bán: không báo giá cụ thể, mời khách gửi link để báo giá)', '',
+      `## KHÁCH: ${name || 'Khách'}`, 'Đơn đã mua:', cx.orders.join('\n') || '(chưa mua lần nào)', 'Báo giá:', cx.pending.join('\n') || '(không có)', '',
+      '## MẪU TIN CỦA SHOP (học giọng văn, không cần chép nguyên)', tpls.map(t => '- ' + cut(t.content, 220)).join('\n') || '(không có)', '',
+      '## HỘI THOẠI (cũ → mới)', conv].filter(x => x !== '').join('\n');
+  }
+  function aiParse(t) {
+    const s = String(t || '').replace(/```(?:json)?/gi, ''), a = s.indexOf('{'), b = s.lastIndexOf('}');
+    try { const j = JSON.parse(s.slice(a, b + 1)); return { replies: (j.replies || []).map(x => String(x).trim()).filter(Boolean).slice(0, 3), order: j.order && j.order.package_id ? j.order : null }; }
+    catch { return { replies: s.split(/\n+/).map(x => x.replace(/^\s*(\d+[.)]|[-*•])\s*/, '').replace(/^"|"$/g, '').trim()).filter(x => x.length > 3 && !/^json$|copy code|sao chép/i.test(x)).slice(0, 3), order: null }; }
+  }
+  async function aiSuggest() {
+    const c = S.conv, box = $('ibAi'); if (!c || !box) return;
+    if (!window.metaDesktop?.gptAsk) return toast('Gợi ý AI cần app Get Helps trên Windows (dùng ChatGPT đăng nhập trong app). Cập nhật app nếu chưa có.', 7000);
+    if (S.aiBusy) return;
+    S.aiBusy = true; S.aiFor = c.id; box.hidden = false;
+    const head = (...x) => h('div', { className: 'ib-ai-head' }, h('strong', {}, '✨ Gợi ý AI'), ...x,
+      h('button', { type: 'button', className: 'icon-btn', title: 'Thông tin shop cho AI', 'aria-label': 'Thông tin shop cho AI', textContent: '⚙', onclick: () => aiShopDialog() }),
+      h('button', { type: 'button', className: 'icon-btn', title: 'Đóng', 'aria-label': 'Đóng gợi ý', textContent: '×', onclick: () => { box.hidden = true; } }));
+    box.replaceChildren(head(h('span', { className: 'hint', id: 'ibAiStep', textContent: 'Đang chuẩn bị…' })));
+    try {
+      const cx = App.services ? await App.services.aiContext(c.key).catch(() => ({ prices: [], orders: [], pending: [] })) : { prices: [], orders: [], pending: [] };
+      const shop = await aiShop({ shop: c.page?.name || '', ...(cx.invoice?.shop ? cx.invoice : {}) }), tpls = App.templates ? (await App.templates.list().catch(() => [])).filter(t => t.content).slice(0, 8) : [];
+      const msgs = (S.messages || []).filter(m => m.text || m.isCustomer !== undefined);
+      if (!msgs.length) throw Error('Chưa đọc được tin nhắn của hội thoại này.');
+      const r = await window.metaDesktop.gptAsk({ prompt: aiPrompt({ shop, cx, tpls, msgs, name: c.other.name, bank: cx.bank }) });
+      if (S.conv !== c) return;
+      if (r?.error === 'login') { box.replaceChildren(head(), h('div', { className: 'status pending' }, 'Chưa đăng nhập ChatGPT trong app. ',
+        h('button', { type: 'button', className: 'btn btn-soft btn-sm', textContent: 'Mở Studio AI để đăng nhập', onclick: () => window.metaDesktop.gptLogin?.() }), ' Đăng nhập xong bấm ✨ lại.')); return; }
+      if (r?.error) throw Error(r.error);
+      const { replies, order } = aiParse(r?.text);
+      if (!replies.length) throw Error('ChatGPT không trả lời đúng dạng, bấm ✨ thử lại.');
+      const use = t => { $('ibText').value = t; saveDraft(); updateSendState(); $('ibText').focus(); };
+      const orderBtn = order && App.services?.bulkDialog ? h('button', { type: 'button', className: 'btn btn-primary btn-sm', textContent: `🧾 Tạo báo giá${order.qty ? ' · ' + Number(order.qty).toLocaleString('vi-VN') : ''}`,
+        title: 'Mở hộp tạo đơn, chọn sẵn gói + số lượng AI đọc được (bạn kiểm tra lại)',
+        onclick: () => { const links = (order.links || []).filter(l => /^https?:\/\/|\.(com|vn|me)\//i.test(l)); App.services.bulkDialog({ page: c.page, key: c.key, name: c.other.name || '', messages: S.messages, hint: { pkgId: String(order.package_id), qty: order.qty, links } }, links); } }) : null;
+      box.replaceChildren(head(h('span', { className: 'hint', textContent: 'Bấm một câu để đưa vào ô nhập, sửa rồi gửi' }), h('button', { type: 'button', className: 'btn btn-ghost btn-sm', textContent: '↻ Soạn lại', onclick: () => aiSuggest() })),
+        ...replies.map(t => h('button', { type: 'button', className: 'ib-ai-opt', textContent: t, onclick: () => use(t) })), orderBtn ? h('div', { className: 'ib-ai-order' }, orderBtn) : null);
+    } catch (e) {
+      if (S.conv === c) box.replaceChildren(head(), h('div', { className: 'status err' }, 'Chưa gợi ý được: ' + e.message));
+    } finally { S.aiBusy = false; }
   }
   // Gửi hàng loạt cho nhóm đang lọc: mở lần lượt từng hội thoại, điền tin theo tên/báo giá của khách, gửi, nghỉ vài giây.
   function dukBulk(stage) {
@@ -1245,7 +1316,7 @@
   App.inbox.setPane = setPane;
   function resetThread() {
     setPane(S.conv ? 'thread' : 'list'); S.lastMsgs = []; if ($('ibMiniBtn')) $('ibMiniBtn').hidden = !S.conv; pushMini(true); // đang mở khách (resetThread trước khi vẽ khách mới) → giữ màn hội thoại
-    S.reply = null; drawReply(); closePop(); setCView('chat'); S.pickLinks.clear(); if ($('ibBulk')) $('ibBulk').hidden = true; if ($('ibWarr')) $('ibWarr').hidden = true; if ($('ibDuk')) $('ibDuk').hidden = true; if ($('ibCTabs')) $('ibCTabs').hidden = !S.conv;
+    S.reply = null; drawReply(); closePop(); setCView('chat'); S.pickLinks.clear(); if ($('ibBulk')) $('ibBulk').hidden = true; if ($('ibWarr')) $('ibWarr').hidden = true; if ($('ibDuk')) $('ibDuk').hidden = true; if ($('ibAi')) { $('ibAi').hidden = true; $('ibAi').replaceChildren(); } S.aiFor = ''; if ($('ibCTabs')) $('ibCTabs').hidden = !S.conv;
     S.draftReady = false; S.image = ''; S.tpl = null;
     if(!$('ibText'))return; // Đổi Page trước khi mở Hộp thư vẫn hợp lệ.
     $('ibText').value = ''; $('ibText').disabled = true; drawAttach();

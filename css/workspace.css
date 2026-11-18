@@ -625,3 +625,11 @@ body.dark-mode .tone-gray{background:#2a2a2a;color:#d4d4d4}
 .ib-duk-prev{margin:6px 0;white-space:pre-wrap}
 .svc-bulk-scroll{max-height:42vh;overflow:auto;margin:8px 0}
 .svc-tbl{width:100%;border-collapse:collapse;font-size:13px}.svc-tbl td{padding:5px 6px;border-bottom:1px solid var(--border,#8883)}
+/* ✨ Gợi ý AI */
+.ib-ai{margin:0 0 8px;padding:8px 10px;border-radius:6px;border:1px solid var(--primary-border);background:var(--primary-soft);display:flex;flex-direction:column;gap:6px}
+.ib-ai-head{display:flex;align-items:center;gap:8px}.ib-ai-head .hint{flex:1;font-size:12px}.ib-ai-head .icon-btn{width:24px;height:24px;font-size:14px}
+.ib-ai-opt{text-align:left;padding:7px 10px;border-radius:6px;border:1px solid var(--border,#8884);background:var(--surface,transparent);color:inherit;font:inherit;font-size:13px;line-height:1.45;cursor:pointer;white-space:pre-wrap}
+.ib-ai-opt:hover{border-color:var(--primary)}
+.ib-ai-order{display:flex;justify-content:flex-end}
+body.teams .ib-ai{background:var(--tm-compose);border-color:var(--tm-compose-line)}
+body.teams .ib-ai-opt{background:transparent;border-color:var(--tm-compose-line)}

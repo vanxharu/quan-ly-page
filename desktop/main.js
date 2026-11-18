@@ -8,6 +8,7 @@ const { createZaloAuto } = require('./zalo-auto');
 const { setupLock } = require('./app-lock');
 const { readCatalog } = require('./svc-catalog');
 const createFbPeople = require('./fb-people');
+const createGpt = require('./gpt-ask');
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 const WEB = process.env.META_ASSISTANT_URL || 'https://vanxharu.github.io/quan-ly-page/';
@@ -526,6 +527,12 @@ app.whenReady().then(async () => {
       require('fs').writeFileSync(path.join(dir, 'nguoi-tuong-tac.json'), JSON.stringify({ app: app.getVersion(), at: new Date().toISOString(), ...d }, null, 1)); } catch {} } });
   ipcMain.handle('fb-post-people', (e, args) => !fromPage(e) ? { error: 'denied' } : fbPeople.postPeople(args || {},
     p => pageView.webContents.executeJavaScript(`window.App?.scannerProgress?.(${JSON.stringify(p)})`).catch(() => {})));
+  // Hộp thư › ✨ Gợi ý AI: hỏi ChatGPT ngầm bằng tài khoản ChatGPT đã đăng nhập (phiên mặc định, chung Studio AI).
+  const gpt = createGpt({ BrowserWindow, session: session.defaultSession });
+  ipcMain.handle('gpt-ask', async (e, args) => { if (!fromPage(e)) return { error: 'denied' };
+    try { return { text: await gpt.ask(String(args?.prompt || ''), { onStep: t => pageView.webContents.executeJavaScript(`window.App?.inbox?.aiStep?.(${JSON.stringify(t)})`).catch(() => {}) }) }; }
+    catch (err) { return { error: err.message }; } });
+  ipcMain.handle('gpt-login', e => { if (!fromPage(e)) return false; toggleStudio(true); return true; });
   ipcMain.handle('fb-profile-counts', (e, args) => !fromPage(e) ? { error: 'denied' } : fbPeople.profileCounts(args || {}));
   ipcMain.handle('meta-lookup', (e, args) => fromPage(e) ? auto.lookupProfile(args || {}) : { error: 'denied' });
   // Lệnh trình duyệt (CDP) cho khung ngầm Zalo: bấm chuột / phím / chèn chữ thật như khung Business Suite.

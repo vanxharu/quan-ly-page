@@ -1,6 +1,6 @@
 {
   "name": "meta-assistant",
-  "version": "1.0.173",
+  "version": "1.0.174",
   "description": "Meta Assistant cho Windows: quản lý Page Facebook + Studio AI",
   "main": "main.js",
   "scripts": {
@@ -38,6 +38,7 @@
       "svc-catalog.js",
       "fb-people.js",
       "fb-people-page.js",
+      "gpt-ask.js",
       "icon.png",
       "package.json",
       "node_modules/**/*"
