@@ -1033,10 +1033,38 @@
   // Đơn nhiều dịch vụ: từng dòng (tên · số lượng · tiền), link riêng nếu khác link chung, đơn đã tạo thì kèm tiến độ.
   const multi = o => (o.lines?.length || 0) > 1;
   const lineText = (o, l, i) => `${i + 1}. ${l.displayName} · ${Number(l.qty).toLocaleString('vi-VN')}${Number(l.sell) ? ` · ${money(l.sell)}` : ''}${l.link && l.link !== o.link ? ` · ${l.link}` : ''}${l.order ? ` · ${progressLine(l.order)}` : ''}`;
+  // Báo giá / đơn nhiều link: gộp các cảm xúc của cùng link thành 1 dòng; mọi link giống nhau (cùng gói, số lượng, tiền) thì ghi 1 dòng "Mỗi link".
+  // Link hiện gọn: bỏ https://www., bỏ tham số theo dõi (giữ id / story_fbid / fbid / v).
+  const shortLink = l => { try { const u = new URL(l); const keep = [...u.searchParams].filter(([k]) => /^(id|story_fbid|fbid|v)$/i.test(k)).map(([k, v]) => k + '=' + v).join('&');
+    return u.hostname.replace(/^(www|m|web)\./i, '') + u.pathname.replace(/\/+$/, '') + (keep ? '?' + keep : ''); } catch { return String(l || ''); } };
+  const RX_SHORT = r => String(r || '').toLowerCase();
+  function linkGroups(o) {
+    const byLink = new Map();
+    for (const l of linesOf(o)) { const k = l.link || o.link || ''; if (!byLink.has(k)) byLink.set(k, []); byLink.get(k).push(l); }
+    const groups = [...byLink].map(([link, ls]) => {
+      const pk = [...new Set(ls.map(l => String(l.displayName || '').replace(/\s*\((like|love|care|haha|wow|sad|angry|thương thương|tim|thả tim)\)\s*$/i, '')))].join(', ');
+      const what = ls.map(l => `${Number(l.qty).toLocaleString('vi-VN')}${l.reaction ? ' ' + RX_SHORT(l.reaction) : ''}`).join(' + ');
+      const sell = sumOf(ls, 'sell'), ords = ls.map(l => l.order).filter(Boolean);
+      let st = '';
+      if (ords.length) { const all = ords.length === ls.length && ords.every(x => x.status === 'done'), tot = sumOf(ls, 'qty'), dn = ords.reduce((t, x) => t + (doneOf(x) ?? 0), 0);
+        st = all ? 'Hoàn thành' : ords.some(x => /progress|processing/i.test(x.svcStatus || '')) || dn ? `Đang chạy${dn ? ` · ${dn.toLocaleString('vi-VN')}/${tot.toLocaleString('vi-VN')}` : ''}` : 'Chờ chạy'; }
+      else if (ls.some(l => l.error && !l.done)) st = 'Chưa tạo được';
+      return { link, pk, what, sell, st, sig: `${pk}|${what}|${sell}` };
+    });
+    return { groups, same: groups.length > 1 && groups.every(g => g.sig === groups[0].sig) };
+  }
+  function multiText(o, kind) {
+    const { groups, same } = linkGroups(o), out = [], g0 = groups[0];
+    if (groups.length === 1) out.push(`• Dịch vụ: ${g0.pk}`, g0.link ? `• Link: ${shortLink(g0.link)}` : null, `• Số lượng: ${g0.what}`, g0.st ? `• Trạng thái: ${g0.st}` : null);
+    else if (same) out.push(`• Dịch vụ: ${g0.pk}`, `• Mỗi link: ${g0.what} · ${money(g0.sell)}`, `• ${groups.length} link:`, ...groups.map((g, i) => `   ${i + 1}. ${shortLink(g.link)}${g.st ? ' · ' + g.st : ''}`));
+    else out.push(`• ${groups.length} link:`, ...groups.map((g, i) => `   ${i + 1}. ${shortLink(g.link)} · ${g.pk} · ${g.what} · ${money(g.sell)}${g.st ? ' · ' + g.st : ''}`));
+    if (kind !== 'progress') out.push(`• Tổng tiền: ${money(orderSell(o))}`);
+    return out;
+  }
   function invoiceText(o, inv, kind) {
     const q = qtyOf(o), name = o.displayName || o.items?.[0]?.name || 'Dịch vụ';
     const L = [`${kind === 'quote' && o.renewOf ? '🔔 GIA HẠN DỊCH VỤ' : KIND_TITLE[kind] || KIND_TITLE.new} #${payCode(o)}`,
-      ...(multi(o) ? [o.link ? `• Link: ${o.link}` : null, `• Gồm ${o.lines.length} dịch vụ:`, ...o.lines.map((l, i) => '   ' + lineText(o, l, i)), kind === 'progress' ? null : `• Tổng tiền: ${money(orderSell(o))}`]
+      ...(multi(o) ? multiText(o, kind)
         : [`• Dịch vụ: ${name}`, o.link ? `• Link: ${o.link}` : null, `• Số lượng: ${q.toLocaleString('vi-VN')}`, kind === 'progress' ? null : `• Thành tiền: ${money(orderSell(o))}`])];
     if (kind === 'quote') {
       if (o.renewEnd) L.push(`• Gói hiện tại hết hạn: ${fmtTime(o.renewEnd)}`);
@@ -1172,7 +1200,11 @@
     const q = qtyOf(o), hasPay = hasPayBlock(kind) && inv.acc;
     // [nhãn, giá trị, màu]
     const rows = [[kind === 'quote' ? 'Mã thanh toán' : 'Mã đơn', '#' + payCode(o), C.red], o.customer?.name ? ['Khách hàng', o.customer.name, C.pink] : null,
-      ...(multi(o) ? [o.link ? ['Link chung', o.link, C.blue] : null, ...o.lines.map((l, i) => [`Dịch vụ ${i + 1}`, lineText(o, l, i).replace(/^\d+\. /, ''), C.violet])]
+      // Ảnh: chỉ tóm tắt (gói, mỗi link, số link) + 3 link đầu; danh sách đủ nằm trong tin nhắn chữ.
+      ...(multi(o) ? (({ groups, same }) => groups.length === 1 ? [['Dịch vụ', groups[0].pk, C.violet], ['Link', shortLink(groups[0].link), C.blue], ['Số lượng', groups[0].what, C.orange]]
+        : [same ? ['Dịch vụ', groups[0].pk, C.violet] : null, same ? ['Mỗi link', `${groups[0].what} · ${money(groups[0].sell)}`, C.orange] : null, ['Số link', `${groups.length} link`, C.orange],
+          ...groups.slice(0, 3).map((g, i) => [`Link ${i + 1}`, shortLink(g.link) + (same ? '' : ` · ${g.what} · ${money(g.sell)}`), C.blue]),
+          groups.length > 3 ? ['Còn lại', `${groups.length - 3} link khác (xem tin nhắn)`, C.gray] : null])(linkGroups(o))
         : [['Dịch vụ', o.displayName || o.items?.[0]?.name || 'Dịch vụ', C.violet], o.link ? ['Link', o.link, C.blue] : null, ['Số lượng', q.toLocaleString('vi-VN'), C.orange]]),
       [kind === 'quote' ? 'Ngày báo giá' : 'Ngày tạo', fmtTime(o.at), C.gray],
       kind === 'quote' ? ['Hạn thanh toán', fmtTime(o.expiresAt), C.amber] : null,
