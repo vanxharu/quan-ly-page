@@ -148,6 +148,7 @@
           h('div', { className: 'card-head inbox-search-row' },
             h('input', { type: 'search', id: 'ibSearch', 'aria-label': 'Tìm hội thoại', placeholder: 'Tìm khách hoặc nội dung tin…', oninput: () => drawList() }),
             h('button', { className: 'icon-btn', title: 'Tải lại hội thoại', 'aria-label': 'Tải lại hội thoại', onclick: () => load(false, { force: true }) }, icon('i-sync'))),
+          h('div', { className: 'ib-stages', id: 'ibStage', role: 'group', 'aria-label': 'Lọc khách theo giai đoạn chốt đơn' }),
           h('div', { className: 'ib-toolbar' },
             h('div', { className: 'chips', id: 'ibFilter' }, ...[['all', 'Tất cả'], ['unread', 'Chưa đọc'], ['unanswered', 'Chưa trả lời'], ['today', 'Hôm nay']].map(([f, t]) =>
               h('button', { className: 'chip', dataset: { f }, textContent: t, 'aria-pressed': String(f === S.filter), onclick: () => { S.filter = f; drawList(); } })),
@@ -186,6 +187,7 @@
           h('div', { id: 'ibCrm', className: 'crm', hidden: true }),
           h('div', { className: 'composer' },
             h('div', { className: 'ib-bulk ib-warr', id: 'ibWarr', hidden: true }),
+            h('div', { className: 'ib-bulk ib-duk', id: 'ibDuk', hidden: true }),
             h('div', { className: 'ib-bulk', id: 'ibBulk', hidden: true }),
             h('div', { id: 'ibOrder', hidden: true }),
             h('div', { className: 'popover', id: 'ibPicker', hidden: true }, picker.el),
@@ -536,6 +538,105 @@
   const syncTicks = () => document.querySelectorAll('#ibThread .msg-link-tick input').forEach(i => { i.checked = S.pickLinks.has(i.dataset.link); });
   // Khách báo tụt / đòi bảo hành và có đơn dịch vụ → thanh "🛡 Khách báo tụt" (bấm mới mở hộp Bảo hành).
   S.warrHide = new Set();
+  // ── Dụ khách chốt đơn: lọc Chưa chốt / Phân vân / Chờ chuyển tiền + tin soạn sẵn (từng khách hoặc hàng loạt) ──
+  const STAGES = ['open', 'hesitant', 'quoted'], STAGE_CHIP = { open: 'Chưa chốt', hesitant: 'Phân vân', quoted: 'Chưa CK' };
+  const custTexts = msgs => (msgs || []).filter(m => !m.sep && (m.isCustomer || m.mine === false)).map(m => m.text || '').filter(Boolean);
+  const stageTexts = new Map(); S.dukHide = new Set();
+  function stageOf(c, texts, bought) {
+    const st = S.orderMap?.get(c.key), hes = App.services.hesitation(texts), fresh = Date.now() - new Date(c.updated_time || 0) < 30 * 864e5;
+    return { quoted: st?.kind === 'pay', q: st?.q, hesitant: fresh && !!hes && st?.kind !== 'paid' && st?.kind !== 'run', price: !!hes?.price, said: hes?.text || '', open: fresh && !bought.has(c.key) && !st };
+  }
+  async function computeStages() {
+    if (!App.services?.salesInfo) return;
+    S.stageBusy = true;
+    try {
+      if (!S.orderMap) S.orderMap = await App.services.orderStates().catch(() => null);
+      const { bought } = await App.services.salesInfo(), out = new Map();
+      for (const c of S.convs) {
+        const sig = (c.snippet || '') + '|' + c.updated_time; let hit = stageTexts.get(c.id);
+        if (!hit || hit.sig !== sig) {
+          const m = bsMsgCache.get(c.id) || await DB.get('bsMsg:' + c.id, null).catch(() => null);
+          hit = { sig, texts: m?.messages?.length ? custTexts(m.messages) : c.fromCustomer && c.snippet ? [c.snippet] : [] }; stageTexts.set(c.id, hit);
+        }
+        out.set(c.id, stageOf(c, S.conv?.id === c.id && S.messages?.length ? custTexts(S.messages) : hit.texts, bought));
+      }
+      S.stages = out; S.S_bought = bought; S.stagesAt = Date.now(); S.stagesN = S.convs.length;
+    } finally { S.stageBusy = false; }
+  }
+  function drawStages() {
+    const box = $('ibStage'); if (!box) return;
+    const pool = S.convs.filter(c => S.plat === 'all' || platOf(c) === S.plat);
+    const n = k => pool.filter(c => S.stages?.get(c.id)?.[k]).length, on = STAGES.includes(S.filter) ? S.filter : '';
+    box.replaceChildren(
+      ...STAGES.map(k => h('button', { type: 'button', className: 'chip ib-stage ' + k, dataset: { f: k }, 'aria-pressed': String(on === k), title: App.services?.STAGE_NAME?.[k] || '',
+        onclick: () => { S.filter = S.filter === k ? 'all' : k; drawList(); } }, STAGE_CHIP[k], S.stages ? h('span', { className: 'n', textContent: String(n(k)) }) : null)),
+      on ? h('button', { type: 'button', className: 'btn btn-soft btn-sm ib-stage-send', title: 'Gửi tin dụ khách hàng loạt cho cả nhóm đang lọc', 'aria-label': 'Gửi hàng loạt', textContent: '📣', onclick: () => dukBulk(on) }) : null);
+  }
+  async function drawDuk() {
+    const box = $('ibDuk'); if (!box) return;
+    const c = S.conv; if (!c || !App.services?.dukTexts) { box.hidden = true; return; }
+    if (!S.S_bought) await computeStages().catch(() => {}); if (S.conv !== c) return;
+    const sg = stageOf(c, custTexts(S.messages), S.S_bought || new Set()); S.stages?.set(c.id, sg);
+    // Khách vừa hỏi mà mình chưa trả lời: trả lời bình thường, chưa cần "dụ". Phân vân thì gợi ý ngay.
+    const quiet = !c.fromCustomer && Date.now() - new Date(c.updated_time || 0) > 30 * 60e3;
+    const stage = sg.hesitant ? 'hesitant' : sg.quoted && quiet ? 'quoted' : sg.open && quiet ? 'open' : '';
+    const sig = c.id + '|' + stage + '|' + c.updated_time;
+    if (!stage || S.dukHide.has(sig)) { box.hidden = true; return box.replaceChildren(); }
+    const items = App.services.dukTexts(stage, { name: c.other.name, q: sg.q, price: sg.price });
+    const bonus = h('input', { type: 'number', min: 1, max: 100, value: App.services.dukBonus(), title: 'Tặng thêm bao nhiêu % số lượng', 'aria-label': 'Tặng thêm %',
+      onchange: e => { local.set('dukBonus', String(Math.max(1, Math.min(100, Number(e.target.value) || 10)))); drawDuk(); } });
+    box.hidden = false;
+    box.replaceChildren(h('span', { className: 'ib-bulk-ico', textContent: '💡' }),
+      h('span', { className: 'ib-bulk-txt', title: sg.said ? 'Khách nói: ' + sg.said : '', textContent: App.services.STAGE_NAME[stage] }),
+      ...items.map(it => h('button', { type: 'button', className: 'btn btn-soft btn-sm', title: it.text + '\n\n(Bấm để đưa vào ô nhập, sửa rồi gửi)', textContent: it.label,
+        onclick: () => App.inbox.compose({ key: c.key, text: it.text, autoSend: false }).then(() => $('ibText').focus()) })),
+      h('label', { className: 'ib-duk-bonus', title: 'Mức tặng thêm dùng trong tin' }, '🎁', bonus, '%'),
+      h('button', { type: 'button', className: 'btn btn-ghost btn-sm', textContent: 'Ẩn', onclick: () => { S.dukHide.add(sig); box.hidden = true; } }));
+  }
+  // Gửi hàng loạt cho nhóm đang lọc: mở lần lượt từng hội thoại, điền tin theo tên/báo giá của khách, gửi, nghỉ vài giây.
+  function dukBulk(stage) {
+    const P = App.services, pool = S.convs.filter(c => (S.plat === 'all' || platOf(c) === S.plat) && S.stages?.get(c.id)?.[stage]);
+    if (!pool.length) return toast('Không có khách nào trong nhóm này.', 4000);
+    const day = c => (Date.now() - new Date(c.updated_time || 0)) / 864e5;
+    const rows = pool.map(c => ({ c, on: day(c) <= 7, res: '' }));
+    let tpl = P.DUK[stage][0][1], busy = false, stop = false;
+    const dlg = h('dialog', { className: 'svc-dialog svc-bulk', onclose: () => { stop = true; dlg.remove(); } });
+    const ta = h('textarea', { rows: 4, value: tpl, oninput: () => { tpl = ta.value; prev(); } }), pv = h('div', { className: 'hint ib-duk-prev' });
+    const body = h('tbody'), prog = h('div', { className: 'svc-prog', hidden: true }), go = h('button', { type: 'button', className: 'btn btn-primary' });
+    const prev = () => { const r = rows.find(x => x.on) || rows[0]; pv.textContent = 'Xem trước (' + (r.c.other.name || 'Khách') + '): ' + P.dukFill(tpl, { name: r.c.other.name, q: S.stages.get(r.c.id)?.q }); };
+    const draw = () => {
+      body.replaceChildren(...rows.map(r => h('tr', {}, h('td', {}, h('input', { type: 'checkbox', checked: r.on, disabled: busy, onchange: e => { r.on = e.target.checked; draw(); prev(); } })),
+        h('td', {}, r.c.other.name || 'Khách'), h('td', { className: 'hint' }, r.c.page?.name || (platOf(r.c) === 'zalo' ? 'Zalo' : '')),
+        h('td', { className: 'hint' }, day(r.c) < 1 ? 'hôm nay' : Math.floor(day(r.c)) + ' ngày trước', day(r.c) > 7 ? ' · quá 7 ngày, Meta có thể chặn' : ''),
+        h('td', { className: r.res.startsWith('✓') ? 'hint pos' : r.res ? 'hint neg' : 'hint' }, r.res))));
+      const n = rows.filter(r => r.on && !r.res.startsWith('✓')).length; go.disabled = busy || !n; go.textContent = busy ? 'Đang gửi…' : `📨 Gửi cho ${n} khách`;
+    };
+    const wait = ms => new Promise(r => setTimeout(r, ms));
+    go.onclick = async () => {
+      const todo = rows.filter(r => r.on && !r.res.startsWith('✓')); if (!todo.length || !confirm(`Gửi tin này cho ${todo.length} khách? Mỗi tin cách nhau 10–20 giây.`)) return;
+      busy = true; stop = false; prog.hidden = false; draw(); let i = 0;
+      for (const r of todo) {
+        if (stop) break; i++; prog.textContent = `Đang gửi ${i}/${todo.length}: ${r.c.other.name || 'Khách'}…`; r.res = '⏳'; draw();
+        try {
+          if (!App.inbox.openId(r.c.id)) throw new Error('không còn trong danh sách');
+          for (let t = 0; t < 60 && !(S.conv?.id === r.c.id && S.draftReady); t++) await wait(250);
+          const text = P.dukFill(tpl, { name: r.c.other.name, q: S.stages.get(r.c.id)?.q });
+          const ok = await App.inbox.compose({ key: r.c.key, text, autoSend: true });
+          r.res = ok === true ? '✓ Đã gửi' : '✗ ' + ok;
+        } catch (e) { r.res = '✗ ' + (e.message || e); }
+        draw(); if (i < todo.length && !stop) await wait(10e3 + Math.random() * 10e3);
+      }
+      busy = false; prog.textContent = stop ? 'Đã dừng.' : `Xong: ${rows.filter(r => r.res.startsWith('✓')).length} tin đã gửi.`; draw();
+    };
+    dlg.append(h('div', { className: 'card-head' }, h('h3', { className: 'card-title', textContent: '📣 Gửi tin dụ khách · ' + P.STAGE_NAME[stage] }),
+        h('button', { type: 'button', className: 'icon-btn', 'aria-label': 'Đóng', textContent: '×', onclick: () => dlg.close() })),
+      h('div', { className: 'row', style: 'gap:6px;flex-wrap:wrap' }, ...P.DUK[stage].map(([l, t]) => h('button', { type: 'button', className: 'chip', textContent: l.replace('{tang}', P.dukBonus()), onclick: () => { tpl = ta.value = t; prev(); } }))),
+      h('div', { className: 'field' }, 'Tin nhắn ({ten} tên khách · {tang} % tặng · {ma} mã báo giá · {tien} số tiền · {dv} dịch vụ)', ta), pv,
+      h('div', { className: 'hint' }, 'Khách nhắn quá 7 ngày không được tích sẵn: Meta có thể chặn tin hoặc khoá tính năng nhắn của Page nếu gửi nhiều.'),
+      h('div', { className: 'svc-bulk-scroll' }, h('table', { className: 'svc-tbl' }, body)), prog,
+      h('div', { className: 'row', style: 'gap:8px;justify-content:flex-end' }, h('button', { type: 'button', className: 'btn btn-ghost', textContent: 'Dừng', onclick: () => { stop = true; } }), go));
+    document.body.append(dlg); dlg.showModal(); draw(); prev();
+  }
   async function drawWarr() {
     const box = $('ibWarr'); if (!box) return;
     const c = S.conv; if (!c || !App.services?.complaintInfo) { box.hidden = true; return; }
@@ -549,7 +650,7 @@
       h('button', { type: 'button', className: 'btn btn-ghost btn-sm', textContent: 'Ẩn', title: 'Ẩn thanh này (khách nhắn báo tụt lần sau sẽ hiện lại)', onclick: () => { S.warrHide.add(sig); box.hidden = true; } }));
   }
   async function drawBulk() {
-    drawWarr().catch(() => {});
+    drawWarr().catch(() => {}); drawDuk().catch(() => {});
     const box = $('ibBulk'); if (!box) return;
     const c = S.conv; if (!c || !App.services?.bulkDialog) { box.hidden = true; return; }
     const links = App.services.linksIn(S.messages || []); // mới nhất trước
@@ -1060,10 +1161,13 @@
     const q = norm($('ibSearch').value), lab = $('ibLabel').value, today = new Date().toDateString();
     [...$('ibFilter').children].forEach(c => c.setAttribute('aria-pressed', String(c.dataset.f === S.filter)));
     S.plat ||= local.get('inboxPlat') || 'all'; if (!['all', 'bs', 'zalo'].includes(S.plat)) S.plat = 'all';
+    if (!S.stageBusy && (Date.now() - (S.stagesAt || 0) > 20e3 || S.stagesN !== S.convs.length)) computeStages().then(() => App.current() === 'inbox' && drawList()).catch(() => {});
+    drawStages();
     [...($('ibPlat')?.children || [])].forEach(b => b.setAttribute('aria-pressed', String(b.dataset.p === S.plat)));
     const list = S.convs.filter(c => (S.plat === 'all' || platOf(c) === S.plat) &&
       (S.filter !== 'unread' || c.unread_count) && (S.filter !== 'unanswered' || c.fromCustomer) &&
       (S.filter !== 'today' || new Date(c.updated_time).toDateString() === today) &&
+      (!STAGES.includes(S.filter) || S.stages?.get(c.id)?.[S.filter]) &&
       (!lab || (S.crm?.[c.key]?.labels || []).includes(lab)) &&
       (!q || norm(`${c.other.name} ${c.snippet} ${(S.crm?.[c.key]?.labels || []).join(' ')}`).includes(q)));
     // Mở Hộp thư chỉ hiện 15 khách mới nhất (tìm kiếm thì hiện hết kết quả); bấm "Tải thêm hội thoại" để hiện thêm 15.
@@ -1133,7 +1237,7 @@
   App.inbox.setPane = setPane;
   function resetThread() {
     setPane(S.conv ? 'thread' : 'list'); S.lastMsgs = []; if ($('ibMiniBtn')) $('ibMiniBtn').hidden = !S.conv; pushMini(true); // đang mở khách (resetThread trước khi vẽ khách mới) → giữ màn hội thoại
-    S.reply = null; drawReply(); closePop(); setCView('chat'); S.pickLinks.clear(); if ($('ibBulk')) $('ibBulk').hidden = true; if ($('ibWarr')) $('ibWarr').hidden = true; if ($('ibCTabs')) $('ibCTabs').hidden = !S.conv;
+    S.reply = null; drawReply(); closePop(); setCView('chat'); S.pickLinks.clear(); if ($('ibBulk')) $('ibBulk').hidden = true; if ($('ibWarr')) $('ibWarr').hidden = true; if ($('ibDuk')) $('ibDuk').hidden = true; if ($('ibCTabs')) $('ibCTabs').hidden = !S.conv;
     S.draftReady = false; S.image = ''; S.tpl = null;
     if(!$('ibText'))return; // Đổi Page trước khi mở Hộp thư vẫn hợp lệ.
     $('ibText').value = ''; $('ibText').disabled = true; drawAttach();

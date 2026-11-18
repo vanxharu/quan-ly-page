@@ -2347,5 +2347,53 @@
     return ch;
   }
 
-  App.services = { warrantyDialog, complaintInfo, checkWarranty, splitLinks, bulkDialog, orderedLinks, linkKey, nudgeCard, askCheck, platBadge, linkPlatform: l => LINK_PLAT[platformOf(l)] || '', createDialog, closeDock, orderStates, orderBar, inboxBox, refreshStatus, linksIn, call, openWeb, mapStatus, catalogProgress, noteLines, speedOf, invoiceDialog, invoiceText, paymentDialog, confirmCreate, quotes, renewQuote, vipTick, termOf, requestRefill, refreshRefills };
+  // ── Dụ khách chốt đơn: Chưa chốt / Phân vân / Đã báo giá chưa chuyển tiền ──
+  const plain = t => String(t || '').normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[đĐ]/g, 'd').toLowerCase().replace(/\s+/g, ' ');
+  const WHO = '(minh|em|e|anh|a|chi|c|t|toi|tui|tao|m|ac|bac|co)';
+  const HESITATE = new RegExp([`\\bde ${WHO}? ?(suy nghi|xem (lai|da|sao|the nao)|tinh (lai|da|sau)|hoi (lai|y|chong|vo|sep|ban)|can nhac|coi lai)`, 'suy nghi (them|da|lai)', 'can nhac', 'phan van', 'ban khoan', 'luong lu', 'chua chac',
+    'dat (qua|the|vay|nhi|ha|ghe|xiu)', 'hoi (dat|mac|cao)', 'mac (qua|the|vay|nhi|ha|ghe)', 'gia (cao|chat) (qua|the|vay)', 'giam (gia|chut|duoc|dc|it|xiu|di)', 'bot (chut|duoc|dc|it|xiu|di|gia)', 're hon', 'cho (xin )?(gia|giam) (tot|mem|re)',
+    'uy tin (khong|ko|k|hong|ha|ko\\?)', 'co uy tin', 'lua dao', 'co lua', 'co that (khong|ko|k|hong)', 'an toan (khong|ko|k|hong)', 'co bi (khoa|die|tut|mat|checkpoint|chet|block|giam)', 'so (bi|mat|lua|tut)', 'lo (bi|mat|tut)',
+    'tinh sau', 'luc khac', 'de sau', 'hom khac', 'bua khac', 'chua can', 'chua co tien', 'het tien', 'cuoi thang', 'dau thang', 'luong ve', '\\bde (mai|toi|chieu|tuan sau)', '\\bhmm+', '\\buhm+'].join('|'));
+  const PRICE = /dat (qua|the|vay|nhi|ha|ghe|xiu)|hoi (dat|mac|cao)|mac (qua|the|vay|nhi|ha|ghe)|gia (cao|chat)|giam|bot (chut|duoc|dc|it|xiu|di|gia)|re hon|chua co tien|het tien|cuoi thang|dau thang|luong ve/;
+  const hesitation = texts => { for (const t of (texts || []).slice(-5).reverse()) { const p = plain(t); if (HESITATE.test(p)) return { text: t, price: PRICE.test(p) }; } return null; };
+  // Khách đã từng mua (đơn bất kỳ còn hiệu lực, hoặc báo giá đã thu tiền): không còn là "chưa chốt".
+  async function salesInfo() {
+    const bought = new Set();
+    for (const o of await DB.get(ORDERS, [])) if (o.customerKey && o.status !== 'cancelled' && !o.warrantyFor) bought.add(o.customerKey);
+    for (const q of await quotes()) if (q.state === 'paid') bought.add(q.customerKey);
+    return { bought };
+  }
+  const dukBonus = () => Math.max(1, Math.min(100, Number(local.get('dukBonus')) || 10));
+  const callName = n => { const w = String(n || '').trim().split(/\s+/).filter(Boolean); return !w.length || /^kh[aá]ch$/i.test(n) ? 'mình' : w[w.length - 1]; };
+  // Tin soạn sẵn theo giai đoạn. {ten} {ma} {tien} {dv} {tang} được thay theo từng khách (dùng cả khi gửi hàng loạt).
+  const DUK = {
+    quoted: [
+      ['Nhắc khéo', 'Dạ {ten} ơi, báo giá #{ma} ({dv}) em vẫn đang giữ cho mình ạ. Mình chuyển khoản {tien} là em lên đơn ngay, thường vài phút là bắt đầu chạy rồi ạ 🙏'],
+      ['Tặng thêm {tang}%', 'Dạ {ten} ơi, mình chốt đơn #{ma} trong hôm nay em tặng thêm {tang}% số lượng cho mình nha 🎁 Giá vẫn {tien} thôi ạ, ưu đãi em giữ đến hết hôm nay ạ.'],
+      ['Hỏi vướng gì', 'Dạ {ten} còn băn khoăn chỗ nào không ạ? Đơn bên em đều có bảo hành, số lượng tụt là em bù miễn phí nên mình yên tâm nha. Cần em tư vấn thêm cứ nhắn em ạ 😊']],
+    hesitant: [
+      ['Trấn an', 'Dạ em hiểu ạ 🙏 Bên em làm lâu rồi, đơn nào cũng có bảo hành: số lượng tụt là em bù miễn phí. Mình cần em gửi ảnh đơn khách cũ để xem trước không ạ?'],
+      ['Về giá + tặng {tang}%', 'Dạ giá bên em đã gồm bảo hành rồi ạ, gói rẻ hơn ngoài kia thường tụt nhanh mà không ai bù. Mình chốt trong hôm nay em tặng thêm {tang}% số lượng cho mình nha 🎁'],
+      ['Tặng thêm {tang}%', 'Dạ {ten} ơi, nếu mình chốt trong hôm nay em tặng thêm {tang}% số lượng nha 🎁 Mình gửi em link là em lên đơn liền ạ.']],
+    open: [
+      ['Hỏi lại', 'Dạ em chào {ten} 😊 Hôm trước mình có hỏi dịch vụ bên em, không biết mình đã chọn được gói chưa ạ? Mình gửi em link bài/trang, em báo giá chính xác cho mình liền nha.'],
+      ['Tặng thêm {tang}%', 'Dạ {ten} ơi, hôm nay bên em tặng thêm {tang}% số lượng cho đơn đầu tiên ạ 🎁 Mình gửi em link là em lên đơn luôn nha.'],
+      ['Nhắc khéo', 'Dạ {ten} cần tăng like, follow hay tương tác cho trang nào cứ nhắn em nha, em tư vấn gói vừa túi tiền cho mình ạ 🙏']]
+  };
+  const STAGE_NAME = { quoted: 'Đã báo giá, chưa chuyển tiền', hesitant: 'Khách đang phân vân', open: 'Chưa chốt đơn' };
+  function dukFill(tpl, { name, q } = {}) {
+    const v = { ten: callName(name), tang: String(dukBonus()), ma: q?.payCode || '', tien: q ? money(amountDue(q) || q.sell) : '', dv: q ? shortSvc({ displayName: quoteShort(q) }) : '' };
+    let t = String(tpl).replace(/\{(ten|tang|ma|tien|dv)\}/g, (_, k) => v[k]);
+    if (!q) t = t.replace(/ ?#\s*(?=[ ,.(])/g, ' ').replace(/ \(\)/g, '').replace(/ {2,}/g, ' ');
+    return t;
+  }
+  // stage: quoted | hesitant | open → [{ label, text }]. Khách phân vân vì giá: mẫu "Về giá" lên đầu.
+  function dukTexts(stage, ctx = {}) {
+    let list = DUK[stage] || [];
+    if (stage === 'hesitant') list = ctx.price ? [list[1], list[0], list[2]] : [list[0], list[2], list[1]];
+    if (stage === 'hesitant' && ctx.q) list = list.map(([l, t]) => /^Tặng/.test(l) ? [l, 'Dạ {ten} ơi, mình chuyển khoản {tien} cho đơn #{ma} trong hôm nay em tặng thêm {tang}% số lượng nha 🎁 Em lên đơn liền cho mình ạ.'] : [l, t]);
+    return list.map(([l, t]) => ({ label: l.replace('{tang}', dukBonus()), tpl: t, text: dukFill(t, ctx) }));
+  }
+
+  App.services = { hesitation, salesInfo, dukTexts, dukFill, dukBonus, DUK, STAGE_NAME, warrantyDialog, complaintInfo, checkWarranty, splitLinks, bulkDialog, orderedLinks, linkKey, nudgeCard, askCheck, platBadge, linkPlatform: l => LINK_PLAT[platformOf(l)] || '', createDialog, closeDock, orderStates, orderBar, inboxBox, refreshStatus, linksIn, call, openWeb, mapStatus, catalogProgress, noteLines, speedOf, invoiceDialog, invoiceText, paymentDialog, confirmCreate, quotes, renewQuote, vipTick, termOf, requestRefill, refreshRefills };
 })();

@@ -610,3 +610,18 @@ body.dark-mode .tone-gray{background:#2a2a2a;color:#d4d4d4}
 .svc-w-link{display:flex;flex-direction:column;min-width:0}.svc-w-link a{color:var(--primary);text-decoration:none;word-break:break-all}.svc-w-link small{line-height:1.4}
 .svc-bulk-table .hint.pos{color:var(--ok-text)}.svc-bulk-table .hint.neg{color:var(--err-text)}
 .svc-inbox-warr{margin-bottom:8px}
+/* Dụ khách chốt đơn */
+.ib-stages{display:flex;align-items:center;gap:6px;padding:2px 12px 6px;overflow-x:auto;scrollbar-width:none;white-space:nowrap}
+.ib-stages::-webkit-scrollbar{display:none}
+.ib-stage-l{font-size:11px;color:var(--text-secondary);margin-right:2px}
+.ib-stages .chip{height:24px;padding:0 8px;font-size:12px;display:inline-flex;align-items:center;gap:5px}
+.ib-stages .chip .n{font-size:11px;opacity:.7}
+.ib-stages .chip.hesitant[aria-pressed=true]{border-color:#c19c00!important;color:#c19c00!important}
+.ib-stages .chip.quoted[aria-pressed=true]{border-color:#e97548!important;color:#e97548!important}
+.ib-stage-send{height:24px;padding:0 7px;font-size:13px;flex:none}
+.ib-duk{gap:6px}.ib-duk .btn-sm{padding:2px 8px}
+.ib-duk-bonus{display:inline-flex;align-items:center;gap:3px;font-size:12px;color:var(--text-secondary)}
+.ib-duk-bonus input{width:44px;height:24px;padding:0 4px;font-size:12px;box-sizing:border-box}
+.ib-duk-prev{margin:6px 0;white-space:pre-wrap}
+.svc-bulk-scroll{max-height:42vh;overflow:auto;margin:8px 0}
+.svc-tbl{width:100%;border-collapse:collapse;font-size:13px}.svc-tbl td{padding:5px 6px;border-bottom:1px solid var(--border,#8883)}
