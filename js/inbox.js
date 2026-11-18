@@ -179,6 +179,7 @@
             h('button', { type: 'button', className: 'ib-newmsg', id: 'ibNewMsg', hidden: true, textContent: '↓ Tin mới', onclick: () => toBottom(true) })),
           h('div', { id: 'ibCrm', className: 'crm', hidden: true }),
           h('div', { className: 'composer' },
+            h('div', { className: 'ib-bulk', id: 'ibBulk', hidden: true }),
             h('div', { id: 'ibOrder', hidden: true }),
             h('div', { className: 'popover', id: 'ibPicker', hidden: true }, picker.el),
             h('div', { className: 'attach', id: 'ibAttach', hidden: true }),
@@ -437,6 +438,7 @@
     if (!older) { c.bsSig = sig; const keep = { snippet: c.snippet, messages: (r.messages || []).filter(m => !/^blob:/.test(m.pic || '')).slice(-60) }; bsMsgCache.set(c.id, keep); DB.set('bsMsg:' + c.id, keep).catch(() => {}); }
     drawBs(c, r, older ? { silent: true, keepTop: true } : { silent, older });
     S.messages = (r.messages || []).filter(m => !m.sep).map(m => ({ isCustomer: !m.mine, text: [m.text, m.share].filter(Boolean).join(' ') }));
+    drawBulk();
     S.lastMsgs = (r.messages || []).filter(m => !m.sep).slice(-6).map(m => ({ mine: !!m.mine, text: m.text || '', pic: !!m.pic, ts: m.ts || 0 })); pushMini();
     // Tin cuối trong hội thoại khác dòng trên danh sách (danh sách chưa kịp cập nhật): sửa luôn dòng đó + đưa lên đầu nếu mới hơn.
     const lastMsg = (r.messages || []).filter(m => !m.sep && (m.text || m.pic)).pop();
@@ -509,11 +511,35 @@
   function linkActions(c, text) {
     const links = App.services?.linksIn ? App.services.linksIn([{ isCustomer: true, text: text || '' }]).reverse() : [];
     if (!links.length) return null;
-    return h('div', { className: 'msg-links' }, ...links.map(l => h('button', { type: 'button', className: 'msg-link-btn', title: 'Tạo đơn với link: ' + l,
+    return h('div', { className: 'msg-links' }, ...links.map(l => h('span', { className: 'msg-link-pair' },
+      // Tích nhiều link (kể cả ở các tin khác nhau) rồi bấm "Tạo đơn hàng loạt" trên ô soạn tin.
+      App.services.bulkDialog ? h('label', { className: 'msg-link-tick', title: 'Chọn link này để tạo đơn hàng loạt' },
+        h('input', { type: 'checkbox', dataset: { link: l }, checked: S.pickLinks.has(l), onchange: e => { if (e.target.checked) S.pickLinks.add(l); else S.pickLinks.delete(l); syncTicks(); drawBulk(); } })) : null,
+      h('button', { type: 'button', className: 'msg-link-btn', title: 'Tạo đơn với link: ' + l,
       onclick: () => App.services.createDialog({ page: c.page, key: c.key, name: c.other.name || '', messages: S.messages, dock: true }, l) },
       '🧾 Tạo đơn', h('span', { textContent: ' · ' }), App.services.linkPlatform?.(l) ? App.services.platBadge(App.services.linkPlatform(l), 14) : null,
-      h('span', { textContent: (App.services.linkPlatform?.(l) ? ' ' : '') + l.replace(/^https?:\/\/(www\.|m\.)?/, '').slice(0, 32) + (l.length > 44 ? '…' : '') }))));
+      h('span', { textContent: (App.services.linkPlatform?.(l) ? ' ' : '') + l.replace(/^https?:\/\/(www\.|m\.)?/, '').slice(0, 32) + (l.length > 44 ? '…' : '') })))));
   }
+  // Khách gửi nhiều link: thanh "Tạo đơn hàng loạt" trên ô soạn tin — các link bạn đã tích, không thì các link chưa lên đơn (từ 2 link).
+  S.pickLinks = new Set();
+  const syncTicks = () => document.querySelectorAll('#ibThread .msg-link-tick input').forEach(i => { i.checked = S.pickLinks.has(i.dataset.link); });
+  async function drawBulk() {
+    const box = $('ibBulk'); if (!box) return;
+    const c = S.conv; if (!c || !App.services?.bulkDialog) { box.hidden = true; return; }
+    const links = App.services.linksIn(S.messages || []); // mới nhất trước
+    const done = await App.services.orderedLinks().catch(() => new Map()); if (S.conv !== c) return;
+    const open = links.filter(l => !done.has(App.services.linkKey(l))), picked = [...S.pickLinks];
+    if (!picked.length && open.length < 2) { box.hidden = true; return box.replaceChildren(); }
+    const use = picked.length ? picked : open.slice().reverse(); // theo thứ tự khách gửi
+    box.hidden = false;
+    box.replaceChildren(h('span', { className: 'ib-bulk-ico', textContent: '🧾' }),
+      h('span', { className: 'ib-bulk-txt', textContent: picked.length ? `Đã chọn ${picked.length} link` : `Khách gửi ${open.length} link chưa lên đơn` }),
+      h('button', { type: 'button', className: 'btn btn-primary btn-sm', textContent: `Tạo đơn hàng loạt (${use.length})`,
+        onclick: () => App.services.bulkDialog({ page: c.page, key: c.key, name: c.other.name || '', messages: S.messages }, use) }),
+      picked.length ? h('button', { type: 'button', className: 'btn btn-ghost btn-sm', textContent: 'Bỏ chọn', onclick: () => { S.pickLinks.clear(); syncTicks(); drawBulk(); } })
+        : h('span', { className: 'hint', textContent: 'hoặc tích từng link trong tin' }));
+  }
+  App.inbox.bulkDone = () => { S.pickLinks.clear(); syncTicks(); drawBulk(); };
   // ── Cảm xúc + trả lời trích dẫn (Business Suite và Zalo) ──
   const EMO = ['👍', '❤️', '😆', '😮', '😢', '😡'];
   const canAct = (c, m) => !!(c.bs && m.mid && window.metaDesktop?.reactThread);
@@ -673,7 +699,7 @@
     box.hidden = !bar && !nudge; box.replaceChildren(...[nudge, bar].filter(Boolean)); drawCTabs();
     if (App.current() === 'inbox') drawList();
   }
-  App.inbox.orderChanged = () => drawOrder().catch(() => {});
+  App.inbox.orderChanged = () => { drawOrder().catch(() => {}); drawBulk().catch(() => {}); };
   setInterval(() => { if (App.current() === 'inbox' && !document.hidden) drawOrder().catch(() => {}); }, 60e3);
   async function tagAndCrm(c, { render }) {
     const st = await settings();
@@ -1079,7 +1105,7 @@
   App.inbox.setPane = setPane;
   function resetThread() {
     setPane(S.conv ? 'thread' : 'list'); S.lastMsgs = []; if ($('ibMiniBtn')) $('ibMiniBtn').hidden = !S.conv; pushMini(true); // đang mở khách (resetThread trước khi vẽ khách mới) → giữ màn hội thoại
-    S.reply = null; drawReply(); closePop(); setCView('chat'); if ($('ibCTabs')) $('ibCTabs').hidden = !S.conv;
+    S.reply = null; drawReply(); closePop(); setCView('chat'); S.pickLinks.clear(); if ($('ibBulk')) $('ibBulk').hidden = true; if ($('ibCTabs')) $('ibCTabs').hidden = !S.conv;
     S.draftReady = false; S.image = ''; S.tpl = null;
     if(!$('ibText'))return; // Đổi Page trước khi mở Hộp thư vẫn hợp lệ.
     $('ibText').value = ''; $('ibText').disabled = true; drawAttach();
@@ -1168,7 +1194,7 @@
       loadSeen(c);
       thread.scrollTop = !silent || atBottom ? thread.scrollHeight : oldTop;
       c.unread_count = 0;
-      S.messages = msgs.map(m => ({ isCustomer: m.from?.id !== c.page.id, text: m.message || '' }));
+      S.messages = msgs.map(m => ({ isCustomer: m.from?.id !== c.page.id, text: m.message || '' })); drawBulk();
       S.lastMsgs = msgs.slice(-6).map(m => ({ mine: m.from?.id === c.page.id, text: m.message || '', pic: !!m.attachments, ts: Date.parse(m.created_time) || 0 })); pushMini();
       // Tải tin mới không dựng lại biểu mẫu CRM đang nhập dở.
       await tagAndCrm(c, { render: !silent || switching });

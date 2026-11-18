@@ -572,3 +572,21 @@ body.dark-mode .tone-gray{background:#2a2a2a;color:#d4d4d4}
 .svc-react-cell[hidden]{display:none!important}
 [data-panel=inbox] .msg-share{display:flex;flex-direction:column;gap:2px;margin:4px 0;padding:8px 10px;border-radius:10px;background:var(--bg-input);border:1px solid var(--border);color:var(--text-primary);text-decoration:none;max-width:280px}[data-panel=inbox] .msg-share small{color:var(--primary);font-size:11px;word-break:break-all}
 .sn-people-form input[type=text]{flex:1 1 360px;max-width:620px}.sn-people-form input[type=checkbox]{width:auto}.sn-people{max-height:640px}.sn-person{color:var(--text-primary);text-decoration:none;white-space:nowrap}.sn-person:hover strong{color:var(--primary)}.sn-cmt-meta{display:flex;align-items:center;gap:8px;margin-top:5px;white-space:normal}
+/* Tạo đơn hàng loạt: thanh trên ô soạn tin, ô tích cạnh nút Tạo đơn dưới link, hộp bảng nhiều link */
+.ib-bulk{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0 0 8px;padding:7px 12px;border-radius:6px;background:var(--primary-soft);border:1px solid var(--primary-border);font-size:13px}
+.ib-bulk-txt{font-weight:600;color:var(--text-primary)}.ib-bulk .hint{font-size:12px}
+.msg-link-pair{display:inline-flex;align-items:center;gap:2px}
+.msg-link-tick{display:inline-grid;place-items:center;width:22px;height:22px;cursor:pointer}.msg-link-tick input{width:15px;height:15px;margin:0;accent-color:var(--primary);cursor:pointer}
+.svc-dialog.svc-bulk{width:min(1120px,calc(100vw - 32px))}
+.svc-bulk-wrap{max-height:min(50vh,520px);overflow:auto;border:1px solid var(--border);border-radius:8px}
+.svc-bulk-table{width:100%;border-collapse:collapse;font-size:13px}
+.svc-bulk-table th{position:sticky;top:0;z-index:1;background:var(--bg-card);font-size:12px;font-weight:600;text-align:left;padding:8px;color:var(--text-secondary)}
+.svc-bulk-table td{padding:6px 8px;border-top:1px solid var(--border-subtle);vertical-align:top}
+.svc-bulk-table td.num{text-align:right;white-space:nowrap;padding-top:12px}
+.svc-bulk-table tr.off td{opacity:.5}
+.svc-bulk-table tr.bad td{background:color-mix(in srgb,var(--err-bg) 50%,transparent)}
+.svc-bulk-link{display:flex;align-items:center;gap:6px;min-width:230px}.svc-bulk-link input{flex:1;min-width:0}
+.svc-bulk-table select{width:100%;min-width:200px;max-width:300px}
+.svc-bulk-st{min-width:120px;font-size:12px}.svc-bulk-st .warn{color:var(--pending-text);margin-top:3px}
+.svc-bulk-all{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:8px 10px;border-radius:8px;background:var(--bg-input);border:1px dashed var(--border)}
+.svc-bulk-all select{flex:1;min-width:220px;max-width:420px}
