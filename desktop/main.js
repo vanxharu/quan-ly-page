@@ -544,7 +544,7 @@ app.whenReady().then(async () => {
   const gpt = createGpt({ BrowserWindow, session: session.defaultSession, saveDebug: d => { try { const dir = path.join(app.getPath('downloads'), 'GetHelps-debug');
     require('fs').mkdirSync(dir, { recursive: true }); require('fs').writeFileSync(path.join(dir, 'chatgpt.html'), `<!-- ${d.when} ${d.url} -->\n` + d.html); } catch {} } });
   ipcMain.handle('gpt-ask', async (e, args) => { if (!fromPage(e)) return { error: 'denied' };
-    try { return { text: await gpt.ask(String(args?.prompt || ''), { onStep: t => pageView.webContents.executeJavaScript(`window.App?.inbox?.aiStep?.(${JSON.stringify(t)})`).catch(() => {}) }) }; }
+    try { return { text: await gpt.ask(String(args?.prompt || ''), { fresh: !!args?.fresh, onStep: t => pageView.webContents.executeJavaScript(`window.App?.inbox?.aiStep?.(${JSON.stringify(t)})`).catch(() => {}) }) }; }
     catch (err) { return { error: err.message }; } });
   ipcMain.handle('gpt-login', e => { if (!fromPage(e)) return false; toggleStudio(true); return true; });
   ipcMain.handle('fb-profile-counts', (e, args) => !fromPage(e) ? { error: 'denied' } : fbPeople.profileCounts(args || {}));

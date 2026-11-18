@@ -25,7 +25,9 @@ module.exports = function createGpt({ BrowserWindow, session, url = 'https://cha
     return document.querySelector('[data-testid="send-button"],[data-testid="fruitjuice-send-button"],#composer-submit-button,button[aria-label="Send prompt"],button[aria-label="Send message"],button[aria-label="Gửi lời nhắc"],button[aria-label="Gửi tin nhắn"]') || (f && f.querySelector('button[type=submit]')); })()`;
   const ASSIST = `[...document.querySelectorAll('[data-message-author-role="assistant"],li[data-message-role="assistant"]')]`;
 
-  async function run(prompt, { timeout = 150e3, onStep } = {}) {
+  async function run(prompt, { timeout = 150e3, onStep, fresh } = {}) {
+    // fresh: bỏ cửa sổ ChatGPT cũ (có thể đang kẹt / lỗi), mở phiên mới.
+    if (fresh && win && !win.isDestroyed()) { win.destroy(); win = null; }
     const w = get(), step = t => { try { onStep?.(t); } catch {} };
     // Đánh dấu đầu / cuối câu trả lời bằng mã riêng: đọc được câu trả lời từ chữ trên trang mà không phụ thuộc cấu trúc giao diện
     // (ChatGPT khi đăng nhập / chưa đăng nhập / mỗi lần đổi giao diện dựng tin trả lời khác nhau).
