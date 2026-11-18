@@ -10,12 +10,13 @@ button:hover{background:var(--hover)}button:focus-visible{outline:2px solid #6D2
 </style></head><body>
 <div id="grip" title="Kéo để đổi độ rộng" aria-label="Kéo để đổi độ rộng">⋮</div>
 <span id="title"></span>
+<button id="reload" title="Tải lại cột này (khi bị đen / đứng)" aria-label="Tải lại cột">↻</button>
 <button id="narrow" title="Hẹp lại" aria-label="Hẹp lại">⟩</button>
 <button id="wide" title="Rộng ra" aria-label="Rộng ra">⟨</button>
 <button id="close" title="Ẩn cột này (Ctrl+Shift+M / Ctrl+Shift+A để mở lại)" aria-label="Ẩn cột">✕</button>
 <script>
 document.getElementById('title').textContent = new URLSearchParams(location.search).get('t') || '';
-for (const id of ['narrow', 'wide', 'close']) document.getElementById(id).onclick = () => bar.cmd(id);
+for (const id of ['reload', 'narrow', 'wide', 'close']) document.getElementById(id).onclick = () => bar.cmd(id);
 const grip = document.getElementById('grip');
 grip.onpointerdown = e => { grip.setPointerCapture(e.pointerId); bar.cmd('drag-start', e.screenX); };
 grip.onpointermove = e => { if (grip.hasPointerCapture(e.pointerId)) bar.cmd('drag', e.screenX); };

@@ -239,6 +239,17 @@ app.whenReady().then(async () => {
   const padTitle = pad => { if (!FRAMELESS || padNow === pad) return; padNow = pad;
     pageView.webContents.executeJavaScript(`document.documentElement.classList.add('frameless');document.documentElement.classList.toggle('tb-pad',${pad})`).catch(() => { padNow = null; }); };
   pageView.webContents.on('dom-ready', () => { padNow = null; layout(); });
+  // Cột phải bị đen: tiến trình trang bị đóng (Business Suite tốn RAM) hoặc khung không vẽ lại sau khi ẩn 0×0.
+  // Khi mở cột / bấm ↻: trang chết hoặc trống → tải lại; còn sống → buộc vẽ lại.
+  const VIEWS = { studio: panelView, meta: metaView, zalo: zaloView, svc: svcView };
+  const HOME = { meta: 'https://business.facebook.com/latest/inbox/all' };
+  let shownCol = '';
+  const revive = (name, force) => { const wc = VIEWS[name]?.webContents; if (!wc || wc.isDestroyed()) return;
+    const url = wc.getURL(), dead = wc.isCrashed();
+    if (dead || !url || url === 'about:blank' && HOME[name]) { if (HOME[name]) wc.loadURL(HOME[name]).catch(() => {}); else wc.reload(); }
+    else if (force) wc.reload(); else wc.invalidate(); };
+  for (const [name, v] of Object.entries(VIEWS)) v.webContents.on('render-process-gone', (e, d) => { console.error('Cột', name, 'bị đóng:', d?.reason);
+    if (d?.reason !== 'clean-exit') setTimeout(() => { if (cur === name) revive(name); }, 1500); });
   const layout = () => {
     const { width, height } = mainWindow.getContentBounds();
     // Studio AI chỉ hiện khi đang ở nhóm Đăng bài.
@@ -252,6 +263,7 @@ app.whenReady().then(async () => {
     // đặt nó NẰM DƯỚI trang chính (bị trang chính che kín); mở cột Zalo thì đưa lên trên cùng.
     for (const [name, v] of [['studio', panelView], ['meta', metaView], ['zalo', zaloView], ['svc', svcView]]) v.setBounds(cur === name ? { x: width - w, y: TB + BAR, width: w, height: height - TB - BAR } : { x: width, y: 0, width: 0, height: 0 });
     zaloSide(cur === 'zalo');
+    if (cur !== shownCol) { shownCol = cur; if (VIEWS[cur]) setTimeout(() => revive(cur), 60); }
     const title = cur === 'meta' ? 'Hộp thư Meta' : cur === 'studio' ? 'Studio AI' : cur === 'zalo' ? 'Zalo' : cur === 'svc' ? 'Dịch vụ' : '';
     if (title && bar.webContents.__title !== title) { bar.webContents.__title = title; bar.webContents.loadFile(path.join(__dirname, 'bar.html'), { query: { t: title } }); }
   };
@@ -280,6 +292,7 @@ app.whenReady().then(async () => {
     if (e.sender !== bar.webContents || !cur) return;
     const width = mainWindow.getContentBounds().width;
     if (name === 'close') { side = ''; layout(); return; }
+    if (name === 'reload') { revive(cur, true); return; }
     if (name === 'narrow' || name === 'wide') widths[cur] = Math.min(0.8, Math.max(0.2, widths[cur] + (name === 'wide' ? 0.05 : -0.05)));
     else if (name === 'drag-start') dragFrom = { x, ratio: widths[cur] };
     else if (name === 'drag' && dragFrom) widths[cur] = Math.min(0.8, Math.max(0.2, dragFrom.ratio + (dragFrom.x - x) / width));
