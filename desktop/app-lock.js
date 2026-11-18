@@ -9,7 +9,7 @@ const write = cfg => fs.writeFileSync(FILE(), JSON.stringify(cfg));
 const hash = (pw, salt) => crypto.scryptSync(String(pw), salt, 32).toString('hex');
 const verify = (cfg, pw) => !!cfg.hash && crypto.timingSafeEqual(Buffer.from(hash(pw, cfg.salt), 'hex'), Buffer.from(cfg.hash, 'hex'));
 
-function setupLock({ mainWindow, focusPage, sessions = [] }) {
+function setupLock({ mainWindow, focusPage, sessions = [], titleBar = 0, onShow = () => {} }) {
   let cfg = read(), locked = false, mode = '', fails = 0, blockedUntil = 0;
   const view = new WebContentsView({ webPreferences: { sandbox: true, contextIsolation: true, preload: path.join(__dirname, 'lock-preload.js') } });
   const place = () => {
@@ -19,9 +19,10 @@ function setupLock({ mainWindow, focusPage, sessions = [] }) {
     view.setBounds({ x: 0, y: 0, width, height });
   };
   mainWindow.on('resize', place);
-  const open = m => { mode = m; view.webContents.loadFile(path.join(__dirname, 'lock.html'), { query: { mode: m, has: cfg.hash ? '1' : '' } }); place(); view.webContents.focus(); };
+  // titleBar: chiều cao hàng nút cửa sổ vẽ đè (app không viền) → màn khoá chừa chỗ bên phải, dời nút Sign in ra ngoài các nút đó.
+  const open = m => { mode = m; view.webContents.loadFile(path.join(__dirname, 'lock.html'), { query: { mode: m, has: cfg.hash ? '1' : '', ...(titleBar ? { tb: String(titleBar) } : {}) } }); place(); view.webContents.focus(); onShow(m); };
   let realTitle = '';
-  const close = () => { mode = ''; place(); focusPage(); if (realTitle) { mainWindow.setTitle(realTitle); realTitle = ''; } };
+  const close = () => { mode = ''; place(); onShow(''); focusPage(); if (realTitle) { mainWindow.setTitle(realTitle); realTitle = ''; } };
   // Khi khoá: tiêu đề cửa sổ cũng đổi theo màn che, mở khoá thì trả lại.
   const lock = () => { if (!cfg.hash || locked) return; locked = true; realTitle = mainWindow.getTitle(); mainWindow.setTitle('Help'); open('unlock'); };
   const state = () => ({ enabled: !!cfg.hash, onMinimize: cfg.onMinimize !== false, idleMinutes: cfg.idleMinutes ?? 10 });

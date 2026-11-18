@@ -265,9 +265,11 @@ app.whenReady().then(async () => {
   if (studio) panelView.webContents.loadURL(`chrome-extension://${studio.id}/sidepanel.html?desktop=1`);
   const fromPage = e => e.sender === pageView.webContents;
   // Màu hàng nút cửa sổ theo giao diện (sáng / tối) của trang.
+  let overlayColor = { color: '#0c1820', symbolColor: '#ffffff' }, lockShown = false;
+  const setOverlay = o => { if (!FRAMELESS) return; try { mainWindow.setTitleBarOverlay({ ...o, height: TB }); mainWindow.setBackgroundColor(o.color); } catch {} };
   ipcMain.on('title-bar', (e, o) => { if (!fromPage(e) || !FRAMELESS) return; const hex = v => /^#[0-9a-f]{6}$/i.test(String(v || '').trim()) ? String(v).trim() : null;
     const color = hex(o?.color), symbolColor = hex(o?.symbol); if (!color) return;
-    try { mainWindow.setTitleBarOverlay({ color, symbolColor: symbolColor || '#ffffff', height: TB }); mainWindow.setBackgroundColor(color); } catch {} });
+    overlayColor = { color, symbolColor: symbolColor || '#ffffff' }; if (!lockShown) setOverlay(overlayColor); });
   ipcMain.handle('ui-frame', (e, native) => { if (!fromPage(e)) return null;
     if (native == null) return { frameless: FRAMELESS, canToggle: process.platform === 'win32' };
     try { require('fs').writeFileSync(UI_FILE, JSON.stringify({ ...ui, nativeFrame: !!native })); } catch {}
@@ -705,7 +707,9 @@ app.whenReady().then(async () => {
   });
   layout();
   // Khoá app bằng mật khẩu (lớp phủ trên cùng); tạo sau mọi khung khác để luôn che được.
-  const appLock = setupLock({ mainWindow, focusPage: () => pageView.webContents.focus(), sessions: [ses, metaSes, zaloSes, svcSes] });
+  const appLock = setupLock({ mainWindow, focusPage: () => pageView.webContents.focus(), sessions: [ses, metaSes, zaloSes, svcSes], titleBar: TB,
+    // Màn khoá (màn che) có thanh trên màu riêng: đổi màu hàng nút cửa sổ cho khớp, mở khoá thì trả màu của trang.
+    onShow: m => { lockShown = !!m; setOverlay(m === 'unlock' ? { color: '#1b3a55', symbolColor: '#ffffff' } : m ? { color: '#202020', symbolColor: '#ffffff' } : overlayColor); } });
   ipcMain.on('app-lock', (e, what) => { if (!fromPage(e)) return; if (what === 'settings') appLock.settings(); else if (what === 'now') appLock.lock(); });
   Menu.setApplicationMenu(Menu.buildFromTemplate([
     { label: 'Studio AI', accelerator: 'Ctrl+Shift+A', click: () => toggleStudio() },

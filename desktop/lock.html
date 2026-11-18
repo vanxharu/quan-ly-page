@@ -32,6 +32,10 @@ const err = el('div', { className: 'err', role: 'alert' });
 if (mode === 'unlock') {
   // Màn che: trông như một trang trợ giúp bình thường. Mở khoá bằng nút "Sign in" góc trên.
   document.title = 'Help'; document.body.className = 'decoy'; card.remove();
+  // App không viền (thanh trên kiểu Teams): hàng nút thu nhỏ / phóng to / đóng nằm đè góc phải trên → thanh trên cao bằng hàng đó,
+  // chừa chỗ bên phải để nút Sign in không bị che, kéo được cửa sổ bằng thanh trên.
+  const tb = Number(q.get('tb')) || 0;
+  if (tb) document.head.append(el('style', {}, `.decoy .top{height:${tb}px;padding-right:150px;-webkit-app-region:drag;app-region:drag}.decoy .top button{-webkit-app-region:no-drag;app-region:no-drag}.decoy .popup{top:${tb + 4}px;right:150px}`));
   const svg = h => { const t = document.createElement('template'); t.innerHTML = h.trim(); return t.content.firstChild; };
   const person = svg('<svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="5.5" r="2.6" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M3.2 13.4c.6-2.4 2.5-3.7 4.8-3.7s4.2 1.3 4.8 3.7" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>');
   const signIn = el('button', { className: 'signin', type: 'button' }, 'Sign in', el('span', { className: 'avatar' }, person));
