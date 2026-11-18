@@ -228,3 +228,90 @@ body.teams [data-panel=inbox] .send-btn .ico{width:18px;height:18px}
   .tm-search{display:none}
   .tm-title{display:none}
 }
+
+/* ═════════ Lần 2: sát Teams hơn, bớt màu ═════════ */
+/* Màu trạng thái dịu (bảng màu Fluent) */
+body.teams{--accent:var(--tm-accent);--accent-soft:var(--tm-accent-soft);
+  --ok-bg:#f1faf1;--ok-text:#0e700e;--err-bg:#fdf3f4;--err-text:#b10e1c;--pending-bg:#fff9f5;--pending-text:#8a3707;--success:#107c10}
+body.teams.dark-mode{--ok-bg:#1f2b1f;--ok-text:#9fd89f;--err-bg:#3a2226;--err-text:#f1707b;--pending-bg:#352b22;--pending-text:#f4bfab;--success:#9fd89f}
+/* Ảnh đại diện chữ: nền xanh xám nhạt, chữ đậm (như Teams) */
+body.teams .avatar{background:#c8d3e7;color:#243a5e;font-weight:600}
+body.teams.dark-mode .avatar{background:#b9c6dd;color:#1b2c4a}
+/* Thanh dọc: chỉ biểu tượng */
+body.teams .tm-rail-txt{display:none}
+body.teams .tm-rail{gap:4px;padding-top:8px}
+body.teams .tm-rail-btn{padding:6px 0}
+body.teams .tm-rail-ico{width:40px;height:36px}
+body.teams .tm-rail-ico .ico{width:22px;height:22px;stroke-width:1.5}
+body.teams .tm-rail-btn[aria-current=page] .tm-rail-ico{background:transparent}
+body.teams .tm-rail-btn[aria-current=page]::before{top:12px;bottom:12px}
+body.teams .tm-badge{top:0;right:0}
+body.teams.teams-on .app-title{display:none}
+/* Hộp thư: không có thanh tab ngang trên cùng; cột danh sách có tiêu đề "Trò chuyện" */
+body.teams[data-tm-tab=inbox] .tm-bar{display:none}
+.tm-lhead{display:none}
+body.teams .tm-lhead{display:flex;align-items:center;gap:2px;padding:12px 10px 4px 16px;flex:none}
+body.teams .tm-lhead h2{flex:1;margin:0;font-size:18px;font-weight:700;color:var(--tm-text)}
+body.teams .tm-lhead .icon-btn{width:32px;height:32px}
+body.teams .tm-lhead .icon-btn .ico{width:17px;height:17px;stroke-width:1.7}
+body.teams .inbox-search-row>.icon-btn{display:none}
+body.teams .inbox-search-row{padding:6px 12px 4px!important}
+body.teams #ibSearch{height:30px}
+/* Bộ lọc: một hàng viên thuốc nhỏ, phần nền tảng / nhãn gập sau nút ▾ */
+.tm-fold{display:none}
+body.teams .tm-fold{display:inline-grid;place-items:center;width:24px;height:24px;border:0;border-radius:4px;background:transparent;color:var(--tm-muted);cursor:pointer}
+body.teams .tm-fold:hover{background:var(--tm-hover);color:var(--tm-text)}
+body.teams .ib-toolbar.open .tm-fold{transform:rotate(180deg)}
+body.teams .ib-toolbar:not(.open) #ibPlat,body.teams .ib-toolbar:not(.open) #ibLabel{display:none!important}
+body.teams #ibFilter{flex-wrap:nowrap!important;align-items:center}
+body.teams #ibFilter .chip{height:24px;padding:0 9px;font-size:12px;border-color:var(--tm-line)!important;color:var(--tm-text2)!important;white-space:nowrap}
+.dark-mode.teams #ibFilter .chip{border-color:#3d3d3d!important}
+body.teams #ibFilter .chip[aria-pressed=true]{border-color:var(--tm-text2)!important;background:var(--tm-hover)!important;color:var(--tm-text)!important;font-weight:600}
+body.teams .ib-plat{border-color:var(--tm-line)!important;background:transparent!important;color:var(--tm-text2)!important}
+body.teams .ib-plat[aria-pressed=true]{border-color:var(--tm-text2)!important;background:var(--tm-hover)!important;color:var(--tm-text)!important}
+/* Dòng khách: ảnh 32px, ảnh Page nhỏ như chấm trạng thái; chưa đọc = chữ đậm (không số, không chấm) */
+body.teams #ibList .item{min-height:52px;padding:7px 10px 7px 14px!important}
+body.teams #ibList .avwrap>.avatar:first-child{width:32px!important;height:32px!important;font-size:12px!important}
+body.teams #ibList .avwrap .pl{display:none!important}
+body.teams #ibList .avwrap .pg,body.teams #ibTitle .avwrap .pg{width:12px!important;height:12px!important;right:-1px!important;bottom:-1px!important;border:0!important;box-shadow:0 0 0 2px var(--tm-list)!important;font-size:0!important}
+body.teams #ibTitle .avwrap .pg{box-shadow:0 0 0 2px var(--tm-chat)!important}
+body.teams #ibTitle .avwrap .pl{display:none!important}
+body.teams #ibList .item .badge,body.teams #ibList .item.unread::before{display:none!important}
+body.teams #ibList .item .wait{background:transparent!important;color:var(--tm-muted)!important;border:0!important;padding:0!important;font-weight:400}
+body.teams #ibList .item .wait.late{color:#c4314b!important}
+body.teams #ibList .item .lbl,body.teams #ibList .item .ord-chip{background:var(--tm-hover)!important;color:var(--tm-text2)!important;border:0!important}
+body.teams .tm-sec{font-size:13px;padding:10px 14px 4px}
+body.teams .tm-sec .tm-sec-n{color:var(--tm-text2);font-weight:400}
+/* Đầu hội thoại: một dòng (tên), nút biểu tượng bên phải */
+body.teams #ibTitle .th-meta,body.teams #ibTitle .hint,body.teams #ibTitle .btn{display:none!important}
+body.teams #ibTitle{margin:0 0 14px!important}
+body.teams #ibTitle .card-title{font-size:16px!important}
+body.teams [data-panel=inbox] .split>.card:last-child>.card-head{min-height:56px}
+body.teams [data-panel=inbox] .split>.card:last-child>.card-head .icon-btn{width:32px;height:32px;margin-bottom:12px;align-self:flex-end}
+body.teams .tm-ctabs button{font-size:14px}
+.tm-ctabs .tm-ctab-n{background:var(--tm-hover);color:var(--tm-text2)}
+/* Ô soạn tin: chỉ biểu tượng */
+body.teams [data-panel=inbox] .composer-row .tpl-btn{width:32px;padding:0;display:inline-grid;place-items:center}
+body.teams [data-panel=inbox] .composer-row .tpl-btn .ico{width:17px;height:17px;stroke-width:1.6}
+/* Link trong tin: bấm mở; ngay sau link là ô tích + biểu tượng tạo đơn nhỏ */
+.msg-url{color:var(--tm-accent,var(--primary));text-decoration:none;word-break:break-all}
+.msg-url:hover{text-decoration:underline}
+.msg-url-acts{display:inline-flex;align-items:center;gap:1px;margin:0 2px 0 4px;vertical-align:-3px}
+.msg-url-acts .msg-link-tick{width:18px;height:18px}
+.msg-url-acts .msg-link-tick input{width:13px;height:13px}
+.msg-url-order{display:inline-grid;place-items:center;width:20px;height:20px;padding:0;border:0;border-radius:4px;background:transparent;color:var(--tm-muted,var(--text-muted));cursor:pointer}
+.msg-url-order .ico{width:14px;height:14px;stroke-width:1.8}
+.msg-url-order:hover{background:var(--tm-hover,var(--bg-hover));color:var(--tm-accent,var(--primary))}
+.msg-links{display:none!important}
+/* Thanh tạo đơn hàng loạt: nền trung tính */
+body.teams .ib-bulk{background:var(--tm-compose);border-color:var(--tm-compose-line);box-shadow:0 1px 2px #0000000d}
+body.teams .ib-bulk-ico{opacity:.8}
+/* Ô tìm kiếm: ảnh chữ trung tính */
+body.teams .tm-search-ava{background:#c8d3e7;color:#243a5e}
+body.teams .ib-toolbar{display:flex!important;flex-wrap:nowrap!important;align-items:center}
+body.teams .ib-toolbar.open{flex-wrap:wrap!important}
+body.teams #ibFilter{flex:1 1 auto;min-width:0;overflow-x:auto;scrollbar-width:none}
+body.teams #ibFilter::-webkit-scrollbar{display:none}
+body.teams .tm-fold{position:sticky;right:0;flex:none;background:var(--tm-list)}
+body.teams .ib-toolbar .ib-menu{flex:none}
+body.teams .ib-toolbar.open #ibPlat,body.teams .ib-toolbar.open #ibLabel{order:5}

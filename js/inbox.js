@@ -140,12 +140,18 @@
       S.picker = picker;
       el.append(h('div', { className: 'split', dataset: { cview: 'chat' } },
         h('div', { className: 'card' },
+          // Kiểu Teams: tiêu đề "Trò chuyện" + nút biểu tượng (Mẫu tin, Khách hàng, Gửi hàng loạt, tải lại).
+          h('div', { className: 'tm-lhead' }, h('h2', { textContent: 'Trò chuyện' }),
+            ...[['templates', 'i-tpl', 'Mẫu tin'], ['crm', 'i-user', 'Khách hàng'], ['bulk', 'i-send', 'Gửi hàng loạt']].map(([t, ic, label]) =>
+              h('button', { type: 'button', className: 'icon-btn', title: label, 'aria-label': label, onclick: () => App.show(t) }, icon(ic))),
+            h('button', { type: 'button', className: 'icon-btn', title: 'Tải lại hội thoại', 'aria-label': 'Tải lại hội thoại', onclick: () => load(false, { force: true }) }, icon('i-sync'))),
           h('div', { className: 'card-head inbox-search-row' },
             h('input', { type: 'search', id: 'ibSearch', 'aria-label': 'Tìm hội thoại', placeholder: 'Tìm khách hoặc nội dung tin…', oninput: () => drawList() }),
             h('button', { className: 'icon-btn', title: 'Tải lại hội thoại', 'aria-label': 'Tải lại hội thoại', onclick: () => load(false, { force: true }) }, icon('i-sync'))),
           h('div', { className: 'ib-toolbar' },
             h('div', { className: 'chips', id: 'ibFilter' }, ...[['all', 'Tất cả'], ['unread', 'Chưa đọc'], ['unanswered', 'Chưa trả lời'], ['today', 'Hôm nay']].map(([f, t]) =>
-              h('button', { className: 'chip', dataset: { f }, textContent: t, 'aria-pressed': String(f === S.filter), onclick: () => { S.filter = f; drawList(); } }))),
+              h('button', { className: 'chip', dataset: { f }, textContent: t, 'aria-pressed': String(f === S.filter), onclick: () => { S.filter = f; drawList(); } })),
+              h('button', { type: 'button', className: 'tm-fold', title: 'Thêm bộ lọc (nền tảng, nhãn)', 'aria-label': 'Thêm bộ lọc', textContent: '▾', onclick: e => e.currentTarget.closest('.ib-toolbar').classList.toggle('open') })),
             h('div', { className: 'ib-plats', id: 'ibPlat', role: 'group', 'aria-label': 'Lọc theo nền tảng' }, ...['all', 'bs', 'zalo'].map(k =>
               h('button', { type: 'button', className: 'ib-plat', dataset: { p: k }, title: k === 'all' ? 'Mọi nền tảng' : 'Chỉ ' + PLAT[k].name, 'aria-pressed': String((S.plat || 'all') === k),
                 onclick: () => { S.plat = k; local.set('inboxPlat', k); drawList(); } }, k === 'all' ? 'Tất cả' : platLogo(k, 16)))),
@@ -174,7 +180,7 @@
             window.metaDesktop?.miniOpen ? h('button', { type: 'button', className: 'icon-btn ib-mini-btn', id: 'ibMiniBtn', hidden: true, title: 'Tách ra cửa sổ chat nhỏ (nổi trên mọi ứng dụng)', 'aria-label': 'Mở cửa sổ chat nhỏ', textContent: '⧉',
               onclick: () => { S.miniOn = true; window.metaDesktop.miniOpen(); pushMini(true); } }) : null,
             h('button', { type: 'button', className: 'icon-btn ib-crm-toggle', title: 'Giai đoạn · Đơn · Nhãn', 'aria-label': 'Hiện thanh khách hàng', textContent: '⋯', onclick: e => { const sp = e.currentTarget.closest('.split'); sp.classList.toggle('crm-open'); } }),
-            h('button', { className: 'btn btn-ghost', id: 'ibReload', hidden: true, textContent: '↻ Đọc lại', title: 'Đọc lại tin của hội thoại', onclick: () => S.conv && (S.conv.bs ? openBs(S.conv, { silent: true }) : openConv(S.conv)) })),
+            h('button', { className: 'icon-btn', id: 'ibReload', hidden: true, 'aria-label': 'Đọc lại tin', title: 'Đọc lại tin của hội thoại', onclick: () => S.conv && (S.conv.bs ? openBs(S.conv, { silent: true }) : openConv(S.conv)) }, icon('i-sync'))),
           h('div', { className: 'thread-wrap' }, h('div', { className: 'thread', id: 'ibThread' }, empty('Chọn một hội thoại bên trái để xem tin nhắn.')),
             h('button', { type: 'button', className: 'ib-newmsg', id: 'ibNewMsg', hidden: true, textContent: '↓ Tin mới', onclick: () => toBottom(true) })),
           h('div', { id: 'ibCrm', className: 'crm', hidden: true }),
@@ -186,14 +192,14 @@
             h('div', { className: 'ib-reply', id: 'ibReply', hidden: true }),
             h('div', { id: 'ibWindow', className: 'status', hidden: true, style: 'margin-bottom:6px' }),
             h('div', { className: 'composer-row' },
-              h('button', { className: 'tpl-btn', id: 'ibTplBtn', onclick: () => togglePicker() }, icon('i-msg'), 'Mẫu'),
-              h('label', { className: 'tpl-btn', title: 'Đính kèm ảnh' }, '📎', h('input', { type: 'file', accept: 'image/*', hidden: true, onchange: async e => {
+              h('button', { className: 'tpl-btn', id: 'ibTplBtn', title: 'Mẫu tin (gõ / trong ô nhập)', 'aria-label': 'Mẫu tin', onclick: () => togglePicker() }, icon('i-tpl')),
+              h('label', { className: 'tpl-btn', title: 'Đính kèm ảnh', 'aria-label': 'Đính kèm ảnh' }, icon('i-clip'), h('input', { type: 'file', accept: 'image/*', hidden: true, onchange: async e => {
                 const c = S.conv, f = e.target.files[0];
                 if (f) { const image = await fileToDataUrl(f); if (draftKey(S.conv) === draftKey(c)) { S.image = image; drawAttach(); saveDraft(); } }
                 e.target.value = '';
               } })),
               App.services ? h('button', { type: 'button', className: 'tpl-btn ib-order-btn', id: 'ibOrderBtn', title: 'Tạo đơn dịch vụ cho khách này (mở khung bên trái, vẫn xem được tin nhắn)', disabled: true,
-                onclick: () => { const c = S.conv; if (c) App.services.createDialog({ page: c.page, key: c.key, name: c.other.name || '', messages: S.messages, dock: true }); } }, '🧾', h('span', { textContent: 'Tạo đơn' })) : null,
+                onclick: () => { const c = S.conv; if (c) App.services.createDialog({ page: c.page, key: c.key, name: c.other.name || '', messages: S.messages, dock: true }); } }, icon('i-receipt')) : null,
               h('textarea', { id: 'ibText', 'aria-label': 'Nội dung trả lời', placeholder: 'Nhập tin trả lời… (gõ / để chọn mẫu)', title: 'Enter gửi · Shift+Enter xuống dòng · / chọn mẫu · quá 24 giờ: tự gửi kèm thẻ Nhân viên trả lời (tới 7 ngày)', rows: 1, disabled: true, oninput: onType, onkeydown: onKey }),
               h('button', { className: 'send-btn', id: 'ibSend', disabled: true, 'aria-label': 'Gửi', onclick: send }, icon('i-send')))))));
       // Menu ⋯: bấm ra ngoài hoặc chọn một mục thì đóng.
@@ -508,17 +514,21 @@
     t.addEventListener('scroll', () => { S.atBottom = nearBottom(t); if (S.atBottom && $('ibNewMsg')) $('ibNewMsg').hidden = true; }, { passive: true });
   }
   // Ngay dưới link trong tin của khách: nút tạo đơn với đúng link đó (mở khung tạo đơn bên trái, link điền sẵn).
-  function linkActions(c, text) {
-    const links = App.services?.linksIn ? App.services.linksIn([{ isCustomer: true, text: text || '' }]).reverse() : [];
-    if (!links.length) return null;
-    return h('div', { className: 'msg-links' }, ...links.map(l => h('span', { className: 'msg-link-pair' },
-      // Tích nhiều link (kể cả ở các tin khác nhau) rồi bấm "Tạo đơn hàng loạt" trên ô soạn tin.
+  // Kiểu Teams: link trong tin bấm mở được; ngay sau link của khách là 2 biểu tượng nhỏ: ô tích (tạo đơn hàng loạt) và 🧾 tạo đơn.
+  function richText(c, text, customer) {
+    if (!text) return null;
+    const segs = App.services?.splitLinks ? App.services.splitLinks(text) : [text];
+    if (segs.every(x => typeof x === 'string')) return text;
+    return h('span', { className: 'msg-text' }, ...segs.map(sg => typeof sg === 'string' ? sg : h('span', { className: 'msg-url-wrap' },
+      h('a', { className: 'msg-url', href: sg.link, target: '_blank', rel: 'noopener noreferrer', title: sg.link, textContent: sg.raw }),
+      customer && App.services?.createDialog ? linkActs(c, sg.link) : null)));
+  }
+  function linkActs(c, l) {
+    return h('span', { className: 'msg-url-acts' },
       App.services.bulkDialog ? h('label', { className: 'msg-link-tick', title: 'Chọn link này để tạo đơn hàng loạt' },
         h('input', { type: 'checkbox', dataset: { link: l }, checked: S.pickLinks.has(l), onchange: e => { if (e.target.checked) S.pickLinks.add(l); else S.pickLinks.delete(l); syncTicks(); drawBulk(); } })) : null,
-      h('button', { type: 'button', className: 'msg-link-btn', title: 'Tạo đơn với link: ' + l,
-      onclick: () => App.services.createDialog({ page: c.page, key: c.key, name: c.other.name || '', messages: S.messages, dock: true }, l) },
-      '🧾 Tạo đơn', h('span', { textContent: ' · ' }), App.services.linkPlatform?.(l) ? App.services.platBadge(App.services.linkPlatform(l), 14) : null,
-      h('span', { textContent: (App.services.linkPlatform?.(l) ? ' ' : '') + l.replace(/^https?:\/\/(www\.|m\.)?/, '').slice(0, 32) + (l.length > 44 ? '…' : '') })))));
+      h('button', { type: 'button', className: 'msg-url-order', title: 'Tạo đơn với link này', 'aria-label': 'Tạo đơn với link này',
+        onclick: e => { e.stopPropagation(); App.services.createDialog({ page: c.page, key: c.key, name: c.other.name || '', messages: S.messages, dock: true }, l); } }, icon('i-receipt')));
   }
   // Khách gửi nhiều link: thanh "Tạo đơn hàng loạt" trên ô soạn tin — các link bạn đã tích, không thì các link chưa lên đơn (từ 2 link).
   S.pickLinks = new Set();
@@ -546,9 +556,9 @@
   function msgBubble(c, m) {
     // Khách chia sẻ bài (thẻ chia sẻ, không có chữ link): hiện thẻ link + nút Tạo đơn như link thường.
     const share = m.share && !String(m.text || '').includes(m.share) ? m.share : '';
-    const bub = h('div', { className: 'msg' + (m.mine ? ' me' : '') }, m.text || null,
+    const bub = h('div', { className: 'msg' + (m.mine ? ' me' : '') }, richText(c, m.text, !m.mine),
       share ? h('a', { className: 'msg-share', href: share, target: '_blank', rel: 'noopener', title: share }, h('span', { textContent: '🔗 Bài chia sẻ' }), h('small', { textContent: share.replace(/^https?:\/\/(www\.|m\.)?/, '').slice(0, 46) })) : null,
-      m.mine ? null : linkActions(c, [m.text, share].filter(Boolean).join(' ')), m.pic ? picEl(m.pic) : null,
+      share && !m.mine && App.services?.createDialog ? linkActs(c, App.services.linksIn([{ isCustomer: true, text: share }])[0] || share) : null, m.pic ? picEl(m.pic) : null,
       m.re?.length ? h('div', { className: 'msg-re', title: m.re.map(x => (x.mine ? 'Bạn' : c.other.name) + ' ' + x.e).join(' · ') }, ...m.re.map(x => h('span', { className: x.mine ? 'mine' : '', textContent: x.e }))) : null);
     if (!canAct(c, m)) return bub;
     const acts = h('div', { className: 'msg-acts' },
@@ -1186,7 +1196,7 @@
         // Kiểu Teams: ảnh đại diện ở tin đầu của mỗi cụm tin liên tiếp cùng người gửi; tin của Page không cần ảnh.
         me(m) ? h('span', { className: 'rc-slot' }) : first ? messageAvatar(c, 32) : h('span', { className: 'tm-ava-gap' }),
         h('div', { className: 'msg' + (me(m) ? ' me' : ''), title: fmtTime(m.created_time) },
-        m.message || null, me(m) ? null : linkActions(c, m.message),
+        richText(c, m.message, !me(m)),
         ...(m.attachments?.data || []).map(a => a.image_data?.url ? picEl(a.image_data.url)
           : h('a', { href: a.file_url || '#', target: '_blank', rel: 'noopener', textContent: `📎 ${a.name || 'Tệp đính kèm'}` })),
         !m.message && !m.attachments?.data?.length ? '(nhãn dán / tin đặc biệt)' : null)), me, m => Date.parse(m.created_time) || 0));

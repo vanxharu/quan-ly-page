@@ -314,6 +314,14 @@
     }
     return out.reverse(); // mới nhất trước
   }
+  // Chia chữ tin nhắn thành đoạn chữ và link (để hiện link bấm được + nút tạo đơn ngay sau link).
+  function splitLinks(text) {
+    const t = String(text || ''), out = []; let i = 0;
+    for (const m of t.matchAll(LINK_RE)) { const raw = m[0].replace(/[.,;!?…]+$/, ''); if (m.index < i) continue;
+      if (m.index > i) out.push(t.slice(i, m.index)); out.push({ raw, link: /^https?:\/\//i.test(raw) ? raw : 'https://' + raw }); i = m.index + raw.length; }
+    if (i < t.length) out.push(t.slice(i));
+    return out.length ? out : [t];
+  }
   const platformOf = link => /tiktok/i.test(link) ? 'tiktok' : /instagram/i.test(link) ? 'instagram' : /youtu/i.test(link) ? 'youtube' : /shopee/i.test(link) ? 'shopee' : /t\.me|telegram/i.test(link) ? 'telegram' : /facebook|fb\.(com|watch|me)/i.test(link) ? 'facebook' : /threads\.(net|com)/i.test(link) ? 'threads' : /(^|\/\/|\.)(x|twitter)\.com/i.test(link) ? 'x' : /lazada/i.test(link) ? 'lazada' : '';
 
   // ── Tạo đơn (hộp thoại) ── ctx: { page, name, key } khi mở từ Hộp thư; link: link khách gửi.
@@ -694,7 +702,7 @@
       if (warns.length && !confirm(['Kiểm tra trước khi tạo:', ...warns, '', 'Vẫn tạo báo giá?'].join('\n'))) return;
       const lines = on.flatMap(([r, c]) => { const label = c.pk?.name || c.svc.category || 'Dịch vụ', base = { link: r.link, costManual: false, packageId: c.pk?.id || '', termMonths: termOf(c.svc, c.pk), comments: '' };
         if (!c.parts || c.parts.length < 2) { const [x] = c.parts?.[0] || [c.svc];
-          return [{ ...base, id: uid('ln'), serviceId: x.id, serviceName: x.name, ...(c.parts ? { reaction: x.child } : {}), qty: c.qty, sell: c.sell, cost: c.cost, listPrice: c.listPrice, displayName: c.parts ? `${label} (${x.child})` : label }]; }
+          return [{ ...base, id: uid('ln'), serviceId: x.id, serviceName: x.name, ...(c.parts ? { reaction: x.child } : {}), qty: c.qty, sell: c.sell, cost: c.cost, listPrice: c.listPrice, displayName: c.parts && x.id !== c.svc.id ? `${label} (${x.child})` : label }]; }
         // Nhiều cảm xúc: mỗi loại 1 dòng (1 đơn Baostar), chia tiền khách trả / giá gói theo số lượng.
         let restS = c.sell, restL = c.listPrice;
         return c.parts.map(([x, k], i) => { const last = i === c.parts.length - 1, sl = last ? restS : Math.round(c.sell * k / c.qty), lp = last ? restL : Math.round(c.listPrice * k / c.qty); restS -= sl; restL -= lp;
@@ -2074,5 +2082,5 @@
     if (s.apiKey) drawPrices(); else priceBox.replaceChildren(h('p', { className: 'hint', textContent: 'Nhập API key rồi Lưu để tải danh sách dịch vụ.' }));
     drawPkgs(); drawInvoiceSettings(s); drawIcons();
   }
-  App.services = { bulkDialog, orderedLinks, linkKey, nudgeCard, askCheck, platBadge, linkPlatform: l => LINK_PLAT[platformOf(l)] || '', createDialog, closeDock, orderStates, orderBar, inboxBox, refreshStatus, linksIn, call, openWeb, mapStatus, catalogProgress, noteLines, speedOf, invoiceDialog, invoiceText, paymentDialog, confirmCreate, quotes, renewQuote, vipTick, termOf, requestRefill, refreshRefills };
+  App.services = { splitLinks, bulkDialog, orderedLinks, linkKey, nudgeCard, askCheck, platBadge, linkPlatform: l => LINK_PLAT[platformOf(l)] || '', createDialog, closeDock, orderStates, orderBar, inboxBox, refreshStatus, linksIn, call, openWeb, mapStatus, catalogProgress, noteLines, speedOf, invoiceDialog, invoiceText, paymentDialog, confirmCreate, quotes, renewQuote, vipTick, termOf, requestRefill, refreshRefills };
 })();
