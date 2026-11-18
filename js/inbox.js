@@ -582,7 +582,7 @@
     box.replaceChildren(
       ...STAGES.map(k => h('button', { type: 'button', className: 'chip ib-stage ' + k, dataset: { f: k }, 'aria-pressed': String(on === k), title: STAGE_TIP[k],
         onclick: () => { S.filter = S.filter === k ? 'all' : k; drawList(); } }, STAGE_CHIP[k], S.stages ? h('span', { className: 'n', textContent: String(n(k)) }) : null)),
-      on === 'open' ? h('button', { type: 'button', className: 'btn btn-soft btn-sm ib-stage-send', title: 'Gửi tin dụ khách hàng loạt cho cả nhóm đang lọc', 'aria-label': 'Gửi hàng loạt', textContent: '📣', onclick: () => dukBulk(on) }) : null);
+      h('button', { type: 'button', className: 'btn btn-soft btn-sm ib-stage-send', title: 'Nhắn hàng loạt: remarketing / AI trả lời khách đang chờ', 'aria-label': 'Nhắn hàng loạt', textContent: '📣', onclick: () => massDialog(on || (S.filter === 'unanswered' ? 'reply' : 'open')) }));
   }
   async function drawDuk() {
     const box = $('ibDuk'); if (!box) return;
@@ -676,48 +676,138 @@
     } finally { S.aiBusy = false; }
   }
   // Gửi hàng loạt cho nhóm đang lọc: mở lần lượt từng hội thoại, điền tin theo tên/báo giá của khách, gửi, nghỉ vài giây.
-  function dukBulk(stage) {
-    const P = App.services, pool = S.convs.filter(c => (S.plat === 'all' || platOf(c) === S.plat) && S.stages?.get(c.id)?.[stage]);
-    if (!pool.length) return toast('Không có khách nào trong nhóm này.', 4000);
+  // ── 📣 Nhắn hàng loạt: remarketing (Chưa chốt / Đã chốt) + AI trả lời khách đang chờ. Lọc → soạn (mẫu / AI) → duyệt → gửi có giới hạn ──
+  const MASS_SENT = 'massSentV1', MASS_CFG = 'massCfgV1';
+  const MASS_GOAL = {
+    reply: 'Trả lời tin nhắn mới nhất của khách: giải đáp đúng câu hỏi, báo giá theo bảng giá nếu khách hỏi, xin link nếu khách muốn mua.',
+    open: 'Nhắn lại khách chưa chốt đơn: nhắc khéo nhu cầu khách đã hỏi, trấn an (có bảo hành), mời chốt đơn hôm nay.',
+    done: 'Hỏi thăm khách cũ về kết quả đơn trước, mời mua lại hoặc thử thêm dịch vụ phù hợp với trang của khách.',
+    all: 'Hỏi thăm khách, giới thiệu ngắn dịch vụ phù hợp, mời khách nhắn khi cần.'
+  };
+  const MASS_TPL = {
+    reply: 'Dạ em chào {ten} 😊 Em xin lỗi đã trả lời chậm ạ. Mình cần em hỗ trợ dịch vụ nào, gửi em link bài/trang là em báo giá liền nha.',
+    open: 'Dạ {ten} ơi, mình còn cần tăng tương tác không ạ? Hôm nay mình chốt em tặng thêm {tang}% số lượng nha 🎁',
+    done: 'Dạ em chào {ten} 😊 Đơn lần trước của mình chạy ổn không ạ? Bên em đang có nhiều gói mới, mình cần tăng thêm cứ nhắn em nha.',
+    all: 'Dạ em chào {ten} 😊 Mình cần tăng like, follow hay tương tác cho trang nào cứ nhắn em nha, em tư vấn gói vừa túi tiền ạ.'
+  };
+  const sentToday = async () => { const d = new Date().toDateString(), v = await DB.get(MASS_SENT, {}); return v.date === d ? v : { date: d, n: {} }; };
+  const convTexts = async c => {
+    if (S.conv?.id === c.id && S.messages?.length) return S.messages;
+    const m = bsMsgCache.get(c.id) || await DB.get('bsMsg:' + c.id, null).catch(() => null);
+    if (m?.messages?.length) return bsMsgs(m.messages);
+    return c.snippet ? [{ isCustomer: !!c.fromCustomer, text: c.snippet.replace(/^Bạn:\s*/, '') }] : [];
+  };
+  function massPrompt({ shop, bank, prices, mode, goal, tpl, items }) {
+    const cut = (t, n) => { t = String(t || '').replace(/\s+/g, ' ').trim(); return t.length > n ? t.slice(0, n) + '…' : t; };
+    const task = mode === 'rewrite'
+      ? `Viết lại MẪU TIN sau cho từng khách, mỗi khách một cách nói khác nhau (đổi câu chữ, giữ nguyên ý, giá, ưu đãi), gọi đúng tên khách:\n"${tpl}"`
+      : `Viết cho từng khách một tin nhắn riêng, hợp với hội thoại và lịch sử mua của người đó. Mục tiêu: ${goal}`;
+    return [`Bạn là nhân viên chăm sóc khách của shop "${shop.name || 'shop'}" bán dịch vụ tăng tương tác mạng xã hội. Shop xưng "${shop.me || 'em'}", gọi khách là "${shop.you || 'anh/chị'}". Tiếng Việt tự nhiên, thân thiện, ngắn như nhắn Messenger (1–3 câu, emoji vừa phải).`,
+      'Nhiệm vụ: ' + task,
+      'Quy tắc: chỉ báo giá theo BẢNG GIÁ, không bịa giá / ưu đãi / cam kết; không nói mình là AI; không nhắc mã gói trong ngoặc vuông; mỗi tin khác nhau, không lặp y hệt.',
+      'Chỉ trả về MỘT khối JSON: {"msgs":[{"id":"mã khách","text":"tin nhắn"}]} — đủ mỗi khách một tin, đúng mã khách.', '',
+      '## THÔNG TIN SHOP', bank ? 'Chuyển khoản: ' + bank : '', shop.policy ? 'Chính sách: ' + shop.policy : '', shop.notes ? 'Lưu ý: ' + shop.notes : '', '',
+      '## BẢNG GIÁ', prices.length ? prices.slice(0, 40).map(l => cut(l, 200)).join('\n') : '(chưa có: không báo giá cụ thể)', '',
+      ...items.flatMap(it => [`## KHÁCH ${it.id}: ${it.name || 'Khách'}`, 'Đơn đã mua: ' + (it.orders.slice(0, 3).map(x => cut(x.replace(/^- /, ''), 120)).join(' | ') || 'chưa'),
+        it.pending.length ? 'Báo giá chờ: ' + it.pending.map(x => cut(x.replace(/^- /, ''), 120)).join(' | ') : '',
+        'Hội thoại gần đây:', it.msgs.slice(-8).map(m => (m.isCustomer ? 'Khách: ' : 'Shop: ') + (cut(m.text, 220) || '[ảnh]')).join('\n') || '(không có)', ''])].filter(x => x !== '').join('\n');
+  }
+  async function massDialog(preset) {
+    const P = App.services, cfg = { limit: 50, dmin: 20, dmax: 40, ...(await DB.get(MASS_CFG, {})) };
+    if (!S.stages) await computeStages().catch(() => {});
     const day = c => (Date.now() - new Date(c.updated_time || 0)) / 864e5;
-    const rows = pool.map(c => ({ c, on: day(c) <= 7, res: '' }));
-    const tpls = [...P.DUK.open, ...P.DUK.quoted.slice(0, 2).map(([l, t]) => ['Có báo giá · ' + l, t]), ['Trấn an', P.DUK.hesitant[0][1]]]; let tpl = tpls[0][1], busy = false, stop = false;
-    const dlg = h('dialog', { className: 'svc-dialog svc-bulk', onclose: () => { stop = true; dlg.remove(); } });
-    const ta = h('textarea', { rows: 4, value: tpl, oninput: () => { tpl = ta.value; prev(); } }), pv = h('div', { className: 'hint ib-duk-prev' });
-    const body = h('tbody'), prog = h('div', { className: 'svc-prog', hidden: true }), go = h('button', { type: 'button', className: 'btn btn-primary' });
-    const prev = () => { const r = rows.find(x => x.on) || rows[0]; pv.textContent = 'Xem trước (' + (r.c.other.name || 'Khách') + '): ' + P.dukFill(tpl, { name: r.c.other.name, q: S.stages.get(r.c.id)?.q }); };
-    const draw = () => {
-      body.replaceChildren(...rows.map(r => h('tr', {}, h('td', {}, h('input', { type: 'checkbox', checked: r.on, disabled: busy, onchange: e => { r.on = e.target.checked; draw(); prev(); } })),
-        h('td', {}, r.c.other.name || 'Khách'), h('td', { className: 'hint' }, r.c.page?.name || (platOf(r.c) === 'zalo' ? 'Zalo' : '')),
-        h('td', { className: 'hint' }, day(r.c) < 1 ? 'hôm nay' : Math.floor(day(r.c)) + ' ngày trước', day(r.c) > 7 ? ' · quá 7 ngày, Meta có thể chặn' : ''),
-        h('td', { className: r.res.startsWith('✓') ? 'hint pos' : r.res ? 'hint neg' : 'hint' }, r.res))));
-      const n = rows.filter(r => r.on && !r.res.startsWith('✓')).length; go.disabled = busy || !n; go.textContent = busy ? 'Đang gửi…' : `📨 Gửi cho ${n} khách`;
+    const pages = [...new Map(S.convs.map(c => [String(c.page?.id || platOf(c)), c.page?.name || (platOf(c) === 'zalo' ? 'Zalo' : 'Page')])).entries()];
+    const labels = [...new Set(S.convs.flatMap(c => S.crm?.[c.key]?.labels || []))].sort((a, b) => a.localeCompare(b, 'vi'));
+    const sel = (opts, v) => h('select', {}, ...opts.map(([k, t]) => h('option', { value: k, textContent: t, selected: k === v })));
+    const fGroup = sel([['reply', '💬 Khách đang chờ trả lời'], ['open', 'Chưa chốt'], ['done', 'Đã chốt (khách cũ)'], ['all', 'Tất cả']], preset || 'open');
+    const fPage = sel([['', 'Mọi Page'], ...pages], ''), fLabel = sel([['', 'Mọi nhãn'], ...labels.map(l => [l, l])], '');
+    const num = (v, w = 56) => h('input', { type: 'number', min: 0, value: v, style: `width:${w}px` });
+    const fMin = num(0), fMax = num(7), fMode = sel([['ai', '✨ AI viết riêng từng khách'], ['tpl', '1 mẫu chung + tên khách'], ['rewrite', '✨ Mẫu chung, AI viết lại cho khác nhau']], 'ai');
+    const goal = h('textarea', { rows: 2 }), cLimit = num(cfg.limit, 64), cMin = num(cfg.dmin), cMax = num(cfg.dmax);
+    const body = h('tbody'), prog = h('div', { className: 'svc-prog', hidden: true }), info = h('div', { className: 'hint' });
+    const draftBtn = h('button', { type: 'button', className: 'btn btn-soft' }), go = h('button', { type: 'button', className: 'btn btn-primary' });
+    let rows = [], busy = false, stop = false;
+    const textHint = () => { const m = fMode.value; goal.placeholder = m === 'ai' ? 'Mục tiêu / ý chính cho AI' : 'Mẫu tin: {ten} tên khách · {tang} % tặng · {ma} mã báo giá · {tien} số tiền · {dv} dịch vụ';
+      goal.value = m === 'ai' ? MASS_GOAL[fGroup.value] : MASS_TPL[fGroup.value]; draftBtn.textContent = m === 'tpl' ? '📝 Điền mẫu cho các khách đã chọn' : '✨ AI soạn tin cho các khách đã chọn'; };
+    const filter = () => {
+      const g = fGroup.value, a = Number(fMin.value) || 0, b = fMax.value === '' ? 1e9 : Number(fMax.value);
+      rows = S.convs.filter(c => { const st = S.stages?.get(c.id) || {}, d = day(c);
+        return (g === 'reply' ? c.fromCustomer : g === 'all' ? true : st[g]) && d >= a && d <= b + 1e-9
+          && (!fPage.value || String(c.page?.id || platOf(c)) === fPage.value) && (!fLabel.value || (S.crm?.[c.key]?.labels || []).includes(fLabel.value)); })
+        .slice(0, 300).map(c => ({ c, on: true, text: '', res: '' }));
+      draw();
     };
+    const draw = () => {
+      body.replaceChildren(...rows.map(r => h('tr', {}, h('td', {}, h('input', { type: 'checkbox', checked: r.on, disabled: busy, onchange: e => { r.on = e.target.checked; foot(); } })),
+        h('td', { style: 'min-width:120px' }, r.c.other.name || 'Khách', h('div', { className: 'hint' }, (r.c.page?.name || (platOf(r.c) === 'zalo' ? 'Zalo' : '')) + ' · ' + (day(r.c) < 1 ? 'hôm nay' : Math.floor(day(r.c)) + ' ngày'))),
+        h('td', { style: 'width:100%' }, h('textarea', { rows: 2, className: 'ib-mass-text', value: r.text, placeholder: '(chưa soạn)', disabled: busy, oninput: e => { r.text = e.target.value; foot(); } })),
+        h('td', { className: r.res.startsWith('✓') ? 'hint pos' : r.res.startsWith('✗') ? 'hint neg' : 'hint', style: 'white-space:nowrap' }, r.res))));
+      foot();
+    };
+    const foot = () => { const sel = rows.filter(r => r.on), ready = sel.filter(r => r.text.trim() && !r.res.startsWith('✓'));
+      info.textContent = `${rows.length} khách khớp bộ lọc · đã chọn ${sel.length} · có tin ${ready.length}` + (rows.length >= 300 ? ' (hiện tối đa 300)' : '');
+      draftBtn.disabled = busy || !sel.length; go.disabled = busy || !ready.length; go.textContent = busy ? 'Đang chạy…' : `📨 Gửi ${ready.length} tin`; };
     const wait = ms => new Promise(r => setTimeout(r, ms));
+    draftBtn.onclick = async () => {
+      const todo = rows.filter(r => r.on && !r.res.startsWith('✓')); if (!todo.length) return;
+      if (fMode.value === 'tpl') { for (const r of todo) r.text = P.dukFill(goal.value, { name: r.c.other.name, q: S.stages?.get(r.c.id)?.q }); return draw(); }
+      if (!window.metaDesktop?.gptAsk) return toast('AI cần app Get Helps trên Windows (dùng ChatGPT đăng nhập trong app).', 6000);
+      busy = true; stop = false; prog.hidden = false; draw();
+      try {
+        const base = await P.aiContext('').catch(() => ({ prices: [] })), shop = await aiShop({ shop: todo[0].c.page?.name || '', ...(base.invoice?.shop ? base.invoice : {}) });
+        const N = 5;
+        for (let i = 0; i < todo.length && !stop; i += N) {
+          const part = todo.slice(i, i + N); prog.textContent = `✨ AI đang soạn ${Math.min(i + N, todo.length)}/${todo.length}… (mỗi lượt 5 khách, 10–40 giây)`;
+          part.forEach(r => { r.res = '✨'; }); draw();
+          const items = [];
+          for (const [k, r] of part.entries()) { const cx = await P.aiContext(r.c.key).catch(() => ({ orders: [], pending: [] }));
+            items.push({ id: 'k' + (k + 1), name: r.c.other.name, orders: cx.orders || [], pending: cx.pending || [], msgs: await convTexts(r.c) }); }
+          const res = await window.metaDesktop.gptAsk({ prompt: massPrompt({ shop, bank: base.bank, prices: base.prices || [], mode: fMode.value, goal: goal.value, tpl: goal.value, items }) });
+          if (res?.error === 'login') { toast('Chưa đăng nhập ChatGPT trong app: mở Studio AI để đăng nhập.', 7000); window.metaDesktop.gptLogin?.(); break; }
+          let got = {};
+          try { const t = String(res?.text || '').replace(/```(?:json)?/gi, ''), j = JSON.parse(t.slice(t.indexOf('{'), t.lastIndexOf('}') + 1)); for (const m of j.msgs || []) got[String(m.id)] = String(m.text || '').trim(); } catch {}
+          part.forEach((r, k) => { const t = got['k' + (k + 1)]; if (t) { r.text = fMode.value === 'rewrite' ? P.dukFill(t, { name: r.c.other.name, q: S.stages?.get(r.c.id)?.q }) : t; r.res = ''; } else r.res = '✗ AI chưa viết' + (res?.error ? ': ' + res.error : ''); });
+          draw();
+        }
+        prog.textContent = stop ? 'Đã dừng soạn.' : 'Soạn xong: đọc lại, sửa hoặc bỏ tích từng khách rồi bấm Gửi.';
+      } finally { busy = false; draw(); }
+    };
     go.onclick = async () => {
-      const todo = rows.filter(r => r.on && !r.res.startsWith('✓')); if (!todo.length || !confirm(`Gửi tin này cho ${todo.length} khách? Mỗi tin cách nhau 10–20 giây.`)) return;
+      const lim = Math.max(1, Number(cLimit.value) || 50), d1 = Math.max(3, Number(cMin.value) || 20), d2 = Math.max(d1, Number(cMax.value) || d1);
+      await DB.set(MASS_CFG, { limit: lim, dmin: d1, dmax: d2 });
+      const todo = rows.filter(r => r.on && r.text.trim() && !r.res.startsWith('✓')); if (!todo.length) return;
+      if (!confirm(`Gửi ${todo.length} tin? Mỗi tin cách nhau ${d1}–${d2} giây (khoảng ${Math.round(todo.length * (d1 + d2) / 2 / 60)} phút), tối đa ${lim} tin/Page/ngày.`)) return;
       busy = true; stop = false; prog.hidden = false; draw(); let i = 0;
       for (const r of todo) {
-        if (stop) break; i++; prog.textContent = `Đang gửi ${i}/${todo.length}: ${r.c.other.name || 'Khách'}…`; r.res = '⏳'; draw();
+        if (stop) break; i++;
+        const pk = String(r.c.page?.id || platOf(r.c)), sent = await sentToday();
+        if ((sent.n[pk] || 0) >= lim) { r.res = '⏸ Page đã đủ ' + lim + ' tin hôm nay'; draw(); continue; }
+        prog.textContent = `Đang gửi ${i}/${todo.length}: ${r.c.other.name || 'Khách'}…`; r.res = '⏳'; draw();
         try {
           if (!App.inbox.openId(r.c.id)) throw new Error('không còn trong danh sách');
           for (let t = 0; t < 60 && !(S.conv?.id === r.c.id && S.draftReady); t++) await wait(250);
-          const text = P.dukFill(tpl, { name: r.c.other.name, q: S.stages.get(r.c.id)?.q });
-          const ok = await App.inbox.compose({ key: r.c.key, text, autoSend: true });
-          r.res = ok === true ? '✓ Đã gửi' : '✗ ' + ok;
+          const ok = await App.inbox.compose({ key: r.c.key, text: r.text.trim(), autoSend: true });
+          if (ok !== true) throw new Error(ok);
+          r.res = '✓ Đã gửi'; sent.n[pk] = (sent.n[pk] || 0) + 1; await DB.set(MASS_SENT, sent);
         } catch (e) { r.res = '✗ ' + (e.message || e); }
-        draw(); if (i < todo.length && !stop) await wait(10e3 + Math.random() * 10e3);
+        draw(); if (i < todo.length && !stop) await wait((d1 + Math.random() * (d2 - d1)) * 1000);
       }
       busy = false; prog.textContent = stop ? 'Đã dừng.' : `Xong: ${rows.filter(r => r.res.startsWith('✓')).length} tin đã gửi.`; draw();
     };
-    dlg.append(h('div', { className: 'card-head' }, h('h3', { className: 'card-title', textContent: '📣 Gửi tin dụ khách · Chưa chốt đơn' }),
+    const dlg = h('dialog', { className: 'svc-dialog svc-bulk ib-mass', onclose: () => { stop = true; dlg.remove(); } });
+    const lab = (t, el) => h('label', { className: 'ib-mass-f' }, h('span', {}, t), el);
+    [fGroup, fPage, fLabel, fMin, fMax].forEach(el => el.addEventListener('change', () => { if (el === fGroup) textHint(); filter(); }));
+    fMode.addEventListener('change', () => { textHint(); foot(); });
+    dlg.append(h('div', { className: 'card-head' }, h('h3', { className: 'card-title', textContent: '📣 Nhắn hàng loạt' }),
         h('button', { type: 'button', className: 'icon-btn', 'aria-label': 'Đóng', textContent: '×', onclick: () => dlg.close() })),
-      h('div', { className: 'row', style: 'gap:6px;flex-wrap:wrap' }, ...tpls.map(([l, t]) => h('button', { type: 'button', className: 'chip', textContent: l.replace('{tang}', P.dukBonus()), onclick: () => { tpl = ta.value = t; prev(); } }))),
-      h('div', { className: 'field' }, 'Tin nhắn ({ten} tên khách · {tang} % tặng · {ma} mã báo giá · {tien} số tiền · {dv} dịch vụ)', ta), pv,
-      h('div', { className: 'hint' }, 'Khách nhắn quá 7 ngày không được tích sẵn: Meta có thể chặn tin hoặc khoá tính năng nhắn của Page nếu gửi nhiều.'),
+      h('div', { className: 'ib-mass-row' }, lab('Nhóm', fGroup), lab('Page', fPage), lab('Nhãn', fLabel), lab('Im lặng (ngày)', h('span', { className: 'row', style: 'gap:4px' }, fMin, '–', fMax))),
+      h('div', { className: 'ib-mass-row' }, lab('Cách viết', fMode), h('button', { type: 'button', className: 'btn btn-ghost btn-sm', textContent: '⚙ Thông tin shop cho AI', onclick: () => aiShopDialog() })),
+      goal, h('div', { className: 'row', style: 'gap:8px;align-items:center' }, draftBtn, info),
       h('div', { className: 'svc-bulk-scroll' }, h('table', { className: 'svc-tbl' }, body)), prog,
-      h('div', { className: 'row', style: 'gap:8px;justify-content:flex-end' }, h('button', { type: 'button', className: 'btn btn-ghost', textContent: 'Dừng', onclick: () => { stop = true; } }), go));
-    document.body.append(dlg); dlg.showModal(); draw(); prev();
+      h('div', { className: 'ib-mass-row' }, lab('Tối đa / Page / ngày', cLimit), lab('Chờ giữa 2 tin (giây)', h('span', { className: 'row', style: 'gap:4px' }, cMin, '–', cMax)),
+        h('span', { className: 'grow' }), h('button', { type: 'button', className: 'btn btn-ghost', textContent: 'Dừng', onclick: () => { stop = true; } }), go),
+      h('div', { className: 'hint' }, 'Meta hạn chế nhắn cho khách im lặng quá 24 giờ / 7 ngày; gửi quá nhiều tin giống nhau có thể bị khoá tính năng nhắn tin của Page. Khi đang gửi, app mở lần lượt từng hội thoại.'));
+    document.body.append(dlg); dlg.showModal(); textHint(); filter();
   }
   async function drawWarr() {
     const box = $('ibWarr'); if (!box) return;
