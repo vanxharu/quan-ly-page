@@ -418,6 +418,8 @@
   // Hội thoại từ Business Suite: app đọc tin trong khung ẩn và hiện ngay trong khung chat; gửi tin cũng qua khung ẩn
   // (giống bạn gõ trong Business Suite), nên không vướng giới hạn của API.
   const bsMsgCache = new Map();
+  // Tin Business Suite / Zalo → dạng chung { isCustomer, text, ts } (gợi ý AI, tạo đơn, bảo hành… dùng).
+  const bsMsgs = list => (list || []).filter(m => !m.sep).map(m => ({ isCustomer: !m.mine, text: [m.text, m.share].filter(Boolean).join(' '), ts: m.ts || 0 }));
   async function openBs(c, { silent = false, older = false } = {}) {
     if (!silent) {
       App.services?.closeDock?.();
@@ -426,7 +428,7 @@
       // Hiện ngay bản đọc lần trước (nếu có) trong lúc khung ẩn mở hội thoại, rồi thay bằng bản mới.
       const cached = bsMsgCache.get(c.id) || await DB.get('bsMsg:' + c.id, null).catch(() => null);
       if (S.conv !== c) return;
-      if (cached?.messages?.length) { drawBs(c, cached); $('ibThread').append(h('div', { className: 'hint', style: 'text-align:center;margin:6px 0', id: 'ibBsUpd', textContent: 'Đang cập nhật tin mới…' })); }
+      if (cached?.messages?.length) { drawBs(c, cached); S.messages = bsMsgs(cached.messages); $('ibThread').append(h('div', { className: 'hint', style: 'text-align:center;margin:6px 0', id: 'ibBsUpd', textContent: 'Đang cập nhật tin mới…' })); }
       else $('ibThread').replaceChildren(empty(c.zalo ? 'Đang đọc tin từ Zalo…' : 'Đang đọc tin từ Business Suite…'));
       S.lastRead = c.unread_count ? { id: c.id, n: c.unread_count } : null;
       c.unread_count = 0; unreadHold.delete(c.id); markAppRead(c.id, c.lastAt || Date.now()); drawList();
@@ -448,7 +450,7 @@
     if (silent && !older && c.bsSig === sig) return;
     if (!older) { c.bsSig = sig; const keep = { snippet: c.snippet, messages: (r.messages || []).filter(m => !/^blob:/.test(m.pic || '')).slice(-60) }; bsMsgCache.set(c.id, keep); DB.set('bsMsg:' + c.id, keep).catch(() => {}); }
     drawBs(c, r, older ? { silent: true, keepTop: true } : { silent, older });
-    S.messages = (r.messages || []).filter(m => !m.sep).map(m => ({ isCustomer: !m.mine, text: [m.text, m.share].filter(Boolean).join(' '), ts: m.ts || 0 }));
+    S.messages = bsMsgs(r.messages);
     drawBulk();
     S.lastMsgs = (r.messages || []).filter(m => !m.sep).slice(-6).map(m => ({ mine: !!m.mine, text: m.text || '', pic: !!m.pic, ts: m.ts || 0 })); pushMini();
     // Tin cuối trong hội thoại khác dòng trên danh sách (danh sách chưa kịp cập nhật): sửa luôn dòng đó + đưa lên đầu nếu mới hơn.
@@ -653,8 +655,9 @@
     try {
       const cx = App.services ? await App.services.aiContext(c.key).catch(() => ({ prices: [], orders: [], pending: [] })) : { prices: [], orders: [], pending: [] };
       const shop = await aiShop({ shop: c.page?.name || '', ...(cx.invoice?.shop ? cx.invoice : {}) }), tpls = App.templates ? (await App.templates.list().catch(() => [])).filter(t => t.content).slice(0, 8) : [];
-      const msgs = (S.messages || []).filter(m => m.text || m.isCustomer !== undefined);
-      if (!msgs.length) throw Error('Chưa đọc được tin nhắn của hội thoại này.');
+      let msgs = (S.messages || []).filter(m => m.text);
+      if (!msgs.length) { const cached = bsMsgCache.get(c.id) || await DB.get('bsMsg:' + c.id, null).catch(() => null); msgs = bsMsgs(cached?.messages).filter(m => m.text); }
+      if (!msgs.length) throw Error('Chưa đọc được tin nhắn của hội thoại này. Đợi tin tải xong (hết dòng "Đang cập nhật tin mới…") rồi bấm ✨ lại.');
       const r = await window.metaDesktop.gptAsk({ prompt: aiPrompt({ shop, cx, tpls, msgs, name: c.other.name, bank: cx.bank }) });
       if (S.conv !== c) return;
       if (r?.error === 'login') { box.replaceChildren(head(), h('div', { className: 'status pending' }, 'Chưa đăng nhập ChatGPT trong app. ',
