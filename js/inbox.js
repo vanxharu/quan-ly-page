@@ -746,12 +746,12 @@
     };
     const foot = () => { const sel = rows.filter(r => r.on), ready = sel.filter(r => r.text.trim() && !r.res.startsWith('✓'));
       info.textContent = `${rows.length} khách khớp bộ lọc · đã chọn ${sel.length} · có tin ${ready.length}` + (rows.length >= 300 ? ' (hiện tối đa 300)' : '');
-      draftBtn.disabled = busy || !sel.length; go.disabled = busy || !ready.length; go.textContent = busy ? 'Đang chạy…' : `📨 Gửi ${ready.length} tin`; };
+      draftBtn.disabled = busy || !sel.length; allBtn.disabled = busy || !sel.length; go.disabled = busy || !ready.length; go.textContent = busy ? 'Đang chạy…' : `📨 Gửi ${ready.length} tin`; };
     const wait = ms => new Promise(r => setTimeout(r, ms));
-    draftBtn.onclick = async () => {
+    const draft = async () => {
       const todo = rows.filter(r => r.on && !r.res.startsWith('✓')); if (!todo.length) return;
       if (fMode.value === 'tpl') { for (const r of todo) r.text = P.dukFill(goal.value, { name: r.c.other.name, q: S.stages?.get(r.c.id)?.q }); return draw(); }
-      if (!window.metaDesktop?.gptAsk) return toast('AI cần app Get Helps trên Windows (dùng ChatGPT đăng nhập trong app).', 6000);
+      if (!window.metaDesktop?.gptAsk) { toast('AI cần app Get Helps trên Windows (dùng ChatGPT đăng nhập trong app).', 6000); return false; }
       busy = true; stop = false; prog.hidden = false; draw();
       try {
         const base = await P.aiContext('').catch(() => ({ prices: [] })), shop = await aiShop({ shop: todo[0].c.page?.name || '', ...(base.invoice?.shop ? base.invoice : {}) });
@@ -763,7 +763,7 @@
           for (const [k, r] of part.entries()) { const cx = await P.aiContext(r.c.key).catch(() => ({ orders: [], pending: [] }));
             items.push({ id: 'k' + (k + 1), name: r.c.other.name, orders: cx.orders || [], pending: cx.pending || [], msgs: await convTexts(r.c) }); }
           const res = await window.metaDesktop.gptAsk({ prompt: massPrompt({ shop, bank: base.bank, prices: base.prices || [], mode: fMode.value, goal: goal.value, tpl: goal.value, items }) });
-          if (res?.error === 'login') { toast('Chưa đăng nhập ChatGPT trong app: mở Studio AI để đăng nhập.', 7000); window.metaDesktop.gptLogin?.(); break; }
+          if (res?.error === 'login') { toast('Chưa đăng nhập ChatGPT trong app: mở Studio AI để đăng nhập.', 7000); window.metaDesktop.gptLogin?.(); stop = true; break; }
           let got = {};
           try { const t = String(res?.text || '').replace(/```(?:json)?/gi, ''), j = JSON.parse(t.slice(t.indexOf('{'), t.lastIndexOf('}') + 1)); for (const m of j.msgs || []) got[String(m.id)] = String(m.text || '').trim(); } catch {}
           part.forEach((r, k) => { const t = got['k' + (k + 1)]; if (t) { r.text = fMode.value === 'rewrite' ? P.dukFill(t, { name: r.c.other.name, q: S.stages?.get(r.c.id)?.q }) : t; r.res = ''; } else r.res = '✗ AI chưa viết' + (res?.error ? ': ' + res.error : ''); });
@@ -772,11 +772,12 @@
         prog.textContent = stop ? 'Đã dừng soạn.' : 'Soạn xong: đọc lại, sửa hoặc bỏ tích từng khách rồi bấm Gửi.';
       } finally { busy = false; draw(); }
     };
-    go.onclick = async () => {
+    draftBtn.onclick = () => draft();
+    const send = async (ask = true) => {
       const lim = Math.max(1, Number(cLimit.value) || 50), d1 = Math.max(3, Number(cMin.value) || 20), d2 = Math.max(d1, Number(cMax.value) || d1);
       await DB.set(MASS_CFG, { limit: lim, dmin: d1, dmax: d2 });
       const todo = rows.filter(r => r.on && r.text.trim() && !r.res.startsWith('✓')); if (!todo.length) return;
-      if (!confirm(`Gửi ${todo.length} tin? Mỗi tin cách nhau ${d1}–${d2} giây (khoảng ${Math.round(todo.length * (d1 + d2) / 2 / 60)} phút), tối đa ${lim} tin/Page/ngày.`)) return;
+      if (ask && !confirm(`Gửi ${todo.length} tin? Mỗi tin cách nhau ${d1}–${d2} giây (khoảng ${Math.round(todo.length * (d1 + d2) / 2 / 60)} phút), tối đa ${lim} tin/Page/ngày.`)) return;
       busy = true; stop = false; prog.hidden = false; draw(); let i = 0;
       for (const r of todo) {
         if (stop) break; i++;
@@ -794,6 +795,17 @@
       }
       busy = false; prog.textContent = stop ? 'Đã dừng.' : `Xong: ${rows.filter(r => r.res.startsWith('✓')).length} tin đã gửi.`; draw();
     };
+    go.onclick = () => send();
+    // Duyệt hết: soạn (nếu còn khách chưa có tin) rồi gửi luôn cho mọi khách đã chọn có tin, chỉ hỏi xác nhận 1 lần.
+    const allBtn = h('button', { type: 'button', className: 'btn btn-primary', textContent: '⚡ Duyệt hết & gửi', title: 'Soạn tin cho khách chưa có tin, rồi gửi tất cả khách đã chọn, không cần duyệt từng tin',
+      onclick: async () => {
+        const chosen = rows.filter(r => r.on && !r.res.startsWith('✓')); if (!chosen.length) return;
+        const d1 = Math.max(3, Number(cMin.value) || 20), d2 = Math.max(d1, Number(cMax.value) || d1);
+        if (!confirm(`Soạn (nếu chưa có) và gửi luôn cho ${chosen.length} khách, không duyệt từng tin?\nMỗi tin cách nhau ${d1}–${d2} giây, tối đa ${Number(cLimit.value) || 50} tin/Page/ngày.`)) return;
+        if (chosen.some(r => !r.text.trim())) { await draft(); if (stop) return; }
+        await send(false);
+      } });
+    const master = h('input', { type: 'checkbox', checked: true, title: 'Chọn hết / bỏ hết', 'aria-label': 'Chọn hết', onchange: e => { rows.forEach(r => { if (!r.res.startsWith('✓')) r.on = e.target.checked; }); draw(); } });
     const dlg = h('dialog', { className: 'svc-dialog svc-bulk ib-mass', onclose: () => { stop = true; dlg.remove(); } });
     const lab = (t, el) => h('label', { className: 'ib-mass-f' }, h('span', {}, t), el);
     [fGroup, fPage, fLabel, fMin, fMax].forEach(el => el.addEventListener('change', () => { if (el === fGroup) textHint(); filter(); }));
@@ -803,9 +815,9 @@
       h('div', { className: 'ib-mass-row' }, lab('Nhóm', fGroup), lab('Page', fPage), lab('Nhãn', fLabel), lab('Im lặng (ngày)', h('span', { className: 'row', style: 'gap:4px' }, fMin, '–', fMax))),
       h('div', { className: 'ib-mass-row' }, lab('Cách viết', fMode), h('button', { type: 'button', className: 'btn btn-ghost btn-sm', textContent: '⚙ Thông tin shop cho AI', onclick: () => aiShopDialog() })),
       goal, h('div', { className: 'row', style: 'gap:8px;align-items:center' }, draftBtn, info),
-      h('div', { className: 'svc-bulk-scroll' }, h('table', { className: 'svc-tbl' }, body)), prog,
+      h('div', { className: 'svc-bulk-scroll' }, h('table', { className: 'svc-tbl' }, h('thead', {}, h('tr', {}, h('th', {}, master), h('th', { className: 'hint', style: 'text-align:left' }, 'Khách'), h('th', { className: 'hint', style: 'text-align:left' }, 'Tin nhắn (sửa được)'), h('th', {}))), body)), prog,
       h('div', { className: 'ib-mass-row' }, lab('Tối đa / Page / ngày', cLimit), lab('Chờ giữa 2 tin (giây)', h('span', { className: 'row', style: 'gap:4px' }, cMin, '–', cMax)),
-        h('span', { className: 'grow' }), h('button', { type: 'button', className: 'btn btn-ghost', textContent: 'Dừng', onclick: () => { stop = true; } }), go),
+        h('span', { className: 'grow' }), h('button', { type: 'button', className: 'btn btn-ghost', textContent: 'Dừng', onclick: () => { stop = true; } }), go, allBtn),
       h('div', { className: 'hint' }, 'Meta hạn chế nhắn cho khách im lặng quá 24 giờ / 7 ngày; gửi quá nhiều tin giống nhau có thể bị khoá tính năng nhắn tin của Page. Khi đang gửi, app mở lần lượt từng hội thoại.'));
     document.body.append(dlg); dlg.showModal(); textHint(); filter();
   }
