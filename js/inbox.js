@@ -138,7 +138,7 @@
     mount(el) {
       const picker = App.templates.picker(t => pickTemplate(t));
       S.picker = picker;
-      el.append(h('div', { className: 'split' },
+      el.append(h('div', { className: 'split', dataset: { cview: 'chat' } },
         h('div', { className: 'card' },
           h('div', { className: 'card-head inbox-search-row' },
             h('input', { type: 'search', id: 'ibSearch', 'aria-label': 'Tìm hội thoại', placeholder: 'Tìm khách hoặc nội dung tin…', oninput: () => drawList() }),
@@ -167,6 +167,10 @@
             // Cửa sổ hẹp: 1 màn hình — nút ← về danh sách khách; nút ⋯ mở / gập thanh CRM (Giai đoạn / Đơn / nhãn).
             h('button', { type: 'button', className: 'icon-btn ib-back', title: 'Về danh sách khách', 'aria-label': 'Về danh sách khách', textContent: '←', onclick: () => setPane('list') }),
             h('h3', { className: 'card-title', id: 'ibTitle', textContent: 'Chưa chọn hội thoại' }),
+            // Kiểu Teams: Trò chuyện | Đơn & dịch vụ (thanh khách hàng: giai đoạn, nhãn, ghi chú, báo giá, đơn của khách).
+            h('div', { className: 'tm-ctabs', id: 'ibCTabs', role: 'tablist', hidden: true },
+              h('button', { type: 'button', role: 'tab', dataset: { v: 'chat' }, 'aria-selected': 'true', onclick: () => setCView('chat') }, 'Trò chuyện'),
+              h('button', { type: 'button', role: 'tab', dataset: { v: 'crm' }, 'aria-selected': 'false', onclick: () => setCView('crm') }, 'Đơn & dịch vụ', h('span', { className: 'tm-ctab-n', id: 'ibCTabN', hidden: true }))),
             window.metaDesktop?.miniOpen ? h('button', { type: 'button', className: 'icon-btn ib-mini-btn', id: 'ibMiniBtn', hidden: true, title: 'Tách ra cửa sổ chat nhỏ (nổi trên mọi ứng dụng)', 'aria-label': 'Mở cửa sổ chat nhỏ', textContent: '⧉',
               onclick: () => { S.miniOn = true; window.metaDesktop.miniOpen(); pushMini(true); } }) : null,
             h('button', { type: 'button', className: 'icon-btn ib-crm-toggle', title: 'Giai đoạn · Đơn · Nhãn', 'aria-label': 'Hiện thanh khách hàng', textContent: '⋯', onclick: e => { const sp = e.currentTarget.closest('.split'); sp.classList.toggle('crm-open'); } }),
@@ -412,6 +416,7 @@
       if (S.conv !== c) return;
       if (cached?.messages?.length) { drawBs(c, cached); $('ibThread').append(h('div', { className: 'hint', style: 'text-align:center;margin:6px 0', id: 'ibBsUpd', textContent: 'Đang cập nhật tin mới…' })); }
       else $('ibThread').replaceChildren(empty(c.zalo ? 'Đang đọc tin từ Zalo…' : 'Đang đọc tin từ Business Suite…'));
+      S.lastRead = c.unread_count ? { id: c.id, n: c.unread_count } : null;
       c.unread_count = 0; unreadHold.delete(c.id); markAppRead(c.id, c.lastAt || Date.now()); drawList();
       const draft = await DB.get(draftKey(c), {}).catch(() => ({}));
       if (S.conv !== c) return;
@@ -574,11 +579,9 @@
     const prevH = thread.scrollHeight, prevTop = thread.scrollTop;
     thread.replaceChildren(
       h('div', { style: 'text-align:center;margin:4px 0' }, h('button', { type: 'button', className: 'btn btn-ghost btn-sm', textContent: hiddenOld ? `Xem tin cũ hơn (${hiddenOld})` : 'Tải tin cũ hơn', onclick: () => bsOlder(c) })),
-      ...msgs.map((m, i) => m.sep ? h('div', { className: 'hint', style: 'text-align:center;margin:8px 0', textContent: m.sep })
-        : h('div', { className: 'msgrow' + (m.mine ? ' me' : ''), dataset: m.mine ? { bsMe: '1', ts: String(m.ts || 0) } : { bsCus: '1' } },
-          m.mine ? h('span', { className: 'rc-slot' })
-            : msgs[i + 1] && !msgs[i + 1].sep && msgs[i + 1].mine === m.mine ? h('span', { style: 'width:24px;flex:none' }) : messageAvatar(c),
-          msgBubble(c, m))),
+      ...tmRows(c, msgs, (m, first) => h('div', { className: 'msgrow' + (m.mine ? ' me' : ''), dataset: m.mine ? { bsMe: '1', ts: String(m.ts || 0) } : { bsCus: '1' } },
+          m.mine ? h('span', { className: 'rc-slot' }) : first ? messageAvatar(c, 32) : h('span', { className: 'tm-ava-gap' }),
+          msgBubble(c, m)), m => m.mine, m => m.ts),
       msgs.length ? null : empty('Chưa đọc được tin nào.'));
     drawRcpt(c);
     // Hiện thêm tin cũ: giữ nguyên chỗ đang đọc (không nhảy).
@@ -587,6 +590,30 @@
     const cnt = all.filter(m => !m.sep).length; c.bsShownCount = cnt;
     if (silent && !atBottom && !keepTop && cnt > prevCount && prevCount) { const b = $('ibNewMsg'); if (b) b.hidden = false; }
     thread.onscroll = () => { if (thread.scrollTop < 40 && S.conv === c && !c.bsOlderBusy && thread.scrollHeight > thread.clientHeight + 40) bsOlder(c, true); };
+  }
+  // Kiểu Teams: mốc ngày ở giữa, đầu mỗi cụm tin có tên khách + giờ (tin của mình: chỉ giờ, bên phải),
+  // vạch "Tin nhắn đọc gần đây nhất" trước các tin khách nhắn mà bạn chưa đọc lúc mở hội thoại.
+  const WD = ['Chủ Nhật', 'Thứ Hai', 'Thứ Ba', 'Thứ Tư', 'Thứ Năm', 'Thứ Sáu', 'Thứ Bảy'];
+  function tmTime(ts) {
+    if (!ts) return ''; const d = new Date(ts), now = new Date(), t = hm(ts);
+    if (d.toDateString() === now.toDateString()) return t;
+    if (d.toDateString() === new Date(now - 864e5).toDateString()) return 'Hôm qua ' + t;
+    if (now - d < 6 * 864e5) return WD[d.getDay()] + ' ' + t;
+    return `${d.getDate()}/${d.getMonth() + 1}${d.getFullYear() !== now.getFullYear() ? '/' + d.getFullYear() : ''} ${t}`;
+  }
+  function tmRows(c, msgs, row, mineOf, tsOf) {
+    const out = [], lr = S.lastRead?.id === c.id ? S.lastRead.n : 0;
+    let lrAt = -1; if (lr) { const tail = []; for (let j = msgs.length - 1; j >= 0; j--) { const x = msgs[j]; if (x.sep) continue; if (mineOf(x)) break; tail.push(j); } if (tail.length) lrAt = tail[Math.min(lr, tail.length) - 1]; }
+    msgs.forEach((m, i) => {
+      // Mốc ngày ở giữa chỉ ghi ngày ("Thứ Bảy", "Hôm nay"); giờ đã có ở dòng tên ngay dưới.
+      if (m.sep) { const nx = msgs[i + 1]; return out.push(h('div', { className: 'tm-sep', textContent: nx && !nx.sep && tsOf(nx) ? m.sep.replace(/[,\s]*\d{1,2}:\d{2}(\s*(SA|CH|AM|PM))?$/i, '') || m.sep : m.sep })); }
+      const prev = msgs[i - 1], mine = !!mineOf(m);
+      let first = !prev || !!prev.sep || !!mineOf(prev) !== mine || (tsOf(m) && tsOf(prev) && tsOf(m) - tsOf(prev) > 10 * 60e3);
+      if (i === lrAt) { out.push(h('div', { className: 'tm-lastread', textContent: 'Tin nhắn đọc gần đây nhất' })); first = true; }
+      if (first) out.push(h('div', { className: 'tm-meta ' + (mine ? 'me' : 'cus') }, mine ? null : h('b', { textContent: c.other.name || 'Khách' }), h('span', { textContent: tmTime(tsOf(m)) })));
+      out.push(row(m, first));
+    });
+    return out;
   }
   // Trạng thái tin của Page như Business Suite: ○ đang gửi · ✓ đã gửi · ● đã nhận · avatar khách = đã xem tới tin đó.
   // Chỉ hiện ở các tin cuối của Page (khách chưa nhắn lại); mốc lấy từ dữ liệu gốc (đã nhận / đã xem của khách).
@@ -643,7 +670,7 @@
     const bar = S.conv ? App.services.orderBar(S.orderMap?.get(S.conv.key), S.payHint?.get(S.conv.key)) : null;
     const key = S.conv?.key, nudge = key && App.services.nudgeCard ? await App.services.nudgeCard(key).catch(() => null) : null;
     if (S.conv?.key !== key) return;
-    box.hidden = !bar && !nudge; box.replaceChildren(...[nudge, bar].filter(Boolean));
+    box.hidden = !bar && !nudge; box.replaceChildren(...[nudge, bar].filter(Boolean)); drawCTabs();
     if (App.current() === 'inbox') drawList();
   }
   App.inbox.orderChanged = () => drawOrder().catch(() => {});
@@ -856,9 +883,9 @@
   }
   window.addEventListener('customer-avatars-ready',()=>{for(const c of S.convs)if(!S.pics.has(pictureKey(c)))pictureChecked.delete(pictureKey(c));if(App.current()==='inbox')queuePics(S.convs);});
   // Cập nhật riêng avatar khi ảnh về muộn; giữ nguyên tin nhắn, vị trí cuộn và ô soạn.
-  function messageAvatar(c) {
+  function messageAvatar(c, size = 24) {
     const url = S.pics.get(pictureKey(c)) || '';
-    const avatar = App.avatar(c.other.name, url, 24, () => retryPicture(c, url));
+    const avatar = App.avatar(c.other.name, url, size, () => retryPicture(c, url));
     Object.assign(avatar.dataset, { customerAvatar: '1', pageId: c.page.id, psid: c.other.id, avatarUrl: url });
     return avatar;
   }
@@ -888,7 +915,15 @@
     const pl = platLogo(platOf(c), Math.round(size * .44)); pl.classList.add('pl');
     return h('span', { className: 'avwrap' }, App.avatar(c.other.name, S.pics.get(pictureKey(c)), size, () => retryPicture(c, S.pics.get(pictureKey(c)))), c.zalo ? null : pg, pl);
   };
+  function setCView(v) {
+    S.cview = v; const sp = document.querySelector('[data-panel=inbox] .split'); if (sp) sp.dataset.cview = v;
+    $('ibCTabs')?.querySelectorAll('button').forEach(b => b.setAttribute('aria-selected', String(b.dataset.v === v)));
+    if (v === 'chat') { const t = $('ibThread'); if (t && S.atBottom !== false) t.scrollTop = t.scrollHeight; }
+    else if (S.conv) tagAndCrm(S.conv, { render: true }).catch(() => {}); // vẽ lại thanh khách hàng ở dạng mở rộng
+  }
+  function drawCTabs() { const n = $('ibCTabN'); if (!n) return; const st = S.conv && S.orderMap?.get(S.conv.key); n.hidden = !st?.chip; n.textContent = st?.chip || ''; }
   function drawHead(c) {
+    if ($('ibCTabs')) $('ibCTabs').hidden = !c; drawCTabs();
     if ($('ibMiniBtn')) $('ibMiniBtn').hidden = !c;
     if ($('ibOrderBtn')) $('ibOrderBtn').disabled = !c;
     if (c.zalo) return $('ibTitle').replaceChildren(h('span', { className: 'thread-head' }, custAvatar(c, 32),
@@ -953,6 +988,19 @@
       } else el.animate([{ transform: `translateY(${dy}px)` }, { transform: 'none' }], { duration: 400, easing: ease });
     }
   }
+  // Ghim khách + nhóm đang gập (lưu trên máy).
+  const jsonSet = k => { try { return new Set(JSON.parse(local.get(k) || '[]')); } catch { return new Set(); } };
+  const pinSet = () => jsonSet('inboxPins'), collapsedSet = () => jsonSet('inboxCollapsed');
+  function togglePin(id) { const s = pinSet(); if (s.has(id)) s.delete(id); else s.add(id); local.set('inboxPins', JSON.stringify([...s].slice(-50))); drawList(); }
+  function secHead(k, arr, col) {
+    const page = k.startsWith('p:') ? App.pageById?.(k.slice(2)) : null, n = arr.filter(c => c.unread_count).length;
+    const label = k === 'pin' ? 'Ghim' : k === 'zalo' ? 'Zalo cá nhân' : page?.name || 'Page';
+    return h('button', { type: 'button', className: 'tm-sec', 'aria-expanded': String(!col), dataset: { sec: k }, title: col ? 'Mở nhóm' : 'Gập nhóm',
+      onclick: () => { const s = collapsedSet(); if (s.has(k)) s.delete(k); else s.add(k); local.set('inboxCollapsed', JSON.stringify([...s])); drawList(); } },
+      h('span', { className: 'tm-caret', textContent: '▼' }),
+      k === 'pin' ? h('span', { textContent: '📌' }) : k === 'zalo' ? platLogo('zalo', 16) : App.pageAvatarUrl?.(page) ? h('img', { src: App.pageAvatarUrl(page), alt: '' }) : null,
+      h('span', { textContent: label }), n ? h('span', { className: 'tm-sec-n', textContent: `${n} chưa đọc` }) : null);
+  }
   async function drawList() {
     const st = await settings();
     drawLabelFilter();
@@ -968,7 +1016,9 @@
     // Mở Hộp thư chỉ hiện 15 khách mới nhất (tìm kiếm thì hiện hết kết quả); bấm "Tải thêm hội thoại" để hiện thêm 15.
     const total = list.length;
     // Giới hạn 15 dòng tính riêng cho mỗi nền tảng: khách Zalo cũ hơn không bị tin Business Suite mới đẩy mất.
-    if (!q) { const lim = S.showN || 15, cnt = {}; const keep = list.filter(c => { const p = platOf(c); cnt[p] = (cnt[p] || 0) + 1; return cnt[p] <= lim; }); list.length = 0; list.push(...keep); }
+    // Kiểu Teams: nhóm Ghim ở trên, rồi mỗi Page một nhóm (gập / mở được); giới hạn 15 dòng tính riêng từng nhóm.
+    const pins = pinSet(), secOf = c => pins.has(c.id) ? 'pin' : platOf(c) === 'zalo' ? 'zalo' : 'p:' + c.page.id;
+    if (!q) { const lim = S.showN || 15, cnt = {}; const keep = list.filter(c => { const p = secOf(c); if (p === 'pin') return true; cnt[p] = (cnt[p] || 0) + 1; return cnt[p] <= lim; }); list.length = 0; list.push(...keep); }
     S.hiddenMore = total - list.length;
     $('ibMore').hidden = !S.hiddenMore && ![...S.more.values()].some(x => x.after) && !bsFirst();
     const errors = S.errors?.length ? [h('details', { className: 'status err' },
@@ -976,10 +1026,12 @@
       ...S.errors.map(e => h('div', { style: 'margin-top:8px', textContent: e })),
       // API lỗi: xem / trả lời tin của Page đó ngay trong Business Suite (cột Meta trong app, tab mới trên trình duyệt).
       ...(S.errorPages || []).map(p => h('div', { style: 'margin-top:6px' }, App.metaLink(`https://business.facebook.com/latest/inbox/all?asset_id=${p.id}`, `Mở hộp thư ${p.name.slice(0, 30)} trong Business Suite ↗`))))] : [];
-    const rowEls = (list.length ? list.map(c => {
+    const itemEl = c => {
         const wait = c.fromCustomer ? (Date.now() - c.lastAt) / 60e3 : null;
         const labels = S.crm?.[c.key]?.labels || [];
         return h('div', { className: 'item' + (c.unread_count ? ' unread' : '') + (S.conv?.id === c.id ? ' active' : ''), dataset: { cid: c.id }, onclick: () => c.bs ? openBs(c) : openConv(c) },
+          h('button', { type: 'button', className: 'tm-pin' + (pins.has(c.id) ? ' on' : ''), title: pins.has(c.id) ? 'Bỏ ghim' : 'Ghim lên đầu danh sách', 'aria-label': pins.has(c.id) ? 'Bỏ ghim' : 'Ghim',
+            textContent: '📌', onclick: e => { e.stopPropagation(); togglePin(c.id); } }),
           custAvatar(c),
           h('div', { className: 'body' },
             h('div', { className: 'top' }, h('span', { className: 'name', textContent: c.other.name || 'Khách' }),
@@ -994,7 +1046,12 @@
               return h('div', { className: 'snip-row' }, h('div', { className: 'snippet', textContent: c.snippet || '' }),
                 chips.length ? h('div', { className: 'tags' }, ...chips, more.length ? h('span', { className: 'lbl more', title: more.map(x => x.textContent).join(' · '), textContent: '+' + more.length }) : null) : null);
             })()));
-      }) : [empty(S.plat === 'zalo' && !S.convs.some(c => platOf(c) === 'zalo') ? (S.zErr === 'login' ? 'Zalo Web đang ở trang đăng nhập: mở cột Zalo (Ctrl+Shift+Z) và quét mã QR. Quét xong danh sách tự hiện ở đây.' : S.zErr && S.zErr !== 'loading' ? 'Chưa đọc được Zalo: ' + S.zErr : S.zSince && Date.now() - S.zSince > 60e3 ? 'Zalo Web chưa mở xong sau 1 phút: bấm Ctrl+Shift+Z xem cột Zalo đang hiện gì (trang đăng nhập / quay vòng), chụp màn hình gửi người hỗ trợ.' : 'Đang mở Zalo Web để đọc tin… (lần đầu mất khoảng 10–20 giây)') : S.convs.length ? 'Không có hội thoại khớp bộ lọc.' : 'Chưa có tin nhắn.')]);
+      };
+    const groups = new Map(); for (const c of list) { const k = secOf(c); if (!groups.has(k)) groups.set(k, []); groups.get(k).push(c); }
+    const order = ['pin', ...App.selected().map(p => 'p:' + p.id), 'zalo']; for (const k of groups.keys()) if (!order.includes(k)) order.push(k);
+    const secs = order.filter(k => groups.has(k)), heads = secs.length > 1 || groups.has('pin'), shut = collapsedSet();
+    const rowEls = (list.length ? secs.flatMap(k => { const arr = groups.get(k), col = heads && shut.has(k) && !q;
+        return [heads ? secHead(k, arr, col) : null, ...(col ? [] : arr.map(itemEl))].filter(Boolean); }) : [empty(S.plat === 'zalo' && !S.convs.some(c => platOf(c) === 'zalo') ? (S.zErr === 'login' ? 'Zalo Web đang ở trang đăng nhập: mở cột Zalo (Ctrl+Shift+Z) và quét mã QR. Quét xong danh sách tự hiện ở đây.' : S.zErr && S.zErr !== 'loading' ? 'Chưa đọc được Zalo: ' + S.zErr : S.zSince && Date.now() - S.zSince > 60e3 ? 'Zalo Web chưa mở xong sau 1 phút: bấm Ctrl+Shift+Z xem cột Zalo đang hiện gì (trang đăng nhập / quay vòng), chụp màn hình gửi người hỗ trợ.' : 'Đang mở Zalo Web để đọc tin… (lần đầu mất khoảng 10–20 giây)') : S.convs.length ? 'Không có hội thoại khớp bộ lọc.' : 'Chưa có tin nhắn.')]);
     flipList($('ibList'), [...errors, ...rowEls], `${S.filter}|${S.plat}|${lab}|${q}|${S.showN || 15}`);
     pushMini();
   }
@@ -1007,6 +1064,11 @@
     return { conv: c ? { id: c.id, name: c.other.name || 'Khách', plat: plat.slice(0, 24), pic: smallPic(S.pics.get(pictureKey(c))) } : null,
       msgs: c ? (S.lastMsgs || []).slice(-5) : [], waiting };
   };
+  // Thanh trên (ô tìm kiếm) và thanh dọc (số chưa đọc) kiểu Teams.
+  App.inbox.unreadTotal = () => S.convs.reduce((n, c) => n + (c.unread_count ? 1 : 0), 0);
+  App.inbox.search = q => { q = norm(q); if (!q) return [];
+    return S.convs.filter(c => norm(`${c.other.name} ${c.snippet} ${(S.crm?.[c.key]?.labels || []).join(' ')}`).includes(q)).slice(0, 8)
+      .map(c => ({ id: c.id, name: c.other.name || 'Khách', page: platOf(c) === 'zalo' ? 'Zalo' : c.page?.name || '', pic: smallPic(S.pics.get(pictureKey(c))) })); };
   App.inbox.openId = id => { const c = S.convs.find(x => x.id === id); if (!c) return false; (c.bs ? openBs(c) : openConv(c)); return true; };
   App.inbox.miniClosed = () => { S.miniOn = false; };
   let miniT = 0;
@@ -1017,7 +1079,7 @@
   App.inbox.setPane = setPane;
   function resetThread() {
     setPane(S.conv ? 'thread' : 'list'); S.lastMsgs = []; if ($('ibMiniBtn')) $('ibMiniBtn').hidden = !S.conv; pushMini(true); // đang mở khách (resetThread trước khi vẽ khách mới) → giữ màn hội thoại
-    S.reply = null; drawReply(); closePop();
+    S.reply = null; drawReply(); closePop(); setCView('chat'); if ($('ibCTabs')) $('ibCTabs').hidden = !S.conv;
     S.draftReady = false; S.image = ''; S.tpl = null;
     if(!$('ibText'))return; // Đổi Page trước khi mở Hộp thư vẫn hợp lệ.
     $('ibText').value = ''; $('ibText').disabled = true; drawAttach();
@@ -1043,7 +1105,7 @@
   }
   async function openConv(c, { silent = false } = {}) {
     const switching = draftKey(S.conv) !== draftKey(c) || !S.draftReady;
-    if (switching) { saveDraft(); App.services?.closeDock?.(); }
+    if (switching) { saveDraft(); App.services?.closeDock?.(); setCView('chat'); S.lastRead = c.unread_count ? { id: c.id, n: c.unread_count } : null; }
     S.conv = c;
     drawHead(c);
     queuePics([c]);
@@ -1094,15 +1156,14 @@
       const thread = $('ibThread'), oldTop = thread.scrollTop;
       const atBottom = thread.scrollHeight - thread.clientHeight - oldTop < 70;
       const me = m => m.from?.id === c.page.id;
-      $('ibThread').replaceChildren(...msgs.map((m, i) => h('div', { className: 'msgrow' + (me(m) ? ' me' : ''), dataset: { at: String(new Date(m.created_time).getTime() || 0), me: me(m) ? '1' : '' } },
-        // Ảnh chỉ hiện ở tin cuối của mỗi chuỗi tin liên tiếp cùng người gửi.
-        msgs[i + 1] && me(msgs[i + 1]) === me(m) ? h('span', { style: 'width:24px;flex:none' })
-          : me(m) ? App.avatar(c.page.name, App.pageAvatarUrl(c.page), 24) : messageAvatar(c),
+      $('ibThread').replaceChildren(...tmRows(c, msgs, (m, first) => h('div', { className: 'msgrow' + (me(m) ? ' me' : ''), dataset: { at: String(new Date(m.created_time).getTime() || 0), me: me(m) ? '1' : '' } },
+        // Kiểu Teams: ảnh đại diện ở tin đầu của mỗi cụm tin liên tiếp cùng người gửi; tin của Page không cần ảnh.
+        me(m) ? h('span', { className: 'rc-slot' }) : first ? messageAvatar(c, 32) : h('span', { className: 'tm-ava-gap' }),
         h('div', { className: 'msg' + (me(m) ? ' me' : ''), title: fmtTime(m.created_time) },
         m.message || null, me(m) ? null : linkActions(c, m.message),
         ...(m.attachments?.data || []).map(a => a.image_data?.url ? picEl(a.image_data.url)
           : h('a', { href: a.file_url || '#', target: '_blank', rel: 'noopener', textContent: `📎 ${a.name || 'Tệp đính kèm'}` })),
-        !m.message && !m.attachments?.data?.length ? '(nhãn dán / tin đặc biệt)' : null))));
+        !m.message && !m.attachments?.data?.length ? '(nhãn dán / tin đặc biệt)' : null)), me, m => Date.parse(m.created_time) || 0));
       drawSeen(c);
       loadSeen(c);
       thread.scrollTop = !silent || atBottom ? thread.scrollHeight : oldTop;

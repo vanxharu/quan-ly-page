@@ -1,0 +1,230 @@
+/* Giao diện kiểu Microsoft Teams (body.teams, dựng bởi js/teams-shell.js). Nạp sau cùng: chỉ đè màu + bố cục khung app và Hộp thư. */
+
+/* ── Màu: tím xám như Teams (sáng / tối) ── */
+body.teams{
+  --font-body:'Segoe UI Variable Text','Segoe UI',-apple-system,system-ui,Roboto,'Helvetica Neue',sans-serif;
+  --font-heading:'Segoe UI Variable Display','Segoe UI',-apple-system,system-ui,Roboto,sans-serif;
+  --tm-chrome:#ebebeb;--tm-list:#f5f5f5;--tm-pane:#ffffff;--tm-chat:#f5f5f5;--tm-hover:#e6e6e6;--tm-active:#ffffff;
+  --tm-bubble:#ffffff;--tm-bubble-me:#e8ebfa;--tm-line:#e0e0e0;--tm-compose:#ffffff;--tm-compose-line:#d1d1d1;
+  --tm-text:#242424;--tm-text2:#424242;--tm-muted:#616161;--tm-accent:#5b5fc7;--tm-accent-hover:#4f52b2;--tm-accent-soft:#e8ebfa;--tm-rail-ico:#616161;
+  --primary:#5b5fc7;--primary-hover:#4f52b2;--primary-soft:#e8ebfa;--primary-border:#c5cbfa;--primary-glow:#5b5fc733;
+  --action-bg:#5b5fc7;--action-hover:#4f52b2;--action-text:#fff;
+  --bg-primary:var(--tm-chat);--bg-card:#fff;--bg-input:#fff;--bg-hover:#f0f0f0;--bg-sidebar:var(--tm-chrome);--bg-thread:var(--tm-chat);--glass-bg:var(--tm-chrome);
+  --border:#e0e0e0;--border-subtle:#ebebeb;--input-border:#d1d1d1;
+  --text-primary:#242424;--text-secondary:#424242;--text-muted:#616161;
+  --message-out:var(--tm-bubble-me);--message-out-border:transparent;
+  --radius-lg:8px;--radius:6px;--radius-sm:4px;
+  --shadow-xs:0 1px 2px #0000000f;--shadow-sm:0 2px 8px #00000014;
+  --brand-gradient:linear-gradient(135deg,#7f85f5,#5b5fc7);
+  font-family:var(--font-body);
+}
+body.teams.dark-mode{
+  --tm-chrome:#141414;--tm-list:#1a1a1a;--tm-pane:#1f1f1f;--tm-chat:#1f1f1f;--tm-hover:#262626;--tm-active:#2e2e2e;
+  --tm-bubble:#292929;--tm-bubble-me:#2b2b40;--tm-line:#2e2e2e;--tm-compose:#292929;--tm-compose-line:#525252;
+  --tm-text:#ffffff;--tm-text2:#d6d6d6;--tm-muted:#adadad;--tm-accent:#7f85f5;--tm-accent-hover:#9299f7;--tm-accent-soft:#2f2f4a;--tm-rail-ico:#adadad;
+  --primary:#7f85f5;--primary-hover:#9299f7;--primary-soft:#2f2f4a;--primary-border:#444791;--primary-glow:#7f85f533;
+  --action-bg:#5b5fc7;--action-hover:#6b6fd6;--action-text:#fff;
+  --bg-primary:var(--tm-chat);--bg-card:#292929;--bg-input:#1f1f1f;--bg-hover:#333333;--bg-sidebar:var(--tm-chrome);--bg-thread:var(--tm-chat);--glass-bg:var(--tm-chrome);
+  --border:#3d3d3d;--border-subtle:#2e2e2e;--input-border:#525252;
+  --text-primary:#ffffff;--text-secondary:#d6d6d6;--text-muted:#adadad;
+  --message-out:var(--tm-bubble-me);--message-out-border:transparent;
+  --shadow-xs:0 1px 2px #00000040;--shadow-sm:0 4px 14px #00000059;
+}
+body.teams,body.teams button,body.teams input,body.teams textarea,body.teams select{font-family:var(--font-body)}
+body.teams h1,body.teams h2,body.teams h3,body.teams .card-title{font-family:var(--font-heading)}
+body.teams{background:var(--tm-chat);color:var(--tm-text)}
+
+/* ── Thanh trên (48px) ── */
+body.teams .header{background:var(--tm-chrome);border-bottom:1px solid var(--tm-line);box-shadow:none;backdrop-filter:none}
+body.teams .header::before{content:none}
+body.teams .header-in{max-width:none}
+body.teams.teams-on .header-top{margin-left:0!important;height:48px!important;min-height:48px!important;padding:6px 12px 6px 16px!important;flex-wrap:nowrap!important;gap:8px!important}
+body.teams.teams-on .header-top::before{content:none!important}
+body.teams .logo{margin-right:0;flex:none;position:static!important}
+body.teams.teams-on .app-title{font-size:14px;font-weight:600}
+body.teams .logo-badge,body.teams .logo-badge img{width:24px;height:24px;border-radius:6px;box-shadow:none}
+body.teams .pro-tag{background:transparent;color:var(--tm-muted);border:0;font-weight:500}
+body.teams #menuToggle,body.teams .workspace-sidebar,body.teams .sidebar-backdrop,body.teams .workspace-intro,body.teams #nav{display:none!important}
+body.teams .icon-btn{background:transparent;border:0;border-radius:4px;color:var(--tm-text2)}
+body.teams .icon-btn:hover{background:var(--tm-hover);color:var(--tm-text)}
+body.teams .page-btn{border-radius:4px;background:transparent;border:1px solid transparent}
+body.teams .page-btn:hover{background:var(--tm-hover)}
+
+/* Ô tìm kiếm giữa thanh trên */
+.tm-search{position:relative;flex:1 1 auto;max-width:600px;margin:0 auto;display:flex;align-items:center;gap:8px;height:32px;padding:0 10px;border-radius:4px;
+  background:var(--tm-pane);border:1px solid var(--tm-line);color:var(--tm-muted)}
+.dark-mode .tm-search{background:#292929;border-color:#3d3d3d}
+.tm-search:focus-within{border-color:var(--tm-line);border-bottom:2px solid var(--tm-accent);padding-bottom:0}
+.tm-search .ico{width:15px;height:15px}
+.tm-search input{flex:1;min-width:0;border:0!important;background:transparent!important;box-shadow:none!important;outline:0!important;padding:0;height:100%;font-size:13px;color:var(--tm-text)}
+.tm-search input::placeholder{color:var(--tm-muted)}
+.tm-search-pop{position:absolute;left:-1px;right:-1px;top:36px;z-index:90;background:var(--tm-pane);border:1px solid var(--tm-line);border-radius:6px;box-shadow:var(--shadow-sm);padding:6px 0;max-height:420px;overflow:auto}
+.dark-mode .tm-search-pop{background:#292929;border-color:#3d3d3d}
+.tm-search-h{padding:6px 14px 4px;font-size:12px;font-weight:600;color:var(--tm-muted)}
+.tm-search-row{display:flex;align-items:center;gap:10px;width:100%;padding:6px 14px;border:0;background:transparent;text-align:left;color:var(--tm-text);cursor:pointer}
+.tm-search-row:hover,.tm-search-row.on{background:var(--tm-hover)}
+.tm-search-row img,.tm-search-ava,.tm-search-ico{width:28px;height:28px;border-radius:50%;flex:none;object-fit:cover;display:grid;place-items:center}
+.tm-search-ava{background:var(--tm-accent-soft);color:var(--tm-accent);font-weight:600;font-size:12px}
+.tm-search-ico{border-radius:6px;background:var(--tm-hover)}
+.tm-search-txt{display:flex;flex-direction:column;min-width:0}.tm-search-txt b{font-weight:600;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tm-search-txt small{font-size:12px;color:var(--tm-muted)}
+.tm-search-empty{padding:10px 14px;color:var(--tm-muted);font-size:13px}
+
+/* ── Thanh biểu tượng dọc ── */
+.tm-rail{position:fixed;left:0;top:48px;bottom:0;width:68px;z-index:20;display:flex;flex-direction:column;align-items:stretch;padding:6px 0;gap:2px;background:var(--tm-chrome);border-right:1px solid var(--tm-line)}
+.dark-mode .tm-rail{border-right-color:transparent}
+.tm-rail-btn{position:relative;display:flex;flex-direction:column;align-items:center;gap:2px;padding:7px 2px 6px;border:0;background:transparent;color:var(--tm-rail-ico);cursor:pointer;border-radius:0}
+.tm-rail-btn:hover{color:var(--tm-text)}
+.tm-rail-btn:hover .tm-rail-ico{background:var(--tm-hover)}
+.tm-rail-ico{position:relative;display:grid;place-items:center;width:36px;height:30px;border-radius:6px}
+.tm-rail-ico .ico{width:21px;height:21px;stroke-width:1.6}
+.tm-rail-txt{font-size:10.5px;line-height:1.2;font-weight:400;text-align:center;white-space:nowrap}
+.tm-rail-btn[aria-current=page]{color:var(--tm-accent)}
+.tm-rail-btn[aria-current=page] .tm-rail-txt{font-weight:600}
+.tm-rail-btn[aria-current=page] .ico{stroke-width:2.2}
+.tm-rail-btn[aria-current=page]::before{content:'';position:absolute;left:0;top:10px;bottom:10px;width:3px;border-radius:0 3px 3px 0;background:var(--tm-accent)}
+.tm-badge{position:absolute;top:-2px;right:-4px;min-width:16px;height:16px;padding:0 4px;border-radius:8px;background:#c4314b;color:#fff;font-size:10px;font-weight:700;line-height:16px;text-align:center;box-shadow:0 0 0 2px var(--tm-chrome)}
+.tm-rail-gap{flex:1}
+
+/* ── Nội dung: chừa thanh dọc ── */
+body.teams.teams-on main{margin-left:68px!important;max-width:none!important;padding:0 24px 40px!important;background:var(--tm-chat)}
+body.teams.teams-on:has([data-panel=inbox]:not([hidden])) main{padding:0!important;height:calc(var(--workspace-viewport-height,100dvh) - 48px)!important}
+/* Tên nhóm + tab gạch chân */
+.tm-bar{display:flex;align-items:flex-end;gap:22px;height:48px;padding:0 4px;margin:0 0 18px;border-bottom:1px solid var(--tm-line);flex:none;position:sticky;top:48px;z-index:9;background:var(--tm-chat)}
+body.teams:has([data-panel=inbox]:not([hidden])) .tm-bar{margin:0;padding:0 20px;background:var(--tm-list);position:static}
+.tm-title{margin:0 0 12px;font-size:18px;font-weight:700;white-space:nowrap;color:var(--tm-text)}
+body.teams .tm-bar .subnav{display:flex;gap:18px;align-self:stretch;align-items:stretch;overflow-x:auto;scrollbar-width:none}
+body.teams .tm-bar .subnav button{position:relative;display:flex;align-items:center;gap:0;padding:0 2px;border:0;background:transparent;color:var(--tm-text2);font-size:14px;font-weight:400;white-space:nowrap}
+body.teams .tm-bar .subnav button .ico{display:none}
+body.teams .tm-bar .subnav button:hover{color:var(--tm-text)}
+body.teams .tm-bar .subnav button[aria-selected=true]{color:var(--tm-text);font-weight:600}
+body.teams .tm-bar .subnav button[aria-selected=true]::after{content:'';position:absolute;left:0;right:0;bottom:-1px;height:3px;border-radius:3px 3px 0 0;background:var(--tm-accent)}
+
+/* ── Thẻ, nút, ô nhập: phẳng như Teams ── */
+body.teams .card{border-radius:8px;border-color:var(--tm-line);box-shadow:var(--shadow-xs)}
+body.teams .btn{border-radius:4px;font-weight:600}
+body.teams .btn-primary{background:var(--action-bg);border-color:var(--action-bg)}
+body.teams .btn-ghost,body.teams .btn-soft{background:var(--tm-pane);border:1px solid var(--input-border);color:var(--tm-text)}
+.dark-mode.teams .btn-ghost,.dark-mode.teams .btn-soft{background:#292929;border-color:#525252}
+body.teams .btn-ghost:hover,body.teams .btn-soft:hover{background:var(--tm-hover)}
+body.teams input:not([type=checkbox]):not([type=radio]):not([type=range]),body.teams select,body.teams textarea{border-radius:4px}
+body.teams .chip{border-radius:999px}
+
+/* ═════════ Hộp thư ═════════ */
+body.teams [data-panel=inbox]{flex:1;min-height:0;display:flex;flex-direction:column}
+body.teams [data-panel=inbox] .split{flex:1;min-height:0;height:auto!important;display:grid!important;grid-template-columns:minmax(280px,320px) minmax(0,1fr)!important;gap:0;border:0!important;border-radius:0!important;box-shadow:none!important;background:var(--tm-chat)!important;overflow:hidden}
+body.teams [data-panel=inbox] .split>.card{border:0!important;border-radius:0!important;box-shadow:none!important;padding:0!important;margin:0!important}
+/* Cột danh sách */
+body.teams [data-panel=inbox] .split>.card:first-child{background:var(--tm-list)!important;border-right:1px solid var(--tm-line)!important}
+.dark-mode.teams [data-panel=inbox] .split>.card:first-child{border-right-color:#000!important}
+body.teams .inbox-search-row{padding:12px 12px 6px!important;margin:0!important;gap:6px}
+body.teams #ibSearch{height:32px;border:1px solid var(--tm-line)!important;background:var(--tm-pane)!important;font-size:13px;padding:0 10px}
+.dark-mode.teams #ibSearch{background:#292929!important;border-color:#3d3d3d!important}
+body.teams #ibSearch:focus{border-bottom:2px solid var(--tm-accent)!important;box-shadow:none!important}
+body.teams .ib-toolbar{padding:2px 12px 8px!important;gap:6px!important;border:0!important}
+body.teams #ibFilter{gap:6px!important}
+body.teams #ibFilter .chip{height:26px;padding:0 10px;border:1px solid var(--tm-compose-line)!important;background:transparent!important;color:var(--tm-text2)!important;font-size:12px;font-weight:400}
+body.teams #ibFilter .chip[aria-pressed=true]{border-color:var(--tm-accent)!important;background:var(--tm-accent-soft)!important;color:var(--tm-accent)!important;font-weight:600}
+body.teams .ib-plat{border-radius:999px!important}
+body.teams #ibList{padding:0 4px 8px!important;background:transparent!important}
+/* Nhóm: Ghim / từng Page (gập mở) */
+.tm-sec{display:flex;align-items:center;gap:6px;width:100%;padding:10px 12px 6px;border:0;background:transparent;color:var(--tm-text2);font-size:13px;font-weight:400;text-align:left;cursor:pointer}
+.tm-sec:hover{color:var(--tm-text)}
+.tm-sec .tm-caret{display:inline-block;width:12px;font-size:10px;transition:transform .15s;color:var(--tm-muted)}
+.tm-sec[aria-expanded=false] .tm-caret{transform:rotate(-90deg)}
+.tm-sec img{width:16px;height:16px;border-radius:50%;object-fit:cover}
+.tm-sec .tm-sec-n{margin-left:auto;font-size:11px;font-weight:600;color:var(--tm-accent)}
+.tm-sec-line{height:1px;background:var(--tm-line);margin:6px 12px}
+/* Dòng khách */
+body.teams #ibList .item{position:relative;margin:1px 0;padding:8px 10px 8px 12px!important;border:0!important;border-radius:4px!important;background:transparent!important;box-shadow:none!important;gap:10px!important;min-height:56px}
+body.teams #ibList .item:hover{background:var(--tm-hover)!important}
+body.teams #ibList .item.active{background:var(--tm-active)!important;box-shadow:var(--shadow-xs)!important}
+.dark-mode.teams #ibList .item.active{box-shadow:none!important}
+body.teams #ibList .item .name{font-weight:400;font-size:14px;color:var(--tm-text)}
+body.teams #ibList .item.unread .name{font-weight:700}
+body.teams #ibList .item .snippet{color:var(--tm-muted);font-size:12px}
+body.teams #ibList .item.unread .snippet{color:var(--tm-text);font-weight:600}
+body.teams #ibList .item .time{color:var(--tm-muted);font-size:12px}
+body.teams #ibList .item.unread .time{color:var(--tm-text);font-weight:600}
+body.teams #ibList .item .badge{background:var(--tm-accent)!important;color:#fff!important}
+body.teams #ibList .item.unread::before{content:'';position:absolute;left:3px;top:50%;width:6px;height:6px;margin-top:-3px;border-radius:50%;background:var(--tm-accent)}
+.tm-pin{position:absolute;right:8px;top:50%;transform:translateY(-50%);width:26px;height:26px;border:0;border-radius:4px;display:none;place-items:center;background:var(--tm-pane);color:var(--tm-muted);font-size:13px;cursor:pointer;box-shadow:var(--shadow-xs)}
+.dark-mode .tm-pin{background:#333}
+body.teams #ibList .item:hover .tm-pin{display:grid}
+.tm-pin:hover{color:var(--tm-accent)}
+.tm-pin.on{display:grid;background:transparent;box-shadow:none;color:var(--tm-accent)}
+body.teams #ibList .item:hover .time,body.teams #ibList .item:hover .tags{visibility:hidden}
+body.teams #ibList .item:has(.tm-pin.on) .time{visibility:hidden}
+body.teams .ib-more{margin:4px 12px 12px!important;border-radius:4px!important}
+
+/* Cột hội thoại */
+body.teams [data-panel=inbox] .split>.card:last-child{background:var(--tm-chat)!important}
+body.teams [data-panel=inbox] .split>.card:last-child>.card-head{display:flex!important;align-items:flex-end!important;gap:14px!important;min-height:60px;margin:0!important;padding:0 20px!important;border-bottom:1px solid var(--tm-line);background:var(--tm-chat)}
+body.teams #ibTitle{flex:none;max-width:42%;margin:0 0 10px!important}
+body.teams #ibTitle .thread-head{gap:10px;align-items:center}
+body.teams #ibTitle .card-title{font-size:18px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+body.teams #ibTitle .th-meta,body.teams #ibTitle .hint{font-size:12px;color:var(--tm-muted)}
+body.teams #ibTitle .th-btn{display:none}
+.tm-ctabs{display:flex;align-self:stretch;gap:18px;flex:1;min-width:0}
+.tm-ctabs button{position:relative;display:flex;align-items:center;gap:6px;padding:0 2px;border:0;background:transparent;color:var(--tm-text2);font-size:14px;cursor:pointer;white-space:nowrap}
+.tm-ctabs button:hover{color:var(--tm-text)}
+.tm-ctabs button[aria-selected=true]{color:var(--tm-text);font-weight:600}
+.tm-ctabs button[aria-selected=true]::after{content:'';position:absolute;left:0;right:0;bottom:-1px;height:3px;border-radius:3px 3px 0 0;background:var(--tm-accent)}
+.tm-ctabs .tm-ctab-n{font-size:11px;font-weight:600;padding:0 6px;border-radius:9px;background:var(--tm-accent-soft);color:var(--tm-accent)}
+.tm-cacts{display:flex;align-items:center;gap:4px;margin:0 0 10px auto;flex:none}
+.tm-cacts .btn,.tm-cacts .icon-btn,.tm-cacts a{height:32px}
+body.teams .split>.card:last-child>.card-head>#ibReload{order:9}
+/* Tab Đơn & dịch vụ: thanh khách hàng chiếm cả khung */
+body.teams .split[data-cview=chat] #ibCrm{display:none!important}
+body.teams .split[data-cview=crm] .thread-wrap,body.teams .split[data-cview=crm] .composer{display:none!important}
+body.teams .split[data-cview=crm] #ibCrm{flex:1;min-height:0;overflow:auto;max-height:none!important;margin:0!important;padding:20px 24px!important;border:0!important;background:var(--tm-chat)!important;display:block}
+body.teams .split[data-cview=crm] #ibCrm[hidden]{display:block!important}
+body.teams .split[data-cview=crm] #ibCrm:empty::before{content:'Chưa có thông tin khách hàng cho hội thoại này.';color:var(--tm-muted)}
+/* Khung tin nhắn */
+body.teams [data-panel=inbox] .thread-wrap{flex:1;min-height:0;background:var(--tm-chat)}
+body.teams [data-panel=inbox] .thread{height:100%;max-height:none!important;min-height:0!important;padding:12px 7% 16px!important;background:var(--tm-chat)!important;border:0!important;border-radius:0!important}
+body.teams [data-panel=inbox] .msgrow{gap:10px;margin:2px 0;align-items:flex-start}
+body.teams [data-panel=inbox] .msgrow .msg-wrap{max-width:min(72%,620px)}
+body.teams [data-panel=inbox] .msg{border-radius:6px!important;padding:8px 14px!important;font-size:14px;line-height:1.43;background:var(--tm-bubble)!important;color:var(--tm-text)!important;border:0!important;box-shadow:0 1px 2px #00000012!important}
+.dark-mode.teams [data-panel=inbox] .msg{box-shadow:none!important}
+body.teams [data-panel=inbox] .msg.me{background:var(--tm-bubble-me)!important}
+body.teams [data-panel=inbox] .msg a{color:var(--tm-accent)}
+.tm-meta{display:flex;gap:10px;align-items:baseline;margin:14px 0 3px;font-size:12px;color:var(--tm-muted)}
+.tm-meta b{font-weight:400;color:var(--tm-text2)}
+.tm-meta.me{justify-content:flex-end}
+.tm-meta.cus{margin-left:42px}.tm-ava-gap{width:32px;flex:none}
+.tm-sep{display:flex;align-items:center;justify-content:center;margin:22px 0 6px;font-size:12px;color:var(--tm-muted)}
+.tm-lastread{display:flex;align-items:center;gap:14px;margin:14px 0 4px;font-size:12px;font-weight:600;color:var(--tm-accent)}
+.tm-lastread::before,.tm-lastread::after{content:'';flex:1;height:1px;background:var(--tm-accent);opacity:.7}
+body.teams [data-panel=inbox] .msg-re span{border-radius:10px;background:var(--tm-pane);border:1px solid var(--tm-line);padding:0 6px}
+.dark-mode.teams [data-panel=inbox] .msg-re span{background:#333;border-color:#3d3d3d}
+body.teams [data-panel=inbox] .msgrow .cus-ava,body.teams [data-panel=inbox] .msgrow>img,body.teams [data-panel=inbox] .msgrow>.ava{width:32px!important;height:32px!important;margin-top:1px}
+body.teams .ib-newmsg{border-radius:999px!important;background:var(--action-bg)!important;color:#fff!important}
+/* Ô soạn tin: khung bo viền, vạch tím khi đang gõ, nút biểu tượng trong khung */
+body.teams [data-panel=inbox] .composer{padding:8px 7% 18px!important;background:var(--tm-chat)!important;border:0!important}
+body.teams [data-panel=inbox] .composer-row{position:relative;align-items:flex-end!important;gap:2px!important;padding:4px 6px 4px 4px;border:1px solid var(--tm-compose-line);border-radius:6px;background:var(--tm-compose);box-shadow:0 1px 2px #0000000d}
+body.teams [data-panel=inbox] .composer-row:focus-within{border-bottom-color:var(--tm-accent);box-shadow:inset 0 -1px 0 var(--tm-accent),0 1px 2px #0000000d}
+body.teams [data-panel=inbox] #ibText{order:-1;flex:1;min-height:40px;max-height:200px;border:0!important;background:transparent!important;box-shadow:none!important;padding:10px 10px!important;font-size:14px;resize:none;outline:0!important;color:var(--tm-text)}
+body.teams [data-panel=inbox] #ibText::placeholder{color:var(--tm-muted)}
+body.teams [data-panel=inbox] .composer-row .tpl-btn{height:32px;min-width:32px;padding:0 8px;margin-bottom:4px;border:0!important;background:transparent!important;border-radius:4px;color:var(--tm-text2);font-size:12px;box-shadow:none!important}
+body.teams [data-panel=inbox] .composer-row .tpl-btn:hover{background:var(--tm-hover)!important;color:var(--tm-accent)}
+body.teams [data-panel=inbox] .send-btn{width:32px!important;height:32px!important;margin:0 0 4px 2px;border-radius:4px!important;background:transparent!important;border:0!important;color:var(--tm-accent)!important;box-shadow:none!important}
+body.teams [data-panel=inbox] .send-btn:hover:not(:disabled){background:var(--tm-hover)!important}
+body.teams [data-panel=inbox] .send-btn:disabled{color:var(--tm-muted)!important;opacity:.6}
+body.teams [data-panel=inbox] .send-btn .ico{width:18px;height:18px}
+
+/* ── Cửa sổ hẹp ── */
+@media (max-width:900px){
+  body.teams [data-panel=inbox] .split{grid-template-columns:1fr!important}
+  body.teams [data-panel=inbox] .thread,body.teams [data-panel=inbox] .composer{padding-left:14px!important;padding-right:14px!important}
+  body.teams #ibTitle{max-width:55%}
+}
+@media (max-width:620px){
+  .tm-rail{top:auto;bottom:0;left:0;right:0;width:auto;height:58px;flex-direction:row;justify-content:space-around;padding:0;border-right:0;border-top:1px solid var(--tm-line)}
+  .tm-rail-gap{display:none}
+  .tm-rail-btn[aria-current=page]::before{left:22%;right:22%;top:0;bottom:auto;width:auto;height:3px;border-radius:0 0 3px 3px}
+  body.teams.teams-on main{margin-left:0!important;padding:0 12px 70px!important}
+  body.teams.teams-on:has([data-panel=inbox]:not([hidden])) main{height:calc(var(--workspace-viewport-height,100dvh) - 48px - 58px)!important;padding:0!important}
+  .tm-search{display:none}
+  .tm-title{display:none}
+}

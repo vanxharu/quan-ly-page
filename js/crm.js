@@ -79,7 +79,8 @@
           h('button', { type: 'button', className: 'btn btn-sm btn-ghost', textContent: (expanded ? '▴' : '▾') + (extra ? ` ${extra}` : ''), title: 'Đơn, nhắc hẹn, ghi chú',
             onclick: () => { expanded = !expanded; local.set('crmExpanded', expanded ? '1' : '0'); rerender(); } }))),
       form ? formEl() : null,
-      expanded ? h('div', { className: 'crm-detail' },
+      // Hộp thư kiểu Teams, tab Đơn & dịch vụ: luôn mở chi tiết (đơn, nhắc hẹn, ghi chú).
+      expanded || box.closest?.('[data-cview=crm]') ? h('div', { className: 'crm-detail' },
         ...orders.slice(0, 5).map(o => h('div', {}, `🧾 ${fmtShort(o.at)} · ${(o.items || []).map(i => `${i.name} x${i.qty}`).join(', ')} · ${money(Pure.orderTotals(o).revenue)} · ${LOCAL_STATUS[o.status] || Pure.STATUS[o.status] || o.status}`)),
         ...appts.map(a => h('div', {}, `⏰ ${fmtShort(a.at)} · ${a.text} `, h('button', { className: 'btn btn-sm btn-ghost', textContent: 'Xong', onclick: async () => {
           const all = await DB.get(APPT, []); const x = all.find(y => y.id === a.id); if (x) x.done = true; await DB.set(APPT, all); rerender();
