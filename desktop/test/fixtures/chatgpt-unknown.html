@@ -1,0 +1,17 @@
+<!doctype html><html><head><meta charset="utf-8"></head><body><main><div id="log"></div>
+<form><textarea id="mobile-composer-prompt" placeholder="Ask ChatGPT"></textarea>
+<button type="submit" aria-label="Send message">↑</button></form></main>
+<script>
+const ed = document.getElementById('mobile-composer-prompt'), btn = document.querySelector('[aria-label="Send message"]'), log = document.getElementById('log');
+let hydrated = false; setTimeout(() => { hydrated = true; ed.value = ''; }, 3500); // trang dựng lại: xoá ô soạn, trước đó bấm Gửi không có tác dụng
+document.querySelector('form').onsubmit = e => e.preventDefault();
+btn.onclick = () => { if (!hydrated || !ed.value.trim()) return;
+  const q = ed.value; ed.value = ''; window.lastPrompt = q; window.sends = (window.sends || 0) + 1;
+  log.insertAdjacentHTML('beforeend', '<section></section>'); log.lastChild.textContent = q;
+  const stop = document.createElement('button'); stop.setAttribute('aria-label', 'Stop generating'); document.body.append(stop);
+  const a = document.createElement('section'); a.innerHTML = '<div></div>'; log.append(a); history.pushState(null, '', '/c/abc');
+  const m = q.match(/⟦GH\d+⟧/g) || [], A = m[0] || '', B = A.replace('⟦', '⟦/');
+  const full = A + '\n' + '```json\n{"replies":["Dạ em chào anh, gói 1.000 like giá 90.000đ ạ","Dạ anh gửi em link bài nha","Dạ bên em có bảo hành 30 ngày ạ"],"order":{"package_id":"p1","qty":1000,"links":["https://facebook.com/x/posts/1"]}}\n```' + '\n' + B;
+  let i = 0; const t = setInterval(() => { i += 25; a.firstChild.textContent = full.slice(0, i); if (i >= full.length) { clearInterval(t); stop.remove();  } }, 120);
+};
+</script></body></html>

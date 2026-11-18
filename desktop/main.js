@@ -541,7 +541,8 @@ app.whenReady().then(async () => {
   ipcMain.handle('fb-post-people', (e, args) => !fromPage(e) ? { error: 'denied' } : fbPeople.postPeople(args || {},
     p => pageView.webContents.executeJavaScript(`window.App?.scannerProgress?.(${JSON.stringify(p)})`).catch(() => {})));
   // Hộp thư › ✨ Gợi ý AI: hỏi ChatGPT ngầm bằng tài khoản ChatGPT đã đăng nhập (phiên mặc định, chung Studio AI).
-  const gpt = createGpt({ BrowserWindow, session: session.defaultSession });
+  const gpt = createGpt({ BrowserWindow, session: session.defaultSession, saveDebug: d => { try { const dir = path.join(app.getPath('downloads'), 'GetHelps-debug');
+    require('fs').mkdirSync(dir, { recursive: true }); require('fs').writeFileSync(path.join(dir, 'chatgpt.html'), `<!-- ${d.when} ${d.url} -->\n` + d.html); } catch {} } });
   ipcMain.handle('gpt-ask', async (e, args) => { if (!fromPage(e)) return { error: 'denied' };
     try { return { text: await gpt.ask(String(args?.prompt || ''), { onStep: t => pageView.webContents.executeJavaScript(`window.App?.inbox?.aiStep?.(${JSON.stringify(t)})`).catch(() => {}) }) }; }
     catch (err) { return { error: err.message }; } });

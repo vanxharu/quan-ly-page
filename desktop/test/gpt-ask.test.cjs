@@ -12,13 +12,13 @@ async function run(fixture) {
   const g = createGpt({ BrowserWindow: FakeWin });
   const steps = [], prompt = 'Bạn là nhân viên bán hàng.\nKhách: cho mình 1k like "bài này" nha';
   const t = await g.ask(prompt, { onStep: s => steps.push(s) });
-  assert(t.includes('"replies"') && t.trim().endsWith('```'), 'đọc đủ câu trả lời: ' + t);
+  assert(t.includes('"replies"') && t.trim().endsWith('```') && !/⟦/.test(t), 'đọc đủ câu trả lời: ' + t);
   const pages = ctx.pages(); const sentPrompt = await pages[0].evaluate(() => window.lastPrompt);
-  assert.strictEqual(sentPrompt.trim(), prompt, 'dán đúng lời nhắc nhiều dòng');
+  assert(sentPrompt.startsWith(prompt) && /⟦GH\d+⟧/.test(sentPrompt), 'dán đúng lời nhắc nhiều dòng + mã đánh dấu');
   // Hỏi lần 2 (hàng đợi, mở trò chuyện mới)
   const t2 = await g.ask('câu hỏi 2'); assert(t2.includes('replies'));
   const sends = await pages[0].evaluate(() => window.sends ?? 1); assert.strictEqual(sends, 1, 'gửi đúng 1 lần, không trùng');
   console.log('OK', fixture, steps.join(' → '));
   await browser.close();
 }
-(async () => { await run('chatgpt.html'); await run('chatgpt-2026.html'); })().catch(e => { console.error('FAIL', e.message); process.exit(1); });
+(async () => { await run('chatgpt.html'); await run('chatgpt-2026.html'); await run('chatgpt-unknown.html'); })().catch(e => { console.error('FAIL', e.message); process.exit(1); });

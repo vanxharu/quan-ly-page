@@ -3,7 +3,7 @@
 // Hỏi lần lượt (hàng đợi): một cửa sổ ngầm dùng lại cho mọi lần.
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-module.exports = function createGpt({ BrowserWindow, session, url = 'https://chatgpt.com/?temporary-chat=true' }) {
+module.exports = function createGpt({ BrowserWindow, session, url = 'https://chatgpt.com/?temporary-chat=true', saveDebug }) {
   let win = null, queue = Promise.resolve();
   const get = () => {
     if (win && !win.isDestroyed()) return win;
@@ -27,6 +27,10 @@ module.exports = function createGpt({ BrowserWindow, session, url = 'https://cha
 
   async function run(prompt, { timeout = 150e3, onStep } = {}) {
     const w = get(), step = t => { try { onStep?.(t); } catch {} };
+    // Đánh dấu đầu / cuối câu trả lời bằng mã riêng: đọc được câu trả lời từ chữ trên trang mà không phụ thuộc cấu trúc giao diện
+    // (ChatGPT khi đăng nhập / chưa đăng nhập / mỗi lần đổi giao diện dựng tin trả lời khác nhau).
+    const id = String(1000 + Math.floor(Math.random() * 9000)), A = `⟦GH${id}⟧`, B = `⟦/GH${id}⟧`;
+    prompt = `${prompt}\n\nQUAN TRỌNG: dòng đầu tiên của câu trả lời phải đúng là ${A} và dòng cuối cùng phải đúng là ${B}.`;
     step('Đang mở ChatGPT…');
     await w.webContents.loadURL(url).catch(() => {});
     const ready = await waitFor(w, `!!${EDITOR}`, 35e3);
@@ -73,12 +77,18 @@ module.exports = function createGpt({ BrowserWindow, session, url = 'https://cha
         return { t: body ? (body.innerText || body.textContent || '').trim() : '', busy: !done || !!document.querySelector('[data-testid="stop-button"],button[aria-label="Stop streaming"],button[aria-label="Stop generating"],button[aria-label="Dừng phát trực tuyến"],button[aria-label="Dừng tạo"]'),
           err: (document.querySelector('[class*="text-token-text-error"],[data-testid="error-message"]')?.innerText || '').slice(0, 200) }; })()`).catch(() => null);
       if (!r) continue;
+      // Cách 1: theo mã đánh dấu (lần xuất hiện cuối của mã đầu nằm trước lần cuối của mã cuối, và giữa có nội dung trả lời).
+      const page = await js(w, `(document.querySelector('main') || document.body).innerText`).catch(() => '');
+      const ia = page.lastIndexOf(A), ib = page.lastIndexOf(B);
+      if (ia >= 0 && ib > ia) { const seg = page.slice(ia + A.length, ib).trim(); if (/"replies"|\{/.test(seg)) return seg; }
       if (r.err && !r.t) throw Error('ChatGPT báo lỗi: ' + r.err);
       if (r.t && !r.busy && r.t === last) { if (++stable >= 2) return r.t; } else stable = 0;
       last = r.t;
     }
     if (last) return last;
-    const why = await js(w, `(() => { const a = ${ASSIST}; return 'tin trả lời: ' + a.length + ', đang viết: ' + !!document.querySelector('button[aria-label*="Stop"],[data-testid="stop-button"]') + ', trang: ' + location.pathname; })()`).catch(() => '');
+    try { saveDebug?.({ when: new Date().toISOString(), url: w.webContents.getURL?.(),
+      html: (await js(w, `(document.querySelector('main') || document.body).outerHTML`).catch(() => '')).slice(-200000) }); } catch {}
+    const why = await js(w, `(() => { const a = ${ASSIST}; return 'tin trả lời: ' + a.length + ', có mã: ' + (document.body.innerText.split(${JSON.stringify(A)}).length - 1) + ', đang viết: ' + !!document.querySelector('button[aria-label*="Stop"],[data-testid="stop-button"]') + ', trang: ' + location.pathname; })()`).catch(() => '');
     throw Error('ChatGPT trả lời quá lâu, thử lại sau. (' + why + ')');
   }
   return {
