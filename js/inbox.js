@@ -879,6 +879,65 @@
       h('div', { className: 'hint' }, 'Meta hạn chế nhắn cho khách im lặng quá 24 giờ / 7 ngày; gửi quá nhiều tin giống nhau có thể bị khoá tính năng nhắn tin của Page. Khi đang gửi, app mở lần lượt từng hội thoại.'));
     document.body.append(dlg); dlg.showModal(); textHint(); filter();
   }
+  // ── Cho Kế hoạch tự động (js/auto.js): làm việc với Hộp thư không qua giao diện ──
+  const autoWait = ms => new Promise(r => setTimeout(r, ms));
+  async function autoOpen(c) {
+    if (App.current() !== 'inbox') App.show('inbox');
+    if (!App.inbox.openId(c.id)) throw Error('hội thoại không còn trong danh sách');
+    for (let t = 0; t < 80 && !(S.conv?.id === c.id && S.draftReady); t++) await autoWait(250);
+    if (!(S.conv?.id === c.id && S.draftReady)) throw Error('chưa mở được hội thoại');
+  }
+  // Hỏi ChatGPT; lỗi / trả sai dạng → mở phiên mới hỏi lại (tối đa 3 lần).
+  async function autoAsk(prompt, ok) {
+    let last = '';
+    for (let k = 0; k < 3; k++) {
+      const r = await window.metaDesktop.gptAsk({ prompt, fresh: k > 0 });
+      if (r?.error === 'login') throw Error('Chưa đăng nhập ChatGPT trong app');
+      if (!r?.error && ok(r.text)) return r.text;
+      last = r?.error || 'ChatGPT trả sai dạng';
+    }
+    throw Error('AI lỗi: ' + last);
+  }
+  App.inbox.auto = {
+    async refresh() {
+      if (App.pages.length && Date.now() - (S.lastListAt || 0) > 60e3) await load(true).catch(() => {});
+      if (!S.stages || Date.now() - (S.stagesAt || 0) > 60e3) await computeStages().catch(() => {});
+    },
+    convs: () => S.convs, stage: c => S.stages?.get(c.id) || {}, labels: c => S.crm?.[c.key]?.labels || [], plat: c => platOf(c), busy: () => !!S.sending,
+    texts: convTexts, open: autoOpen,
+    async send(c, text, image = '') { await autoOpen(c); const ok = await App.inbox.compose({ key: c.key, text, image, autoSend: true }); if (ok !== true) throw Error(ok); },
+    async sendKey(key, text, image = '') { const c = S.convs.find(x => x.key === key); if (!c) throw Error('khách không còn trong danh sách hội thoại'); return this.send(c, text, image); },
+    messagesOf: async c => { await autoOpen(c); for (let t = 0; t < 32 && !S.messages?.length; t++) await autoWait(250); await autoWait(1500); return S.conv?.id === c.id ? S.messages || [] : []; },
+    // AI trả lời 1 khách (đang mở): câu đầu tiên AI soạn + bảng giá nếu AI chọn.
+    async aiReply(c, msgs) {
+      if (!window.metaDesktop?.gptAsk) throw Error('Cần app Get Helps trên Windows');
+      const cx = await App.services.aiContext(c.key).catch(() => ({ prices: [], orders: [], pending: [] }));
+      const shop = await aiShop({ shop: c.page?.name || '', ...(cx.invoice?.shop ? cx.invoice : {}) }), pts = await priceTpls(shop);
+      const tpls = App.templates ? (await App.templates.list().catch(() => [])).filter(t => t.content).slice(0, 8) : [];
+      const text = await autoAsk(aiPrompt({ shop, cx, tpls, msgs: msgs.filter(m => m.text), name: c.other.name, bank: cx.bank, pts }), t => aiParse(t).replies.length > 0);
+      const { replies, price } = aiParse(text), pt = pts.find(p => p.code === price) || null;
+      return { ...withPrice(replies[0], pt, c), pt };
+    },
+    // AI soạn tin remarketing cho nhiều khách (mỗi lượt 5 khách) → Map(c.id → { text, image })
+    async aiMass(list, { mode = 'ai', goal = '' } = {}, onStep) {
+      if (!window.metaDesktop?.gptAsk) throw Error('Cần app Get Helps trên Windows');
+      const P = App.services, base = await P.aiContext('').catch(() => ({ prices: [] }));
+      const shop = await aiShop({ shop: list[0]?.page?.name || '', ...(base.invoice?.shop ? base.invoice : {}) }), pts = await priceTpls(shop), out = new Map();
+      for (let i = 0; i < list.length; i += 5) {
+        const part = list.slice(i, i + 5), items = []; onStep?.(`AI soạn ${Math.min(i + 5, list.length)}/${list.length}`);
+        for (const [k, c] of part.entries()) { const cx = await P.aiContext(c.key).catch(() => ({ orders: [], pending: [] }));
+          items.push({ id: 'k' + (k + 1), name: c.other.name, orders: cx.orders || [], pending: cx.pending || [], msgs: await convTexts(c) }); }
+        const parse = t => { try { const x = String(t || '').replace(/```(?:json)?/gi, ''), j = JSON.parse(x.slice(x.indexOf('{'), x.lastIndexOf('}') + 1)); return Array.isArray(j.msgs) ? j.msgs : null; } catch { return null; } };
+        let msgs = null; try { msgs = parse(await autoAsk(massPrompt({ shop, bank: base.bank, prices: base.prices || [], mode, goal, tpl: goal, items, pts }), t => !!parse(t))); } catch (e) { if (/đăng nhập/.test(e.message)) throw e; }
+        part.forEach((c, k) => { const m = (msgs || []).find(x => String(x.id) === 'k' + (k + 1)); if (!m?.text) return;
+          const t = mode === 'rewrite' ? P.dukFill(String(m.text), { name: c.other.name, q: S.stages?.get(c.id)?.q }) : String(m.text);
+          out.set(c.id, withPrice(t, pts.find(p => p.code === m.price) || null, c)); });
+      }
+      return out;
+    },
+    fill: (tpl, c) => App.services.dukFill(tpl, { name: c.other.name, q: S.stages?.get(c.id)?.q }),
+    sentToday, MASS_SENT
+  };
   async function drawWarr() {
     const box = $('ibWarr'); if (!box) return;
     const c = S.conv; if (!c || !App.services?.complaintInfo) { box.hidden = true; return; }

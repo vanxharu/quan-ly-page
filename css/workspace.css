@@ -645,3 +645,18 @@ body.teams .ib-ai-opt{background:transparent;border-color:var(--tm-compose-line)
 .ib-ai-pt{display:flex;flex-direction:column;gap:4px;max-height:220px;overflow:auto;border:1px solid var(--border,#8884);border-radius:6px;padding:6px}
 .ib-ai-pt-i{display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer}.ib-ai-pt-i .thumb{width:36px;height:36px;object-fit:cover;border-radius:4px}
 .ib-ai-ptnote{font-size:12px;color:var(--text-secondary);display:flex;align-items:center;gap:6px;margin-top:3px}
+/* Kế hoạch tự động */
+[data-panel="autoplan"]{display:flex;flex-direction:column;gap:12px}
+.ap-head{display:flex;flex-direction:column;gap:8px}
+.ap-master{display:flex;align-items:center;gap:10px;font-size:18px;font-weight:600;cursor:pointer}.ap-master input{width:20px;height:20px}
+.ap-card{display:flex;flex-direction:column;gap:8px}
+.ap-row{display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-size:13px}
+.ap-row input[type=time]{width:128px}.ap-row .grow{flex:1}
+.ap-chk{display:inline-flex;align-items:center;gap:4px;cursor:pointer}
+.ap-rule{border:1px solid var(--border,#8884);border-radius:8px;padding:8px 10px;display:flex;flex-direction:column;gap:6px}
+.ap-rule.off{opacity:.6}.ap-rule textarea{width:100%;box-sizing:border-box}
+.ap-days{display:inline-flex;gap:3px}.ap-days .chip{height:24px;padding:0 7px;font-size:12px}
+.ap-log{max-height:420px;overflow:auto;display:flex;flex-direction:column;gap:2px;font-size:12.5px}
+.ap-log-i{display:grid;grid-template-columns:96px 120px 1fr;gap:8px;padding:3px 4px;border-bottom:1px solid var(--border,#8882)}
+.ap-log-i.err{color:var(--danger,#d13438)}.ap-log-t{font-weight:600}
+.ap-row label{display:inline-flex;align-items:center;gap:4px}.ap-row input[type=number]{padding:4px 6px}

@@ -1,6 +1,6 @@
 // Meta Assistant cho Windows: mở trang web (luôn là bản mới nhất trên GitHub Pages) trong cửa sổ riêng
 // và chạy sẵn tiện ích Studio AI (ChatGPT) bên trong, không cần Chrome.
-const { app, BaseWindow, BrowserWindow, Menu, WebContentsView, clipboard, ipcMain, net, safeStorage, screen, session, shell } = require('electron');
+const { app, BaseWindow, BrowserWindow, Menu, WebContentsView, clipboard, ipcMain, net, powerMonitor, powerSaveBlocker, safeStorage, screen, session, shell } = require('electron');
 const path = require('path'), crypto = require('crypto');
 const { ElectronChromeExtensions } = require('electron-chrome-extensions');
 const { createMetaAuto } = require('./meta-auto');
@@ -163,6 +163,8 @@ app.whenReady().then(async () => {
     ...(FRAMELESS ? { titleBarStyle: 'hidden', titleBarOverlay: { color: '#0c1820', symbolColor: '#ffffff', height: TB }, backgroundColor: '#0c1820' } : {}) });
   // Ẩn thanh menu cho gọn (bấm Alt để hiện); các phím tắt Ctrl+Shift+A / Ctrl+Shift+M vẫn dùng được.
   mainWindow.setAutoHideMenuBar(true); mainWindow.setMenuBarVisibility(false);
+  // Tự mở cùng Windows (Kế hoạch tự động): mở thu nhỏ xuống thanh tác vụ.
+  if (process.argv.includes('--hidden')) setTimeout(() => { try { mainWindow.minimize(); } catch {} }, 1500);
   // Khung ẩn để đọc Business Suite: avatar + UID khách.
   // Cửa sổ vẽ ngầm (offscreen): vẫn chạy cuộn / tải thêm như trang thật nhưng không hiện ra.
   // Business Suite chạy trong phiên riêng (persist:meta): phiên mặc định có script của tiện ích Studio AI gắn vào mọi trang,
@@ -547,6 +549,32 @@ app.whenReady().then(async () => {
     try { return { text: await gpt.ask(String(args?.prompt || ''), { fresh: !!args?.fresh, onStep: t => pageView.webContents.executeJavaScript(`window.App?.inbox?.aiStep?.(${JSON.stringify(t)})`).catch(() => {}) }) }; }
     catch (err) { return { error: err.message }; } });
   ipcMain.handle('gpt-login', e => { if (!fromPage(e)) return false; toggleStudio(true); return true; });
+  // ── Kế hoạch tự động 24/7: mở cùng Windows, giữ máy thức, tự tải lại khi trang app treo, thời gian rảnh, báo Telegram ──
+  let autoSys = { openAtLogin: false, keepAwake: false, watchdog: false }, awakeId = -1, lastBeat = 0;
+  ipcMain.handle('auto-sys', (e, cfg) => { if (!fromPage(e)) return null;
+    if (cfg && typeof cfg === 'object') {
+      autoSys = { openAtLogin: !!cfg.openAtLogin, keepAwake: !!cfg.keepAwake, watchdog: !!cfg.watchdog };
+      if (app.isPackaged) try { app.setLoginItemSettings({ openAtLogin: autoSys.openAtLogin, args: ['--hidden'] }); } catch {}
+      if (autoSys.keepAwake && awakeId < 0) awakeId = powerSaveBlocker.start('prevent-app-suspension');
+      if (!autoSys.keepAwake && awakeId >= 0) { try { powerSaveBlocker.stop(awakeId); } catch {} awakeId = -1; }
+      lastBeat = Date.now();
+    }
+    let login = false; try { login = app.getLoginItemSettings({ args: ['--hidden'] }).openAtLogin; } catch {}
+    return { ...autoSys, loginNow: login, awake: awakeId >= 0 && powerSaveBlocker.isStarted(awakeId), packaged: app.isPackaged };
+  });
+  ipcMain.on('auto-beat', e => { if (fromPage(e)) lastBeat = Date.now(); });
+  ipcMain.handle('sys-idle', e => fromPage(e) ? powerMonitor.getSystemIdleTime() : 0);
+  ipcMain.handle('tg-send', async (e, a) => { if (!fromPage(e)) return { error: 'denied' };
+    try { const r = await net.fetch(`https://api.telegram.org/bot${encodeURIComponent(String(a?.token || '')).replace(/%3A/gi, ':')}/sendMessage`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chat_id: String(a?.chat || ''), text: String(a?.text || '').slice(0, 4000), disable_web_page_preview: true }) });
+      const j = await r.json().catch(() => ({})); return j.ok ? { ok: true } : { error: j.description || ('HTTP ' + r.status) }; }
+    catch (err) { return { error: err.message }; } });
+  // Trang app treo / bị đóng: tải lại. Có Kế hoạch bật mà 4 phút không nhận nhịp từ trang → tải lại trang.
+  pageView.webContents.on('render-process-gone', (ev, d) => { if (d?.reason !== 'clean-exit') setTimeout(() => { try { pageView.webContents.reload(); } catch {} }, 2000); });
+  let hangT = 0;
+  pageView.webContents.on('unresponsive', () => { clearTimeout(hangT); hangT = setTimeout(() => { if (autoSys.watchdog) try { pageView.webContents.forcefullyCrashRenderer(); pageView.webContents.reload(); } catch {} }, 60e3); });
+  pageView.webContents.on('responsive', () => clearTimeout(hangT));
+  setInterval(() => { if (autoSys.watchdog && lastBeat && Date.now() - lastBeat > 4 * 60e3) { lastBeat = Date.now(); try { pageView.webContents.reload(); } catch {} } }, 60e3);
   ipcMain.handle('fb-profile-counts', (e, args) => !fromPage(e) ? { error: 'denied' } : fbPeople.profileCounts(args || {}));
   ipcMain.handle('meta-lookup', (e, args) => fromPage(e) ? auto.lookupProfile(args || {}) : { error: 'denied' });
   // Lệnh trình duyệt (CDP) cho khung ngầm Zalo: bấm chuột / phím / chèn chữ thật như khung Business Suite.

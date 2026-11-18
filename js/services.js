@@ -2421,5 +2421,36 @@
     return { prices, orders, pending, invoice: s.invoice || {}, bank: s.invoice?.acc ? `${bankName(s.invoice.bin) || 'Ngân hàng'} · STK ${s.invoice.acc}${s.invoice.holder ? ' · ' + s.invoice.holder : ''}` : '' };
   }
 
-  App.services = { aiContext, hesitation, salesInfo, dukTexts, dukFill, dukBonus, DUK, STAGE_NAME, warrantyDialog, complaintInfo, checkWarranty, splitLinks, bulkDialog, orderedLinks, linkKey, nudgeCard, askCheck, platBadge, linkPlatform: l => LINK_PLAT[platformOf(l)] || '', createDialog, closeDock, orderStates, orderBar, inboxBox, refreshStatus, linksIn, call, openWeb, mapStatus, catalogProgress, noteLines, speedOf, invoiceDialog, invoiceText, paymentDialog, confirmCreate, quotes, renewQuote, vipTick, termOf, requestRefill, refreshRefills };
+  // ── Dùng cho Kế hoạch tự động (js/auto.js): bảo hành tự động + gửi gợi ý đơn tự động, không mở hộp thoại ──
+  // Bảo hành tự động: chỉ REFILL Baostar (không tốn tiền) cho link khách nhắc trong tin báo tụt và còn bảo hành; đơn bù (tốn tiền) để bạn tự làm.
+  async function autoWarranty(ctx = {}) {
+    const info = await complaintInfo(ctx.key, ctx.messages); if (!info) return null;
+    let list = []; try { list = await services(); } catch (e) { return { error: e.message }; }
+    const said = new Set(linksIn((ctx.messages || []).filter(m => m.isCustomer || m.mine === false).slice(-5).filter(m => COMPLAIN.test(m.text || ''))).map(linkKey));
+    const pick = info.groups.filter(g => g.ok && (!said.size || said.has(linkKey(g.link))));
+    if (!pick.length) return { skipped: info.ok ? 'link khách nhắc không còn bảo hành' : 'không link nào còn bảo hành (cần bạn xem: đơn bù / hết hạn)' };
+    const batch = { id: uid('wb'), at: Date.now(), key: ctx.key || '', name: ctx.name || '', pageKey: ctx.page?.id || '', items: [], done: false, auto: true }, fails = [];
+    for (const g of pick) {
+      const item = { link: g.link, name: g.orders[0].displayName || g.orders[0].serviceName || '', mode: 'refill', refill: [], bu: [], qty: 0 };
+      for (const o of g.orders.filter(o => o.status !== 'cancelled' && warrState(o, list.find(x => x.id === String(o.serviceId))).ok)) {
+        try { const res = await call('refill', { order: Number(o.providerOrderId) }); const id = String(res?.refill ?? res?.id ?? res?.refill_id ?? '');
+          if (!id || id === '0' || res?.error) throw Error(res?.error || 'Baostar không nhận bảo hành');
+          const all = await DB.get(ORDERS, []), x = all.find(y => y.id === o.id); if (x) { x.refills = [...(x.refills || []), { id, at: Date.now(), status: 'Pending', batch: batch.id }]; await DB.set(ORDERS, all); }
+          item.refill.push(o.id); } catch (e) { fails.push(`#${o.providerOrderId}: ${e.message}`); }
+      }
+      if (item.refill.length) batch.items.push(item);
+    }
+    if (!batch.items.length) return { error: fails.join(' · ') || 'Baostar không nhận refill' };
+    await DB.set(WARR, [...(await warrBatches()).filter(b => Date.now() - b.at < 60 * 864e5), batch]); App.tabs.services?.refresh?.(); App.inbox?.orderChanged?.();
+    const text = ['🛡 BẢO HÀNH ĐƠN HÀNG', `Dạ shop đã nhận bảo hành ${batch.items.length} link cho mình ạ:`, ...batch.items.map((it, i) => `   ${i + 1}. ${shortLink(it.link)} · đã gửi bảo hành`),
+      '', '⏳ Hệ thống bù trong 24–72 giờ, xong em báo mình ngay ạ 🙏'].join('\n');
+    const img = await snapGrid(batch.items.map(it => ({ link: it.link, name: it.name })), '🛡 Ghi nhận lúc nhận bảo hành').catch(() => null);
+    return { text, image: img?.dataUrl || '', n: batch.items.length, fails };
+  }
+  // Gợi ý đơn đang chờ gửi (đã bắt đầu / xong / đã nhận tiền / bảo hành xong…) → nội dung đầy đủ (kèm ảnh) để gửi tự động.
+  const autoNudgeList = async () => (await nudges()).filter(n => n.key && Date.now() - n.at < 3 * 864e5);
+  async function autoNudgeFull(n) { const m = await nudgeText(n, true).catch(() => null); if (!m) { await dropNudge(n.id, n.key); return null; } return { ...m, title: NUDGE_TITLE[n.kind] || n.kind }; }
+  const autoNudgeDone = n => dropNudge(n.id, n.key);
+
+  App.services = { autoWarranty, autoNudgeList, autoNudgeFull, autoNudgeDone, aiContext, hesitation, salesInfo, dukTexts, dukFill, dukBonus, DUK, STAGE_NAME, warrantyDialog, complaintInfo, checkWarranty, splitLinks, bulkDialog, orderedLinks, linkKey, nudgeCard, askCheck, platBadge, linkPlatform: l => LINK_PLAT[platformOf(l)] || '', createDialog, closeDock, orderStates, orderBar, inboxBox, refreshStatus, linksIn, call, openWeb, mapStatus, catalogProgress, noteLines, speedOf, invoiceDialog, invoiceText, paymentDialog, confirmCreate, quotes, renewQuote, vipTick, termOf, requestRefill, refreshRefills };
 })();

@@ -373,6 +373,8 @@
     } catch (e) { await patch(i.id, { status: 'error', error: e.message }); return false; }
     finally { App.plannerRunning?.delete(i.id); }
   }
+  // Kế hoạch tự động gọi được khi tab Lịch đăng chưa mở (chưa có ô nhật ký #plLog).
+  App.planner.scheduleAll = async () => { if (!$('plLog')) document.body.append(h('div', { id: 'plLog', hidden: true })); await scheduleAll(); return [...$('plLog').children].map(e => e.textContent).join(' · '); };
   async function scheduleAll() {
     $('plLog').replaceChildren();
     let list = (await DB.get(QUEUE, [])).filter(i => i.status === 'approved' && inSel(i));

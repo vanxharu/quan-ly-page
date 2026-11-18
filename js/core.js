@@ -13,7 +13,7 @@ App.CONFIG_ID = '1092800303751533';
 App.NAV = {
   messages: ['Tin nhắn', [['inbox', 'Hộp thư', 'i-msg'], ['templates', 'Mẫu tin', 'i-msg'], ['crm', 'Khách hàng', 'i-user'], ['bulk', 'Gửi hàng loạt', 'i-send']]],
   publishing: ['Đăng bài', [['planner', 'Lịch đăng', 'i-cal'], ['scheduled', 'Lịch nội dung', 'i-cal'], ['topics', 'Cách AI viết', 'i-grid']]],
-  auto: ['Tự động', [['botrules', 'Từ khoá', 'i-msg'], ['botcomments', 'Bình luận tự động', 'i-like'], ['botflows', 'Kịch bản', 'i-grid'], ['botmenu', 'Menu & lời chào', 'i-gear'], ['botlog', 'Nhật ký & đơn bot', 'i-cal']]],
+  auto: ['Tự động', [['autoplan', 'Kế hoạch', 'i-cal'], ['botrules', 'Từ khoá', 'i-msg'], ['botcomments', 'Bình luận tự động', 'i-like'], ['botflows', 'Kịch bản', 'i-grid'], ['botmenu', 'Menu & lời chào', 'i-gear'], ['botlog', 'Nhật ký & đơn bot', 'i-cal']]],
   engage: ['Tương tác', [['comments', 'Bình luận', 'i-like'], ['scanner', 'Quét bài viết', 'i-search']]],
   manage: ['Quản lý', [['dashboard', 'Tổng quan', 'i-grid'], ['stats', 'Số liệu', 'i-grid'], ['sales', 'Bán hàng', 'i-cart'], ['services', 'Dịch vụ', 'i-like'], ['settings', 'Cài đặt', 'i-gear']]]
 };
