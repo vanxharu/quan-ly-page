@@ -613,16 +613,27 @@
     const inv = App.services ? (await App.services.aiContext('').catch(() => ({}))).invoice || {} : {}, v = await aiShop(inv);
     const f = k => h('input', { type: 'text', value: v[k] || '' }), ta = (k, ph) => h('textarea', { rows: 3, value: v[k] || '', placeholder: ph });
     const el = { name: f('name'), me: f('me'), you: f('you'), policy: ta('policy', 'VD: Like tụt trong 30 ngày bù miễn phí; lên đơn trong 5–30 phút; không cần mật khẩu'), notes: ta('notes', 'VD: Làm việc 8h–22h; khách quen giảm 5%; không nhận tăng cho trang vi phạm') };
+    const all = App.templates ? (await App.templates.list().catch(() => [])).filter(t => t.content || t.imageData) : [], picked = new Set(v.priceTpls || []);
+    const ptBox = h('div', { className: 'ib-ai-pt' }, ...(all.length ? all.map(t => h('label', { className: 'ib-ai-pt-i' },
+      h('input', { type: 'checkbox', checked: picked.has(t.id), onchange: e => { e.target.checked ? picked.add(t.id) : picked.delete(t.id); } }),
+      t.imageData ? h('img', { className: 'thumb', src: t.imageData, alt: '' }) : null, h('span', {}, h('strong', {}, t.title || 'Mẫu'), h('span', { className: 'hint' }, ' ' + String(t.content || '').slice(0, 80))))) : [h('div', { className: 'hint' }, 'Chưa có mẫu tin nào: tạo mẫu bảng giá (chữ + ảnh) ở mục Mẫu tin trước.')]));
     const dlg = h('dialog', { className: 'svc-dialog', onclose: () => dlg.remove() });
     dlg.append(h('div', { className: 'card-head' }, h('h3', { className: 'card-title', textContent: '✨ Thông tin shop cho AI' }), h('button', { type: 'button', className: 'icon-btn', 'aria-label': 'Đóng', textContent: '×', onclick: () => dlg.close() })),
       h('label', { className: 'field' }, 'Tên shop', el.name), h('div', { className: 'row', style: 'gap:10px' }, h('label', { className: 'field grow' }, 'Shop xưng là', el.me), h('label', { className: 'field grow' }, 'Gọi khách là', el.you)),
       h('label', { className: 'field' }, 'Chính sách (bảo hành, thời gian lên đơn, cam kết…)', el.policy), h('label', { className: 'field' }, 'Lưu ý khác cho AI', el.notes),
+      h('div', { className: 'field' }, '📎 Mẫu bảng giá AI được gửi kèm (AI tự chọn mẫu đúng dịch vụ khách hỏi)', ptBox),
       h('div', { className: 'hint' }, 'Số tài khoản lấy từ Dịch vụ › Cài đặt › Thông tin hoá đơn. Bảng giá lấy từ Gói bán của tôi.'),
       h('div', { className: 'row', style: 'justify-content:flex-end;gap:8px' }, h('button', { type: 'button', className: 'btn btn-primary', textContent: 'Lưu', onclick: async () => {
-        await DB.set(AI_SHOP, Object.fromEntries(Object.entries(el).map(([k, x]) => [k, x.value.trim()]))); toast('Đã lưu thông tin shop cho AI.'); dlg.close(); after?.(); } })));
+        await DB.set(AI_SHOP, { ...Object.fromEntries(Object.entries(el).map(([k, x]) => [k, x.value.trim()])), priceTpls: [...picked] }); toast('Đã lưu thông tin shop cho AI.'); dlg.close(); after?.(); } })));
     document.body.append(dlg); dlg.showModal();
   }
-  function aiPrompt({ shop, cx, tpls, msgs, name, bank }) {
+  // Mẫu bảng giá đã chọn trong ⚙ → mã b1, b2… cho AI chọn; gửi = chữ của mẫu (điền biến) + ảnh của mẫu.
+  async function priceTpls(shop) { const ids = new Set(shop.priceTpls || []); if (!ids.size || !App.templates) return [];
+    return (await App.templates.list().catch(() => [])).filter(t => ids.has(t.id)).map((t, i) => ({ code: 'b' + (i + 1), t })); }
+  const priceBlock = pts => pts.length ? ['## MẪU BẢNG GIÁ CÓ SẴN (shop gửi kèm cho khách)', ...pts.map(p => `[${p.code}] ${p.t.title || 'Mẫu'}: ${String(p.t.content || '').replace(/\s+/g, ' ').slice(0, 300)}${p.t.imageData ? ' (kèm ảnh bảng giá)' : ''}`),
+    'Khi khách hỏi giá / muốn xem giá / chưa biết chọn gói của dịch vụ có mẫu ở trên: đặt "price" = mã mẫu hợp nhất với dịch vụ khách hỏi (vd "b1"); câu trả lời khi đó chỉ cần ngắn gọn kiểu "em gửi mình bảng giá ạ", không chép lại cả bảng giá. Không hợp thì "price": null.', ''] : [];
+  const withPrice = (text, p, c) => p ? { text: [String(text || '').trim(), App.resolveVars(p.t.content || '', { name: c.other.name || '', pageName: c.page?.name || '' }).trim()].filter(Boolean).join('\n\n'), image: p.t.imageData || '' } : { text, image: '' };
+  function aiPrompt({ shop, cx, tpls, msgs, name, bank, pts = [] }) {
     const cut = (t, n) => { t = String(t || '').replace(/\s+/g, ' ').trim(); return t.length > n ? t.slice(0, n) + '…' : t; };
     const conv = msgs.slice(-20).map(m => (m.isCustomer ? 'Khách: ' : 'Shop: ') + (cut(m.text, 400) || '[ảnh / tệp]')).join('\n');
     return [`Bạn là nhân viên chăm sóc khách của shop "${shop.name || 'shop'}", bán dịch vụ tăng tương tác mạng xã hội (like, follow, view, thành viên nhóm…). Shop xưng "${shop.me || 'em'}", gọi khách là "${shop.you || 'anh/chị'}". Viết tiếng Việt tự nhiên, thân thiện, ngắn như nhắn Messenger (1–3 câu, emoji vừa phải).`,
@@ -631,9 +642,10 @@
       '- Bảo hành: chỉ nói theo gói có ghi "bảo hành N ngày" ở BẢNG GIÁ hoặc Chính sách của shop. TUYỆT ĐỐI không nói gói/dịch vụ "không bảo hành", không nói về bảo hành nếu khách không hỏi và không có thông tin.',
       '- Khách muốn mua mà chưa gửi link thì xin link. Số lượng dưới mức tối thiểu thì nói rõ mức tối thiểu.', '- Không nói mình là AI, không nhắc "bảng giá" hay mã gói trong ngoặc vuông.',
       '- Nếu tin cuối là của shop (khách chưa nhắn thêm), soạn tin nhắc khéo để khách trả lời.',
-      'Chỉ trả về MỘT khối JSON, không viết thêm gì:', '{"replies":["câu 1","câu 2","câu 3"],"order":null}',
+      'Chỉ trả về MỘT khối JSON, không viết thêm gì:', '{"replies":["câu 1","câu 2","câu 3"],"order":null,"price":null}',
       'Khi khách đã nói rõ muốn mua một dịch vụ, thay null bằng {"package_id":"mã trong ngoặc vuông ở BẢNG GIÁ","qty":số lượng,"links":["link khách gửi"]}.', '',
       '## THÔNG TIN SHOP', bank ? 'Chuyển khoản: ' + bank : '', shop.policy ? 'Chính sách: ' + shop.policy : '', shop.notes ? 'Lưu ý: ' + shop.notes : '', '',
+      ...priceBlock(pts),
       '## BẢNG GIÁ', cx.prices.length ? cx.prices.slice(0, 50).map(l => cut(l, 220)).join('\n') : '(chưa có gói bán: không báo giá cụ thể, mời khách gửi link để báo giá)', '',
       `## KHÁCH: ${name || 'Khách'}`, 'Đơn đã mua:', cx.orders.join('\n') || '(chưa mua lần nào)', 'Báo giá:', cx.pending.join('\n') || '(không có)', '',
       '## MẪU TIN CỦA SHOP (học giọng văn, không cần chép nguyên)', tpls.map(t => '- ' + cut(t.content, 220)).join('\n') || '(không có)', '',
@@ -641,7 +653,7 @@
   }
   function aiParse(t) {
     const s = String(t || '').replace(/```(?:json)?/gi, ''), a = s.indexOf('{'), b = s.lastIndexOf('}');
-    try { const j = JSON.parse(s.slice(a, b + 1)); return { replies: (j.replies || []).map(x => String(x).trim()).filter(Boolean).slice(0, 3), order: j.order && j.order.package_id ? j.order : null }; }
+    try { const j = JSON.parse(s.slice(a, b + 1)); return { replies: (j.replies || []).map(x => String(x).trim()).filter(Boolean).slice(0, 3), order: j.order && j.order.package_id ? j.order : null, price: j.price ? String(j.price).trim() : null }; }
     catch { return { replies: s.split(/\n+/).map(x => x.replace(/^\s*(\d+[.)]|[-*•])\s*/, '').replace(/^"|"$/g, '').trim()).filter(x => x.length > 3 && !/^json$|copy code|sao chép/i.test(x)).slice(0, 3), order: null }; }
   }
   async function aiSuggest() {
@@ -655,11 +667,11 @@
     box.replaceChildren(head(h('span', { className: 'hint', id: 'ibAiStep', textContent: 'Đang chuẩn bị…' })));
     try {
       const cx = App.services ? await App.services.aiContext(c.key).catch(() => ({ prices: [], orders: [], pending: [] })) : { prices: [], orders: [], pending: [] };
-      const shop = await aiShop({ shop: c.page?.name || '', ...(cx.invoice?.shop ? cx.invoice : {}) }), tpls = App.templates ? (await App.templates.list().catch(() => [])).filter(t => t.content).slice(0, 8) : [];
+      const shop = await aiShop({ shop: c.page?.name || '', ...(cx.invoice?.shop ? cx.invoice : {}) }), pts = await priceTpls(shop), tpls = App.templates ? (await App.templates.list().catch(() => [])).filter(t => t.content).slice(0, 8) : [];
       let msgs = (S.messages || []).filter(m => m.text);
       if (!msgs.length) { const cached = bsMsgCache.get(c.id) || await DB.get('bsMsg:' + c.id, null).catch(() => null); msgs = bsMsgs(cached?.messages).filter(m => m.text); }
       if (!msgs.length) throw Error('Chưa đọc được tin nhắn của hội thoại này. Đợi tin tải xong (hết dòng "Đang cập nhật tin mới…") rồi bấm ✨ lại.');
-      const ask = fresh => window.metaDesktop.gptAsk({ fresh, prompt: aiPrompt({ shop, cx, tpls, msgs, name: c.other.name, bank: cx.bank }) });
+      const ask = fresh => window.metaDesktop.gptAsk({ fresh, prompt: aiPrompt({ shop, cx, tpls, msgs, name: c.other.name, bank: cx.bank, pts }) });
       let r = await ask(false);
       // Lỗi hoặc trả sai dạng: tự mở phiên ChatGPT mới và hỏi lại 1 lần.
       if (r?.error !== 'login' && (r?.error || !aiParse(r?.text).replies.length) && S.conv === c) { App.inbox.aiStep('↻ Lỗi, đang mở phiên ChatGPT mới để thử lại…'); r = await ask(true); }
@@ -667,14 +679,16 @@
       if (r?.error === 'login') { box.replaceChildren(head(), h('div', { className: 'status pending' }, 'Chưa đăng nhập ChatGPT trong app. ',
         h('button', { type: 'button', className: 'btn btn-soft btn-sm', textContent: 'Mở Studio AI để đăng nhập', onclick: () => window.metaDesktop.gptLogin?.() }), ' Đăng nhập xong bấm ✨ lại.')); return; }
       if (r?.error) throw Error(r.error);
-      const { replies, order } = aiParse(r?.text);
+      const { replies, order, price } = aiParse(r?.text);
+      let pt = pts.find(p => p.code === price) || null;
       if (!replies.length) throw Error('ChatGPT không trả lời đúng dạng, bấm ✨ thử lại.');
-      const use = t => { $('ibText').value = t; saveDraft(); updateSendState(); $('ibText').focus(); };
+      const use = t => { const m = withPrice(t, pt, c); $('ibText').value = m.text; S.image = m.image; S.tpl = pt?.t || null; drawAttach(); saveDraft(); updateSendState(); $('ibText').focus(); };
+      const ptNote = pt ? h('div', { className: 'ib-ai-ptnote' }, `📎 Kèm bảng giá: ${pt.t.title || 'mẫu'}${pt.t.imageData ? ' (có ảnh)' : ''} `, h('button', { type: 'button', className: 'btn btn-ghost btn-sm', textContent: 'Bỏ', onclick: e => { pt = null; e.target.parentNode.remove(); } })) : null;
       const orderBtn = order && App.services?.bulkDialog ? h('button', { type: 'button', className: 'btn btn-primary btn-sm', textContent: `🧾 Tạo báo giá${order.qty ? ' · ' + Number(order.qty).toLocaleString('vi-VN') : ''}`,
         title: 'Mở hộp tạo đơn, chọn sẵn gói + số lượng AI đọc được (bạn kiểm tra lại)',
         onclick: () => { const links = (order.links || []).filter(l => /^https?:\/\/|\.(com|vn|me)\//i.test(l)); App.services.bulkDialog({ page: c.page, key: c.key, name: c.other.name || '', messages: S.messages, hint: { pkgId: String(order.package_id), qty: order.qty, links } }, links); } }) : null;
       box.replaceChildren(head(h('span', { className: 'hint', textContent: 'Bấm một câu để đưa vào ô nhập, sửa rồi gửi' }), h('button', { type: 'button', className: 'btn btn-ghost btn-sm', textContent: '↻ Soạn lại', onclick: () => aiSuggest() })),
-        ...replies.map(t => h('button', { type: 'button', className: 'ib-ai-opt', textContent: t, onclick: () => use(t) })), orderBtn ? h('div', { className: 'ib-ai-order' }, orderBtn) : null);
+        ptNote, ...replies.map(t => h('button', { type: 'button', className: 'ib-ai-opt', textContent: t, onclick: () => use(t) })), orderBtn ? h('div', { className: 'ib-ai-order' }, orderBtn) : null);
     } catch (e) {
       if (S.conv === c) box.replaceChildren(head(), h('div', { className: 'status err' }, 'Chưa gợi ý được: ' + e.message));
     } finally { S.aiBusy = false; }
@@ -701,7 +715,7 @@
     if (m?.messages?.length) return bsMsgs(m.messages);
     return c.snippet ? [{ isCustomer: !!c.fromCustomer, text: c.snippet.replace(/^Bạn:\s*/, '') }] : [];
   };
-  function massPrompt({ shop, bank, prices, mode, goal, tpl, items }) {
+  function massPrompt({ shop, bank, prices, mode, goal, tpl, items, pts = [] }) {
     const cut = (t, n) => { t = String(t || '').replace(/\s+/g, ' ').trim(); return t.length > n ? t.slice(0, n) + '…' : t; };
     const task = mode === 'rewrite'
       ? `Viết lại MẪU TIN sau cho từng khách, mỗi khách một cách nói khác nhau (đổi câu chữ, giữ nguyên ý, giá, ưu đãi), gọi đúng tên khách:\n"${tpl}"`
@@ -710,7 +724,7 @@
       'Nhiệm vụ: ' + task,
       'Quy tắc: chỉ báo giá theo BẢNG GIÁ, không bịa giá / ưu đãi / cam kết; không nói mình là AI; không nhắc mã gói trong ngoặc vuông; mỗi tin khác nhau, không lặp y hệt.',
       'Quy tắc: Bảo hành: chỉ nói theo gói có ghi "bảo hành N ngày" ở BẢNG GIÁ hoặc Chính sách của shop. TUYỆT ĐỐI không nói gói/dịch vụ "không bảo hành", không nói về bảo hành nếu khách không hỏi và không có thông tin.',
-      'Chỉ trả về MỘT khối JSON: {"msgs":[{"id":"mã khách","text":"tin nhắn"}]} — đủ mỗi khách một tin, đúng mã khách.', '',
+      'Chỉ trả về MỘT khối JSON: {"msgs":[{"id":"mã khách","text":"tin nhắn","price":null}]} — đủ mỗi khách một tin, đúng mã khách.', '', ...priceBlock(pts),
       '## THÔNG TIN SHOP', bank ? 'Chuyển khoản: ' + bank : '', shop.policy ? 'Chính sách: ' + shop.policy : '', shop.notes ? 'Lưu ý: ' + shop.notes : '', '',
       '## BẢNG GIÁ', prices.length ? prices.slice(0, 40).map(l => cut(l, 200)).join('\n') : '(chưa có: không báo giá cụ thể)', '',
       ...items.flatMap(it => [`## KHÁCH ${it.id}: ${it.name || 'Khách'}`, 'Đơn đã mua: ' + (it.orders.slice(0, 3).map(x => cut(x.replace(/^- /, ''), 120)).join(' | ') || 'chưa'),
@@ -745,7 +759,8 @@
     const draw = () => {
       body.replaceChildren(...rows.map(r => h('tr', {}, h('td', {}, h('input', { type: 'checkbox', checked: r.on, disabled: busy, onchange: e => { r.on = e.target.checked; foot(); } })),
         h('td', { style: 'min-width:120px' }, r.c.other.name || 'Khách', h('div', { className: 'hint' }, (r.c.page?.name || (platOf(r.c) === 'zalo' ? 'Zalo' : '')) + ' · ' + (day(r.c) < 1 ? 'hôm nay' : Math.floor(day(r.c)) + ' ngày'))),
-        h('td', { style: 'width:100%' }, h('textarea', { rows: 2, className: 'ib-mass-text', value: r.text, placeholder: '(chưa soạn)', disabled: busy, oninput: e => { r.text = e.target.value; foot(); } })),
+        h('td', { style: 'width:100%' }, h('textarea', { rows: 2, className: 'ib-mass-text', value: r.text, placeholder: '(chưa soạn)', disabled: busy, oninput: e => { r.text = e.target.value; foot(); } }),
+          r.pt ? h('div', { className: 'ib-ai-ptnote' }, `📎 Kèm bảng giá: ${r.pt.t.title || 'mẫu'}${r.pt.t.imageData ? ' (có ảnh)' : ''} `, h('button', { type: 'button', className: 'btn btn-ghost btn-sm', textContent: 'Bỏ', disabled: busy, onclick: () => { r.pt = null; draw(); } })) : null),
         h('td', { className: r.res.startsWith('✓') ? 'hint pos' : r.res.startsWith('✗') ? 'hint neg' : 'hint', style: 'white-space:nowrap' }, r.res))));
       foot();
     };
@@ -757,16 +772,16 @@
     // AI soạn cho một nhóm khách (1 lần hỏi ChatGPT). Trả về false nếu phải dừng (chưa đăng nhập ChatGPT).
     let aiBase = null;
     const aiPart1 = async (part, fresh) => {
-      if (!aiBase) { const base = await P.aiContext('').catch(() => ({ prices: [] })); aiBase = { base, shop: await aiShop({ shop: part[0].c.page?.name || '', ...(base.invoice?.shop ? base.invoice : {}) }) }; }
-      const { base, shop } = aiBase, items = [];
+      if (!aiBase) { const base = await P.aiContext('').catch(() => ({ prices: [] })); const shop = await aiShop({ shop: part[0].c.page?.name || '', ...(base.invoice?.shop ? base.invoice : {}) }); aiBase = { base, shop, pts: await priceTpls(shop) }; }
+      const { base, shop, pts } = aiBase, items = [];
       part.forEach(r => { r.res = '✨ AI đang soạn'; }); draw();
       for (const [k, r] of part.entries()) { const cx = await P.aiContext(r.c.key).catch(() => ({ orders: [], pending: [] }));
         items.push({ id: 'k' + (k + 1), name: r.c.other.name, orders: cx.orders || [], pending: cx.pending || [], msgs: await convTexts(r.c) }); }
-      const res = await window.metaDesktop.gptAsk({ fresh, prompt: massPrompt({ shop, bank: base.bank, prices: base.prices || [], mode: fMode.value, goal: goal.value, tpl: goal.value, items }) });
+      const res = await window.metaDesktop.gptAsk({ fresh, prompt: massPrompt({ shop, bank: base.bank, prices: base.prices || [], mode: fMode.value, goal: goal.value, tpl: goal.value, items, pts }) });
       if (res?.error === 'login') { toast('Chưa đăng nhập ChatGPT trong app: mở Studio AI để đăng nhập.', 7000); window.metaDesktop.gptLogin?.(); part.forEach(r => { r.res = ''; }); draw(); return false; }
       let got = {};
-      try { const t = String(res?.text || '').replace(/```(?:json)?/gi, ''), j = JSON.parse(t.slice(t.indexOf('{'), t.lastIndexOf('}') + 1)); for (const m of j.msgs || []) got[String(m.id)] = String(m.text || '').trim(); } catch {}
-      part.forEach((r, k) => { const t = got['k' + (k + 1)]; if (t) { r.text = fMode.value === 'rewrite' ? P.dukFill(t, { name: r.c.other.name, q: S.stages?.get(r.c.id)?.q }) : t; r.res = ''; } else r.res = '✗ AI chưa viết' + (res?.error ? ': ' + res.error : ''); });
+      try { const t = String(res?.text || '').replace(/```(?:json)?/gi, ''), j = JSON.parse(t.slice(t.indexOf('{'), t.lastIndexOf('}') + 1)); for (const m of j.msgs || []) got[String(m.id)] = { text: String(m.text || '').trim(), price: m.price ? String(m.price).trim() : null }; } catch {}
+      part.forEach((r, k) => { const g = got['k' + (k + 1)], t = g?.text; if (t) { r.text = fMode.value === 'rewrite' ? P.dukFill(t, { name: r.c.other.name, q: S.stages?.get(r.c.id)?.q }) : t; r.pt = pts.find(p => p.code === g.price) || null; r.res = ''; } else r.res = '✗ AI chưa viết' + (res?.error ? ': ' + res.error : ''); });
       draw(); return true;
     };
     // Lỗi (ChatGPT lỗi / quá giờ / trả sai dạng / thiếu khách): mở phiên ChatGPT mới rồi soạn lại phần còn thiếu, tối đa 2 lần, rồi tự đi tiếp.
@@ -803,9 +818,9 @@
       try {
         if (!App.inbox.openId(r.c.id)) throw new Error('không còn trong danh sách');
         for (let t = 0; t < 60 && !(S.conv?.id === r.c.id && S.draftReady); t++) await wait(250);
-        const ok = await App.inbox.compose({ key: r.c.key, text: r.text.trim(), autoSend: true });
+        const m = withPrice(r.text.trim(), r.pt, r.c), ok = await App.inbox.compose({ key: r.c.key, text: m.text, image: m.image, autoSend: true });
         if (ok !== true) throw new Error(ok);
-        r.res = '✓ Đã gửi'; sent.n[pk] = (sent.n[pk] || 0) + 1; await DB.set(MASS_SENT, sent); draw(); return 'sent';
+        r.res = '✓ Đã gửi' + (r.pt ? ' + bảng giá' : ''); sent.n[pk] = (sent.n[pk] || 0) + 1; await DB.set(MASS_SENT, sent); draw(); return 'sent';
       } catch (e) { r.res = '✗ ' + (e.message || e); draw(); return 'err'; }
     };
     const send = async () => {

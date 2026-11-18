@@ -642,3 +642,6 @@ body.teams .ib-ai-opt{background:transparent;border-color:var(--tm-compose-line)
 .ib-mass-text{width:100%;box-sizing:border-box;font:inherit;font-size:13px;resize:vertical;min-height:40px}
 .ib-mass .svc-bulk-scroll{max-height:46vh}
 .ib-mass .grow{flex:1}
+.ib-ai-pt{display:flex;flex-direction:column;gap:4px;max-height:220px;overflow:auto;border:1px solid var(--border,#8884);border-radius:6px;padding:6px}
+.ib-ai-pt-i{display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer}.ib-ai-pt-i .thumb{width:36px;height:36px;object-fit:cover;border-radius:4px}
+.ib-ai-ptnote{font-size:12px;color:var(--text-secondary);display:flex;align-items:center;gap:6px;margin-top:3px}
