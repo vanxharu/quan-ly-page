@@ -1033,12 +1033,10 @@
   function togglePin(id) { const s = pinSet(); if (s.has(id)) s.delete(id); else s.add(id); local.set('inboxPins', JSON.stringify([...s].slice(-50))); drawList(); }
   function secHead(k, arr, col) {
     const page = k.startsWith('p:') ? App.pageById?.(k.slice(2)) : null, n = arr.filter(c => c.unread_count).length;
-    const label = k === 'pin' ? 'Ghim' : k === 'zalo' ? 'Zalo cá nhân' : page?.name || 'Page';
+    const label = k === 'pin' ? 'Mục yêu thích' : k === 'zalo' ? 'Zalo cá nhân' : page?.name || 'Page';
     return h('button', { type: 'button', className: 'tm-sec', 'aria-expanded': String(!col), dataset: { sec: k }, title: col ? 'Mở nhóm' : 'Gập nhóm',
       onclick: () => { const s = collapsedSet(); if (s.has(k)) s.delete(k); else s.add(k); local.set('inboxCollapsed', JSON.stringify([...s])); drawList(); } },
-      h('span', { className: 'tm-caret', textContent: '▼' }),
-      k === 'pin' ? h('span', { textContent: '📌' }) : k === 'zalo' ? platLogo('zalo', 16) : App.pageAvatarUrl?.(page) ? h('img', { src: App.pageAvatarUrl(page), alt: '' }) : null,
-      h('span', { textContent: label }), n ? h('span', { className: 'tm-sec-n', textContent: `${n} chưa đọc` }) : null);
+      h('span', { className: 'tm-chev' }), h('span', { className: 'tm-sec-t', textContent: label }), n ? h('span', { className: 'tm-sec-n', textContent: String(n) }) : null);
   }
   async function drawList() {
     const st = await settings();
@@ -1069,8 +1067,8 @@
         const wait = c.fromCustomer ? (Date.now() - c.lastAt) / 60e3 : null;
         const labels = S.crm?.[c.key]?.labels || [];
         return h('div', { className: 'item' + (c.unread_count ? ' unread' : '') + (S.conv?.id === c.id ? ' active' : ''), dataset: { cid: c.id }, onclick: () => c.bs ? openBs(c) : openConv(c) },
-          h('button', { type: 'button', className: 'tm-pin' + (pins.has(c.id) ? ' on' : ''), title: pins.has(c.id) ? 'Bỏ ghim' : 'Ghim lên đầu danh sách', 'aria-label': pins.has(c.id) ? 'Bỏ ghim' : 'Ghim',
-            textContent: '📌', onclick: e => { e.stopPropagation(); togglePin(c.id); } }),
+          h('button', { type: 'button', className: 'tm-pin' + (pins.has(c.id) ? ' on' : ''), title: pins.has(c.id) ? 'Bỏ khỏi Mục yêu thích' : 'Thêm vào Mục yêu thích', 'aria-label': pins.has(c.id) ? 'Bỏ khỏi Mục yêu thích' : 'Thêm vào Mục yêu thích',
+            textContent: pins.has(c.id) ? '★' : '☆', onclick: e => { e.stopPropagation(); togglePin(c.id); } }),
           custAvatar(c),
           h('div', { className: 'body' },
             h('div', { className: 'top' }, h('span', { className: 'name', textContent: c.other.name || 'Khách' }),

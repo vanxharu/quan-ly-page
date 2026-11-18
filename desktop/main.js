@@ -153,7 +153,13 @@ app.whenReady().then(async () => {
   }
   catch (e) { console.error('Không nạp được Studio AI:', e); }
   // Một cửa sổ: trang web bên trái, Studio AI luôn nằm kế bên phải (thay cho bảng bên của Chrome).
-  mainWindow = new BaseWindow({ width: 1440, height: 880, icon: ICON, title: 'Get Helps' });
+  // Giao diện kiểu Teams (Windows): bỏ thanh tiêu đề của Windows; nút thu nhỏ / phóng to / đóng vẽ đè lên thanh trên 48px của trang
+  // (màu theo giao diện sáng / tối do trang báo qua 'title-bar'). Tắt được ở menu "…" › Thanh tiêu đề Windows (lưu ui.json).
+  const UI_FILE = path.join(app.getPath('userData'), 'ui.json');
+  let ui = {}; try { ui = JSON.parse(require('fs').readFileSync(UI_FILE, 'utf8')); } catch {}
+  const FRAMELESS = process.platform === 'win32' && !ui.nativeFrame, TB = FRAMELESS ? 48 : 0;
+  mainWindow = new BaseWindow({ width: 1440, height: 880, icon: ICON, title: 'Get Helps',
+    ...(FRAMELESS ? { titleBarStyle: 'hidden', titleBarOverlay: { color: '#0c1820', symbolColor: '#ffffff', height: TB }, backgroundColor: '#0c1820' } : {}) });
   // Ẩn thanh menu cho gọn (bấm Alt để hiện); các phím tắt Ctrl+Shift+A / Ctrl+Shift+M vẫn dùng được.
   mainWindow.setAutoHideMenuBar(true); mainWindow.setMenuBarVisibility(false);
   // Khung ẩn để đọc Business Suite: avatar + UID khách.
@@ -228,16 +234,22 @@ app.whenReady().then(async () => {
   const zaloSide = open => { if (open === zaloColOpen) return; zaloColOpen = open;
     if (open) { try { ZW().loadURL('about:blank'); } catch {} if (!/zalo\.me/.test(zaloView.webContents.getURL())) zaloView.webContents.loadURL('https://chat.zalo.me/').catch(() => {}); }
     else { setTimeout(() => { if (zaloColOpen) return; zaloView.webContents.loadURL('about:blank').catch(() => {}); ZW().loadURL('https://chat.zalo.me/').catch(() => {}); }, 400); } };
+  let padNow = null;
+  const padTitle = pad => { if (!FRAMELESS || padNow === pad) return; padNow = pad;
+    pageView.webContents.executeJavaScript(`document.documentElement.classList.add('frameless');document.documentElement.classList.toggle('tb-pad',${pad})`).catch(() => { padNow = null; }); };
+  pageView.webContents.on('dom-ready', () => { padNow = null; layout(); });
   const layout = () => {
     const { width, height } = mainWindow.getContentBounds();
     // Studio AI chỉ hiện khi đang ở nhóm Đăng bài.
     cur = side === 'studio' && (group !== 'publishing' || !studio) ? '' : side;
     const w = cur ? Math.round(Math.min(0.8, Math.max(0.2, widths[cur])) * width) : 0;
     pageView.setBounds({ x: 0, y: 0, width: width - w, height });
-    bar.setBounds(cur ? { x: width - w, y: 0, width: w, height: BAR } : { x: width, y: 0, width: 0, height: 0 });
+    // Cột phải nằm dưới hàng nút cửa sổ (TB); trang chính chừa chỗ cho các nút đó khi không có cột phải (lớp tb-pad).
+    bar.setBounds(cur ? { x: width - w, y: TB, width: w, height: BAR } : { x: width, y: 0, width: 0, height: 0 });
+    padTitle(!cur);
     // Zalo ẩn vẫn phải "đang hiện" với kích thước thật (Zalo Web chỉ vẽ dòng/tin đang thấy, khung 0×0 hay ngoài cửa sổ thì không chạy):
     // đặt nó NẰM DƯỚI trang chính (bị trang chính che kín); mở cột Zalo thì đưa lên trên cùng.
-    for (const [name, v] of [['studio', panelView], ['meta', metaView], ['zalo', zaloView], ['svc', svcView]]) v.setBounds(cur === name ? { x: width - w, y: BAR, width: w, height: height - BAR } : { x: width, y: 0, width: 0, height: 0 });
+    for (const [name, v] of [['studio', panelView], ['meta', metaView], ['zalo', zaloView], ['svc', svcView]]) v.setBounds(cur === name ? { x: width - w, y: TB + BAR, width: w, height: height - TB - BAR } : { x: width, y: 0, width: 0, height: 0 });
     zaloSide(cur === 'zalo');
     const title = cur === 'meta' ? 'Hộp thư Meta' : cur === 'studio' ? 'Studio AI' : cur === 'zalo' ? 'Zalo' : cur === 'svc' ? 'Dịch vụ' : '';
     if (title && bar.webContents.__title !== title) { bar.webContents.__title = title; bar.webContents.loadFile(path.join(__dirname, 'bar.html'), { query: { t: title } }); }
@@ -252,6 +264,14 @@ app.whenReady().then(async () => {
   pageView.webContents.loadURL(WEB, { extraHeaders: 'pragma: no-cache\ncache-control: no-cache\n' });
   if (studio) panelView.webContents.loadURL(`chrome-extension://${studio.id}/sidepanel.html?desktop=1`);
   const fromPage = e => e.sender === pageView.webContents;
+  // Màu hàng nút cửa sổ theo giao diện (sáng / tối) của trang.
+  ipcMain.on('title-bar', (e, o) => { if (!fromPage(e) || !FRAMELESS) return; const hex = v => /^#[0-9a-f]{6}$/i.test(String(v || '').trim()) ? String(v).trim() : null;
+    const color = hex(o?.color), symbolColor = hex(o?.symbol); if (!color) return;
+    try { mainWindow.setTitleBarOverlay({ color, symbolColor: symbolColor || '#ffffff', height: TB }); mainWindow.setBackgroundColor(color); } catch {} });
+  ipcMain.handle('ui-frame', (e, native) => { if (!fromPage(e)) return null;
+    if (native == null) return { frameless: FRAMELESS, canToggle: process.platform === 'win32' };
+    try { require('fs').writeFileSync(UI_FILE, JSON.stringify({ ...ui, nativeFrame: !!native })); } catch {}
+    app.relaunch(); app.exit(0); return true; });
   let dragFrom = null;
   ipcMain.on('side-bar', (e, name, x) => {
     if (e.sender !== bar.webContents || !cur) return;
