@@ -1712,6 +1712,8 @@
     return map;
   }
   // Thanh ghim trên ô nhập tin: đơn hiện tại của khách + đúng 1 nút cho bước tiếp theo.
+  const cancelBtn = q => h('button', { type: 'button', className: 'btn btn-sm btn-ghost ord-cancel', title: `Huỷ báo giá ${q.payCode} (để làm báo giá mới)`, 'aria-label': 'Huỷ báo giá', textContent: 'Huỷ',
+    onclick: () => cancelQuote(q, { fromInbox: true }) });
   function orderBar(st, hint) {
     if (!st) return null;
     const btn = (t, fn, cls = 'btn-primary') => h('button', { type: 'button', className: 'btn btn-sm ' + cls, textContent: t, onclick: fn });
@@ -1721,14 +1723,14 @@
       if (payHint) { const b = btn('✅ Đã nhận tiền', () => paymentDialog(q)); b.classList.add('ord-pulse');
         return h('div', { className: 'ord-bar pay hinted' }, h('span', { className: 'ord-main' }, platOfOrder(q) ? platBadge(platOfOrder(q), 16) : null, h('strong', { textContent: '#' + q.payCode }), ` · ${money(amountDue(q) || q.sell)} `,
           h('span', { className: 'ord-hint', textContent: hint.why === 'pic' ? '📷 Khách vừa gửi ảnh, có thể là chuyển khoản: kiểm tra tài khoản' : '💬 Khách báo đã chuyển khoản: kiểm tra tài khoản' })),
-          !q.sentAt ? btn('📤', () => invoiceDialog(q, 'quote'), 'btn-ghost') : null, b); }
+          !q.sentAt ? btn('📤', () => invoiceDialog(q, 'quote'), 'btn-ghost') : null, b, cancelBtn(q)); }
       const act = q.state === 'paid' ? btn('🚀 Tạo đơn', () => confirmCreate(q))
         : expired(q) ? btn('⏱ Gia hạn 24h', async () => { q.expiresAt = Date.now() + QUOTE_TTL; await saveQuote(q); App.tabs.services?.refresh?.(); }, 'btn-soft')
         : !q.sentAt ? btn('📤 Gửi báo giá', () => invoiceDialog(q, 'quote'))
         : btn('✅ Đã nhận tiền', () => paymentDialog(q));
-      return h('div', { className: 'ord-bar ' + st.kind }, h('span', { className: 'ord-main' }, platOfOrder(q) ? platBadge(platOfOrder(q), 16) : null, h('strong', { textContent: '#' + q.payCode }), ` · ${q.displayName} · `, h('strong', { textContent: money(amountDue(q) || q.sell) }),
+      return h('div', { className: 'ord-bar ' + st.kind }, h('span', { className: 'ord-main', title: q.displayName }, platOfOrder(q) ? platBadge(platOfOrder(q), 16) : null, h('strong', { textContent: '#' + q.payCode }), ` · ${quoteShort(q)} · `, h('strong', { textContent: money(amountDue(q) || q.sell) }),
         h('span', { className: 'ord-state', textContent: label + (q.state === 'quote' && q.sentAt && !expired(q) ? ' · đã gửi' : '') })),
-        q.state === 'quote' && q.sentAt && !expired(q) ? btn('📤', () => invoiceDialog(q, 'quote'), 'btn-ghost') : null, act); }
+        q.state === 'quote' && q.sentAt && !expired(q) ? btn('📤', () => invoiceDialog(q, 'quote'), 'btn-ghost') : null, act, cancelBtn(q)); }
     const os = st.orders, o = os[0], code = o.payCode || '', done = os.filter(x => x.svcStatus && /progress|processing/i.test(x.svcStatus)).length;
     return h('div', { className: 'ord-bar run' }, h('span', { className: 'ord-main' }, h('strong', { textContent: '#' + (o.providerOrderId || code) }), ` · ${os.length > 1 ? os.length + ' dịch vụ' : o.displayName || o.serviceName}`,
       h('span', { className: 'ord-state', textContent: os.length > 1 ? `Đang chạy${done ? ` · ${done}/${os.length} đã bắt đầu` : ''}` : progressLine(o) })),
@@ -1745,9 +1747,21 @@
       : h('button', { type: 'button', className: 'btn btn-primary btn-sm', textContent: '✅ Đã nhận tiền', onclick: () => paymentDialog(q) }),
     q.state === 'quote' ? h('button', { type: 'button', className: 'btn btn-ghost btn-sm', title: q.sentAt ? 'Đã gửi lúc ' + fmtTime(q.sentAt) : 'Gửi báo giá cho khách', textContent: q.sentAt ? '📤 Gửi lại' : '📤 Gửi', onclick: () => invoiceDialog(q, 'quote') }) : null,
     expired(q) ? h('button', { type: 'button', className: 'btn btn-ghost btn-sm', textContent: '⏱ Gia hạn 24h', onclick: async () => { q.expiresAt = Date.now() + QUOTE_TTL; await saveQuote(q); App.tabs.services?.refresh?.(); } }) : null,
-    h('button', { type: 'button', className: 'btn btn-ghost btn-sm', textContent: 'Huỷ', onclick: async () => {
-      if (!confirm(q.state === 'paid' || q.paidAmount ? `Huỷ báo giá ${q.payCode}? Khách đã chuyển ${money(q.paidAmount)}: nhớ hoàn tiền cho khách.` : `Huỷ báo giá ${q.payCode}?`)) return;
-      await dropQuote(q.id); if (q.customerKey) App.crm?.update?.(q.customerKey, { orderStatus: '' }).catch(() => {}); App.tabs.services?.refresh?.(); } }));
+    h('button', { type: 'button', className: 'btn btn-ghost btn-sm', textContent: 'Huỷ', onclick: () => cancelQuote(q) }));
+  // Huỷ báo giá (chưa tạo đơn Baostar). Từ Hộp thư: hỏi mở lại hộp tạo đơn với đúng các link đó để làm báo giá mới.
+  async function cancelQuote(q, { fromInbox = false } = {}) {
+    const links = [...new Set(linesOf(q).map(l => l.link || q.link).filter(Boolean))];
+    if (!confirm(q.state === 'paid' || q.paidAmount ? `Huỷ báo giá ${q.payCode}? Khách đã chuyển ${money(q.paidAmount)}: nhớ hoàn tiền cho khách.` : `Huỷ báo giá ${q.payCode} (${money(q.sell)})?`)) return false;
+    await dropQuote(q.id); orderedCache = null;
+    if (q.customerKey) App.crm?.update?.(q.customerKey, { orderStatus: '' }).catch(() => {});
+    App.tabs.services?.refresh?.(); App.inbox?.orderChanged?.();
+    if (fromInbox && links.length && App.inbox?.reopenBulk && confirm(`Đã huỷ báo giá ${q.payCode}.\n\nMở hộp tạo đơn với ${links.length} link này để làm báo giá mới?`)) App.inbox.reopenBulk(links);
+    else toast(`Đã huỷ báo giá ${q.payCode}.`, 4000);
+    return true;
+  }
+  // Tên ngắn của báo giá trên thanh trạng thái: nhiều link → "14 link · gói · 50 like + 50 love/link".
+  const quoteShort = q => { if (!multi(q)) return q.displayName; const { groups, same } = linkGroups(q);
+    return groups.length === 1 ? `${groups[0].pk} · ${groups[0].what}` : same ? `${groups.length} link · ${groups[0].pk} · ${groups[0].what}/link` : `${groups.length} link`; };
   // ── VIP / dịch vụ có hạn: nhắc gia hạn (1 ngày trước + ngày hết hạn) ──
   const DAY = 864e5, startOfDay = t => { const d = new Date(t); d.setHours(0, 0, 0, 0); return d.getTime(); };
   const vipDue = o => o.source === 'service' && o.vipEnd && !o.renewedBy && !o.renewDismissed && o.status !== 'cancelled';

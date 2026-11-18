@@ -550,6 +550,9 @@
         : h('span', { className: 'hint', textContent: 'hoặc tích từng link trong tin' }));
   }
   App.inbox.bulkDone = () => { S.pickLinks.clear(); syncTicks(); drawBulk(); };
+  // Huỷ báo giá trên thanh trạng thái → mở lại hộp tạo đơn với đúng các link đó (1 link: hộp Tạo đơn thường).
+  App.inbox.reopenBulk = links => { const c = S.conv; if (!c) return; const ctx = { page: c.page, key: c.key, name: c.other.name || '', messages: S.messages };
+    if (links.length > 1) App.services.bulkDialog(ctx, links); else App.services.createDialog({ ...ctx, dock: true }, links[0]); };
   // ── Cảm xúc + trả lời trích dẫn (Business Suite và Zalo) ──
   const EMO = ['👍', '❤️', '😆', '😮', '😢', '😡'];
   const canAct = (c, m) => !!(c.bs && m.mid && window.metaDesktop?.reactThread);
