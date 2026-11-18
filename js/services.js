@@ -1599,7 +1599,7 @@
         if (FINAL.test(next.svcStatus) && !o.completedAt && next.status === 'done') next.completedAt = Date.now();
         // Gợi ý nhắn khách theo bước đơn (mỗi bước 1 lần / đơn; đơn nhiều dịch vụ cùng mã TT gộp 1 tin hoàn thành).
         const nd = { ...(o.nudged || {}) }, ref = o.payCode && o.groupSize > 1 ? 'pc:' + o.payCode : o.id, d = doneOf(next), q = qtyOf(o);
-        if (o.customerKey) {
+        if (o.customerKey && !o.warrantyFor) { // đơn bù bảo hành: không gợi ý từng bước (lượt bảo hành có tin "đã bảo hành xong" riêng)
           if (/in progress|processing/i.test(next.svcStatus || '') && !nd.start) { nd.start = Date.now(); nudgeQ.push([o.customerKey, 'start', ref]); }
           if (d != null && q && d >= q / 2 && next.status !== 'done' && !nd.half) { nd.half = Date.now(); nudgeQ.push([o.customerKey, 'half', ref]); }
           if (next.status === 'done' && /completed/i.test(next.svcStatus || '') && !nd.done) { nd.done = Date.now(); nd.half ||= 1; nudgeQ.push([o.customerKey, 'done', ref]); }
@@ -1615,11 +1615,11 @@
   setInterval(async () => { try {
       // Hỏi thăm 1 ngày sau hoàn thành (đơn hoàn thành trong 3 ngày gần đây, chưa hỏi).
       const os = await DB.get(ORDERS, []); let ch = false;
-      for (const o of os) if (o.source === 'service' && o.customerKey && o.completedAt && o.status === 'done' && Date.now() - o.completedAt > 864e5 && Date.now() - o.completedAt < 3 * 864e5 && !o.nudged?.follow) {
+      for (const o of os) if (o.source === 'service' && o.customerKey && !o.warrantyFor && o.completedAt && o.status === 'done' && Date.now() - o.completedAt > 864e5 && Date.now() - o.completedAt < 3 * 864e5 && !o.nudged?.follow) {
         o.nudged = { ...(o.nudged || {}), follow: Date.now() }; ch = true; nudgeQ.push([o.customerKey, 'follow', o.payCode && o.groupSize > 1 ? 'pc:' + o.payCode : o.id]); }
       if (ch) { await DB.set(ORDERS, os); await flushNudges(); }
     } catch {}
-    try { if (!(await settings()).apiKey) return; const a = await refreshStatus().catch(() => 0), b = await refreshRefills(); if ((a || b) && App.current() === 'services') App.tabs.services.refresh(); } catch {} }, 3 * 60e3);
+    try { if (!(await settings()).apiKey) return; const a = await refreshStatus().catch(() => 0), b = await refreshRefills(); await checkWarranty().catch(() => 0); if ((a || b) && App.current() === 'services') App.tabs.services.refresh(); } catch {} }, 3 * 60e3);
 
   // ── Hộp thư: link khách gửi + nút tạo đơn ── (gắn dưới khung CRM của hội thoại)
   function inboxBox(ctx) {
@@ -1631,7 +1631,10 @@
         ...vips.map(o => h('div', { className: 'row', style: 'gap:6px;flex-wrap:wrap;align-items:center' }, h('strong', { textContent: '🔔 ' + (o.displayName || o.serviceName) }),
           h('span', { className: 'status svc-pill ' + (daysLeft(o) <= 1 ? 'err' : 'pending'), textContent: leftText(o) }), vipActions(o, qs)))); });
     // Nút tạo đơn + link khách gửi đã chuyển vào nút "🧾 Tạo đơn" (khung bên phải); ở đây chỉ còn báo giá / dịch vụ sắp hết hạn của khách.
-    return h('div', { className: 'svc-inbox' }, qBox);
+    const wBtn = h('div', { className: 'svc-inbox-warr', hidden: true });
+    if (ctx.key) warrGroups(ctx.key).then(gs => { if (!gs.length) return; wBtn.hidden = false;
+      wBtn.replaceChildren(h('button', { type: 'button', className: 'btn btn-soft btn-sm', textContent: `🛡 Bảo hành (${gs.filter(g => g.ok).length}/${gs.length} link còn bảo hành)`, onclick: () => warrantyDialog(ctx) })); }).catch(() => {});
+    return h('div', { className: 'svc-inbox' }, wBtn, qBox);
   }
 
   // ── Trạng thái đơn của từng khách (Hộp thư): báo giá chờ thanh toán / đã thu chưa tạo đơn / đơn đang chạy ──
@@ -1639,7 +1642,7 @@
   // ── Gợi ý nhắn khách (bấm 1 lần): đơn bắt đầu chạy · đạt 50% · khách hỏi tiến độ · hoàn thành (+ ảnh phiếu, cảm ơn)
   //    · đã nhận tiền (cảm ơn) · 1 ngày sau hoàn thành (hỏi thăm). Hiện trên ô soạn tin của khách đó trong Hộp thư.
   const NUDGES = 'svcNudgesV1';
-  const NUDGE_TITLE = { start: '🚀 Báo đơn bắt đầu chạy', half: '📊 Báo đơn đã lên 50%', ask: '💬 Khách hỏi tiến độ', done: '✅ Báo hoàn thành + cảm ơn', paid: '🙏 Cảm ơn đã thanh toán', follow: '❤️ Hỏi thăm sau 1 ngày' };
+  const NUDGE_TITLE = { wdone: '🛡 Báo khách đã bảo hành xong', start: '🚀 Báo đơn bắt đầu chạy', half: '📊 Báo đơn đã lên 50%', ask: '💬 Khách hỏi tiến độ', done: '✅ Báo hoàn thành + cảm ơn', paid: '🙏 Cảm ơn đã thanh toán', follow: '❤️ Hỏi thăm sau 1 ngày' };
   const nudges = () => DB.get(NUDGES, []).catch(() => []);
   async function addNudge(key, kind, ref, uniq = '') {
     if (!key) return;
@@ -1655,6 +1658,11 @@
   const doneOf = o => o.startCount != null && o.remains != null ? Math.max(0, qtyOf(o) - num(o.remains)) : null;
   // Nội dung tin: viết lúc hiện (luôn lấy số mới nhất của đơn).
   async function nudgeText(n, withImage = false) {
+    if (n.kind === 'wdone') { const b = (await warrBatches()).find(x => 'wb:' + x.id === n.ref); if (!b) return null;
+      const text = ['✅ ĐÃ BẢO HÀNH XONG', `Dạ shop đã bảo hành xong ${b.items.length} link cho mình rồi ạ:`, ...b.items.map((it, i) => `   ${i + 1}. ${shortLink(it.link)} · ✓`), '', 'Mình kiểm tra lại giúp em nha, có gì cần hỗ trợ cứ nhắn em ạ 🙏'].join('\n');
+      if (!withImage) return { text, hasImage: true, image: '' };
+      const g = await snapGrid(b.items.map(it => ({ link: it.link, name: it.name })), '✅ Đã bảo hành xong').catch(() => null);
+      return { text, hasImage: true, image: g?.dataUrl || '' }; }
     const orders = await DB.get(ORDERS, []), group = n.ref && String(n.ref).startsWith('pc:') ? orders.filter(o => o.payCode === String(n.ref).slice(3)) : orders.filter(o => o.id === n.ref);
     const o = group[0], qs = n.kind === 'paid' ? (await quotes()).find(q => q.id === n.ref) : null;
     if (n.kind === 'paid') return qs ? { text: `Dạ em đã nhận được ${money(qs.paidAmount || qs.sell)} của mình rồi ạ 🙏 Cảm ơn mình đã tin tưởng shop! Em lên đơn ${shortSvc(qs)} cho mình ngay đây ạ.` } : null;
@@ -2144,5 +2152,200 @@
     if (s.apiKey) drawPrices(); else priceBox.replaceChildren(h('p', { className: 'hint', textContent: 'Nhập API key rồi Lưu để tải danh sách dịch vụ.' }));
     drawPkgs(); drawInvoiceSettings(s); drawIcons();
   }
-  App.services = { splitLinks, bulkDialog, orderedLinks, linkKey, nudgeCard, askCheck, platBadge, linkPlatform: l => LINK_PLAT[platformOf(l)] || '', createDialog, closeDock, orderStates, orderBar, inboxBox, refreshStatus, linksIn, call, openWeb, mapStatus, catalogProgress, noteLines, speedOf, invoiceDialog, invoiceText, paymentDialog, confirmCreate, quotes, renewQuote, vipTick, termOf, requestRefill, refreshRefills };
+  // ══ Bảo hành khi khách báo tụt ══
+  // Thời hạn theo máy chủ Baostar: tên ghi "Bảo hành 30 ngày" / "BH 7 ngày" / "BH 1 tháng"; có cờ refill mà không ghi số → 30 ngày.
+  // Bảo hành được khi: đơn đã xong, còn hạn (tính từ lúc xong), đã qua 24 giờ (Baostar thường chỉ nhận refill sau 24 giờ), không có yêu cầu bảo hành đang chạy.
+  // Cách bù: refill Baostar; máy chủ không bảo hành / hết hạn / bị từ chối → bạn chọn tạo đơn bù miễn phí (khách không trả, tiền gốc tính là chi phí).
+  const WARR = 'svcWarrantyV1', warrBatches = () => DB.get(WARR, []).catch(() => []);
+  const COMPLAIN = /tụt|tuột|giảm|bị mất|mất (like|follow|tim|view|mem|lượt|sub)|rơi|rớt|hụt|không còn đủ|bảo hành|\bbh\b/i;
+  const warrDays = (o, svc) => { const name = `${o.serviceName || ''} ${svc?.name || ''}`;
+    if (/không bảo hành|\bkbh\b/i.test(name)) return 0;
+    const m = name.match(/(?:bảo hành|\bbh)\s*(\d+)\s*(ngày|tháng|năm|d|m)?/i);
+    if (m) return Number(m[1]) * (/tháng|^m$/i.test(m[2] || '') ? 30 : /năm/i.test(m[2] || '') ? 365 : 1);
+    return o.refillable || svc?.refill ? 30 : 0; };
+  const doneAt = o => o.completedAt || (o.status === 'done' ? o.updatedAt || o.at : 0);
+  function warrState(o, svc) {
+    if (o.status === 'cancelled') return { ok: false, code: 'cancel', text: 'Đơn đã huỷ' };
+    const days = warrDays(o, svc), last = o.refills?.[o.refills.length - 1];
+    if (last && !REFILL_DONE.test(last.status || '')) return { ok: false, code: 'running', text: `Đang bảo hành (${refillVi(last.status)})` };
+    if (!days) return { ok: false, code: 'none', text: 'Máy chủ không bảo hành', bu: true };
+    const t = doneAt(o);
+    if (!t) return { ok: false, code: 'notdone', text: 'Đơn chưa chạy xong', bu: false };
+    const end = t + days * 864e5;
+    if (Date.now() > end) return { ok: false, code: 'expired', text: `Hết hạn bảo hành (${fmtTime(end).split(' ').pop()})`, bu: true };
+    if (Date.now() - t < 864e5) return { ok: false, code: 'wait', text: `Chưa đủ 24 giờ (còn ${Math.ceil((t + 864e5 - Date.now()) / 36e5)} giờ)`, bu: true };
+    return { ok: true, code: 'ok', text: `Còn ${Math.ceil((end - Date.now()) / 864e5)} ngày bảo hành`, days };
+  }
+  // Đơn dịch vụ của khách, gộp theo link (90 ngày gần đây, không tính đơn bù).
+  async function warrGroups(key) {
+    if (!key) return [];
+    let list = []; try { list = await services(); } catch {}
+    const since = Date.now() - 90 * 864e5, by = new Map();
+    for (const o of (await DB.get(ORDERS, [])).filter(o => o.source === 'service' && o.customerKey === key && o.at > since && !o.warrantyFor && o.link).sort((a, b) => b.at - a.at)) {
+      const k = linkKey(o.link); if (!by.has(k)) by.set(k, { link: o.link, orders: [] }); by.get(k).orders.push(o); }
+    return [...by.values()].map(g => { const st = g.orders.map(o => warrState(o, list.find(x => x.id === String(o.serviceId))));
+      return { ...g, st, ok: st.some(s => s.ok), allOk: st.every(s => s.ok || s.code === 'cancel'), canBu: st.some(s => s.bu), when: Math.max(...g.orders.map(o => o.at)) }; });
+  }
+  // Hộp thư: khách nhắn "tụt / giảm / bảo hành…" và có đơn dịch vụ → thanh "🛡 Khách báo tụt".
+  async function complaintInfo(key, messages) {
+    const said = (messages || []).filter(m => m.isCustomer || m.mine === false).slice(-5).map(m => String(m.text || ''));
+    if (!said.some(t => COMPLAIN.test(t))) return null;
+    if ((await warrBatches()).some(b => b.key === key && Date.now() - b.at < 864e5)) return null; // vừa bảo hành trong 24 giờ: không nhắc lại
+    const groups = await warrGroups(key); if (!groups.length) return null;
+    return { groups, ok: groups.filter(g => g.ok).length, said: said.find(t => COMPLAIN.test(t)) };
+  }
+  // Ảnh bằng chứng: chụp trang của từng link (tối đa 4), ghi số hiện tại (like / follow / view…) và giờ chụp.
+  async function snapGrid(items, title) {
+    if (!window.metaDesktop?.svcSnap) return { dataUrl: '', lines: [] };
+    const shots = [], lines = [];
+    for (const it of items.slice(0, 4)) { const r = await window.metaDesktop.svcSnap({ url: it.link }).catch(() => null);
+      const key = metricOf(it.name || ''), v = r?.metrics && key && Number.isFinite(r.metrics[key]) ? r.metrics[key] : null;
+      lines.push(v != null ? `${shortLink(it.link)}: hiện ${v.toLocaleString('vi-VN')} ${LABEL[key] || ''}` : '');
+      if (r?.dataUrl) { const img = await loadImg(r.dataUrl); if (img) shots.push({ img, cap: `${shortLink(it.link)}${v != null ? ` · ${v.toLocaleString('vi-VN')} ${LABEL[key] || ''}` : ''}` }); } }
+    if (!shots.length) return { dataUrl: '', lines };
+    const W = 760, P = 24, cols = shots.length > 1 ? 2 : 1, cw = (W - P * (cols + 1)) / cols;
+    const rows = []; for (let i = 0; i < shots.length; i += cols) rows.push(shots.slice(i, i + cols));
+    const rh = rows.map(r => Math.max(...r.map(s => s.img.height * cw / s.img.width)) + 34);
+    const c = document.createElement('canvas'), x = c.getContext('2d'); c.width = W * 2; c.height = (70 + rh.reduce((a, b) => a + b + P, 0) + P) * 2; x.scale(2, 2);
+    x.fillStyle = '#f5f3ff'; x.fillRect(0, 0, W, c.height / 2);
+    x.fillStyle = '#4f46e5'; x.font = '800 20px "Segoe UI",Arial,sans-serif'; x.fillText(title, P, 38);
+    x.fillStyle = '#6b7280'; x.font = '600 13px "Segoe UI",Arial,sans-serif'; x.fillText(`Ảnh thực tế lúc ${new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })} ${new Date().toLocaleDateString('vi-VN')}`, P, 58);
+    let y = 70;
+    rows.forEach((r, ri) => { r.forEach((s, ci) => { const xx = P + ci * (cw + P), hh = s.img.height * cw / s.img.width;
+      x.fillStyle = '#111827'; x.font = '700 12px "Segoe UI",Arial,sans-serif'; x.fillText(s.cap.length > 70 ? s.cap.slice(0, 69) + '…' : s.cap, xx, y + 16);
+      x.save(); x.beginPath(); x.roundRect(xx, y + 24, cw, hh, 10); x.clip(); x.drawImage(s.img, xx, y + 24, cw, hh); x.restore(); });
+      y += rh[ri] + P; });
+    return { dataUrl: c.toDataURL('image/jpeg', .88), lines };
+  }
+  // Khung gửi khách (chữ sửa được + ảnh) dùng cho tin bảo hành.
+  function sendDialog({ title, key, text, image = '', makeImage = null }) {
+    const dlg = h('dialog', { className: 'svc-dialog svc-invoice', onclose: () => dlg.remove() });
+    const ta = h('textarea', { rows: 11, value: text }), img = h('img', { alt: '', className: 'svc-inv-img', hidden: !image, src: image || '' }), hint = h('div', { className: 'hint' });
+    const withImg = h('input', { type: 'checkbox', checked: true }); let pic = image;
+    if (makeImage) { hint.textContent = '📸 Đang chụp ảnh thực tế các link…'; makeImage().then(r => { if (r?.dataUrl) { pic = r.dataUrl; img.src = pic; img.hidden = false; hint.textContent = ''; } else hint.textContent = '📸 Không chụp được ảnh thực tế, gửi chữ thôi.'; }).catch(() => { hint.textContent = '📸 Không chụp được ảnh.'; }); }
+    const canSend = key && App.inbox?.openKey?.() === key;
+    const send = h('button', { type: 'button', className: 'btn btn-primary', textContent: '📨 Gửi vào hội thoại', disabled: !canSend, title: canSend ? '' : 'Mở hội thoại của khách này trong Hộp thư để gửi thẳng',
+      onclick: async () => { send.disabled = true; const ok = await App.inbox.compose({ key, text: ta.value.trim(), image: withImg.checked ? pic : '' });
+        if (ok === true) { toast('Đã gửi vào hội thoại.'); dlg.close(); } else { send.disabled = false; toast('Chưa gửi được: ' + (typeof ok === 'string' ? ok : 'hội thoại không còn mở.'), 7000); } } });
+    dlg.append(h('div', { className: 'card-head' }, h('h3', { className: 'card-title', textContent: title }), h('button', { type: 'button', className: 'icon-btn', 'aria-label': 'Đóng', textContent: '×', onclick: () => dlg.close() })),
+      h('div', { className: 'svc-inv-grid' }, h('div', { className: 'field' }, 'Tin nhắn (sửa được)', ta, h('label', { className: 'row', style: 'gap:6px;font-weight:500' }, withImg, 'Gửi kèm ảnh thực tế')), h('div', {}, img, hint)),
+      h('div', { className: 'row', style: 'gap:8px;justify-content:flex-end;flex-wrap:wrap' },
+        h('button', { type: 'button', className: 'btn btn-ghost', textContent: '📋 Copy chữ', onclick: () => navigator.clipboard.writeText(ta.value).then(() => toast('Đã copy.')) }), send));
+    document.body.append(dlg); dlg.showModal();
+  }
+  // Hộp bảo hành: mỗi link 1 dòng (các đơn cùng link, kể cả từng cảm xúc), kiểm tra hạn, chọn Refill / Đơn bù, chạy hàng loạt có tiến độ.
+  async function warrantyDialog(ctx = {}) {
+    let list = []; try { list = await services(); } catch (e) { return toast(e.message, 7000); }
+    const groups = await warrGroups(ctx.key);
+    if (!groups.length) return toast('Khách này chưa có đơn dịch vụ nào trong 90 ngày.', 5000);
+    // Link khách nhắc trong tin báo tụt (5 tin gần nhất có chữ "tụt / giảm / bảo hành…") → tích sẵn; không có thì tích các link còn bảo hành.
+    const said = new Set(linksIn((ctx.messages || []).filter(m => m.isCustomer || m.mine === false).slice(-5).filter(m => COMPLAIN.test(m.text || ''))).map(linkKey));
+    const anySaid = groups.some(g => said.has(linkKey(g.link)));
+    const rows = groups.map(g => { const q = sumOf(g.orders, 'qty') || g.orders.reduce((t, o) => t + qtyOf(o), 0);
+      return { g, on: anySaid ? said.has(linkKey(g.link)) && (g.ok || g.canBu) : g.ok, mode: g.allOk ? 'refill' : g.canBu ? 'bu' : 'refill', bu: Math.max(10, Math.ceil(q * 0.1 / 10) * 10), res: '', cls: '' }; });
+    const dlg = h('dialog', { className: 'svc-dialog svc-bulk', onclose: () => dlg.remove() });
+    const body = h('tbody'), prog = h('div', { className: 'svc-prog', hidden: true }), sum = h('div', { className: 'svc-sum' }), err = h('div', { className: 'status err', hidden: true });
+    const snapIn = h('input', { type: 'checkbox', checked: !!window.metaDesktop?.svcSnap, disabled: !window.metaDesktop?.svcSnap });
+    let busy = false, run = null;
+    const what = g => g.orders.map(o => `${qtyOf(o).toLocaleString('vi-VN')}${o.reaction || /\((like|love|care|haha|wow|sad|angry)\)/i.test(o.displayName || '') ? ' ' + (String(o.displayName).match(/\((\w+)\)\s*$/)?.[1] || '').toLowerCase() : ''}`).join(' + ');
+    const draw = () => {
+      body.replaceChildren(...rows.map(r => { const g = r.g, o0 = g.orders[0], plat = LINK_PLAT[platformOf(g.link)] || '';
+        const chip = r.res ? h('span', { className: 'status ' + r.cls, textContent: r.res }) : h('div', {}, ...g.st.map((s, i) => h('div', { className: 'hint' + (s.ok ? ' pos' : s.code === 'cancel' ? '' : ' neg'), textContent: (g.orders.length > 1 ? `#${g.orders[i].providerOrderId}: ` : '') + (s.ok ? '✓ ' : '✗ ') + s.text })));
+        return h('tr', { className: r.on ? '' : 'off' },
+          h('td', {}, h('input', { type: 'checkbox', checked: r.on, disabled: busy, onchange: e => { r.on = e.target.checked; draw(); } })),
+          h('td', { className: 'svc-bulk-link' }, plat ? platBadge(plat, 18) : null, h('span', { className: 'svc-w-link' }, h('a', { href: g.link, target: '_blank', rel: 'noopener', textContent: shortLink(g.link) }),
+            h('small', { className: 'hint', textContent: `${String(o0.displayName || o0.serviceName).replace(/\s*\((\w+)\)\s*$/, '')} · ${what(g)} · ${fmtTime(g.when)}${said.has(linkKey(g.link)) ? ' · khách vừa gửi link này' : ''}` }))),
+          h('td', {}, chip),
+          h('td', {}, h('select', { disabled: busy, onchange: e => { r.mode = e.target.value; draw(); } },
+            h('option', { value: 'refill', selected: r.mode === 'refill', disabled: !g.ok, textContent: '🛡 Refill Baostar' + (g.ok ? '' : ' (không được)') }),
+            h('option', { value: 'bu', selected: r.mode === 'bu', textContent: '🎁 Đơn bù miễn phí' })),
+            r.mode === 'bu' ? h('label', { className: 'row', style: 'gap:6px;margin-top:4px;font-size:12px' }, 'Số bù', h('input', { type: 'number', min: 1, step: 1, value: r.bu, style: 'width:90px', disabled: busy, onchange: e => { r.bu = Math.max(1, Number(e.target.value) || 0); draw(); } })) : null,
+            r.mode === 'bu' ? h('div', { className: 'hint', textContent: `Gốc ≈ ${money(buCost(r))} (tính chi phí bảo hành)` }) : null));
+      }));
+      const on = rows.filter(r => r.on), nR = on.filter(r => r.mode === 'refill' && r.g.ok).length, nB = on.filter(r => r.mode === 'bu').length;
+      sum.replaceChildren(h('span', {}, h('strong', { textContent: String(on.length) }), ' link'), nR ? h('span', {}, `🛡 ${nR} refill`) : null, nB ? h('span', {}, `🎁 ${nB} đơn bù · gốc ≈ ${money(on.filter(r => r.mode === 'bu').reduce((t, r) => t + buCost(r), 0))}`) : null);
+      go.disabled = busy || !on.some(r => r.mode === 'bu' || r.g.ok); go.textContent = busy ? 'Đang gửi bảo hành…' : `Bảo hành ${on.length} link`;
+      prog.hidden = !run; if (run) prog.replaceChildren(h('div', { className: 'svc-prog-top' }, h('strong', { textContent: run.cur ? `Đang xử lý ${Math.min(run.done + 1, run.total)}/${run.total}…` : `Xong: ${run.ok}/${run.total} link` }),
+        h('span', {}, h('span', { className: 'pos', textContent: `✓ ${run.ok}` }), run.fail ? h('span', { className: 'neg', textContent: ` · ✗ ${run.fail} lỗi` }) : null)),
+        h('div', { className: 'svc-prog-bar' }, h('span', { style: `width:${Math.round(run.done / run.total * 100)}%`, className: run.fail ? 'warn' : '' })), run.last ? h('div', { className: 'hint', textContent: run.last }) : null);
+    };
+    // Đơn bù: chia số bù cho các đơn của link theo tỷ lệ số lượng (vd like + love), mỗi phần ≥ mức tối thiểu của máy chủ.
+    const buParts = r => { const os = r.g.orders.filter(o => o.status !== 'cancelled'), Q = os.reduce((t, o) => t + qtyOf(o), 0) || 1;
+      return os.map(o => { const x = list.find(y => y.id === String(o.serviceId)); return [o, x, Math.max(x?.min || 1, Math.round(r.bu * qtyOf(o) / Q))]; }).filter(([, x]) => x); };
+    const buCost = r => buParts(r).reduce((t, [, x, k]) => t + estCost(x, k), 0);
+    const go = h('button', { type: 'button', className: 'btn btn-primary', onclick: async () => {
+      const todo = rows.filter(r => r.on && (r.mode === 'bu' || r.g.ok)); if (!todo.length) return;
+      if (!confirm(`Bảo hành ${todo.length} link?\n\n${todo.map((r, i) => `${i + 1}. ${shortLink(r.g.link)} · ${r.mode === 'bu' ? `đơn bù ${r.bu.toLocaleString('vi-VN')}` : 'refill Baostar'}`).join('\n')}`)) return;
+      busy = true; err.hidden = true; run = { total: todo.length, done: 0, ok: 0, fail: 0, cur: '', last: '' }; draw();
+      const batch = { id: uid('wb'), at: Date.now(), key: ctx.key || '', name: ctx.name || '', pageKey: ctx.page?.id || '', items: [], done: false };
+      for (const r of todo) {
+        run.cur = r.g.link; draw();
+        const item = { link: r.g.link, name: r.g.orders[0].displayName || r.g.orders[0].serviceName || '', mode: r.mode, refill: [], bu: [], qty: r.mode === 'bu' ? r.bu : 0 };
+        try {
+          if (r.mode === 'refill') {
+            // Mỗi đơn của link (vd like + love) gửi riêng, lưu ngay; đơn nào Baostar từ chối thì ghi lại, không làm hỏng các đơn khác.
+            const fails = [], tried = r.g.orders.filter(o => o.status !== 'cancelled' && warrState(o, list.find(x => x.id === String(o.serviceId))).ok);
+            for (const o of tried) {
+              try { const res = await call('refill', { order: Number(o.providerOrderId) }); const id = String(res?.refill ?? res?.id ?? res?.refill_id ?? '');
+                if (!id || id === '0' || res?.error) throw Error(res?.error || 'Baostar không nhận bảo hành');
+                const all = await DB.get(ORDERS, []), x = all.find(y => y.id === o.id); if (x) { x.refills = [...(x.refills || []), { id, at: Date.now(), status: 'Pending', batch: batch.id }]; await DB.set(ORDERS, all); }
+                item.refill.push(o.id); }
+              catch (e1) { fails.push(`#${o.providerOrderId}: ${e1.message}`); } }
+            if (!item.refill.length) throw Error(fails.join(' · ') || 'Không có đơn nào bảo hành được');
+            r.res = fails.length ? `🛡 Đã gửi refill ${item.refill.length}/${tried.length} · lỗi ${fails.join(' · ')}` : '🛡 Đã gửi refill'; r.cls = fails.length ? 'pending' : 'ok';
+            if (fails.length) item.note = `${item.refill.length}/${tried.length} đơn`;
+          } else {
+            for (const [o, x, k] of buParts(r)) {
+              const res = await call('add', { service: Number(x.id), link: o.link, quantity: k }); const oid = res?.order ?? res?.order_id ?? res?.id;
+              if (!oid) throw Error(res?.error || 'Web dịch vụ không trả mã đơn.');
+              const cost = estCost(x, k);
+              const bo = { id: uid('ord'), at: Date.now(), updatedAt: Date.now(), source: 'service', provider: new URL((await settings()).apiUrl).hostname, providerOrderId: String(oid), payCode: '',
+                warrantyFor: o.id, warrantyBatch: batch.id, serviceId: x.id, serviceName: x.name, displayName: '🛡 Bù bảo hành · ' + (o.displayName || o.serviceName || ''), packageId: '', link: o.link,
+                customerKey: o.customerKey, pageKey: o.pageKey, pageName: o.pageName, pageAvatar: o.pageAvatar, customer: o.customer || { name: ctx.name || '' },
+                items: [{ name: 'Bù bảo hành', qty: k, price: 0, cost: cost / k }], costManual: false, discount: 0, shipFee: 0, shipCost: 0, status: 'new', svcStatus: 'Pending', paidAmount: 0,
+                note: `Đơn bù bảo hành cho #${o.providerOrderId} (khách không trả tiền; tiền gốc là chi phí bảo hành)` };
+              await DB.set(ORDERS, [...await DB.get(ORDERS, []), bo]); item.bu.push(bo.id); }
+            r.res = `🎁 Đã tạo đơn bù ${r.bu.toLocaleString('vi-VN')}`; r.cls = 'ok';
+          }
+          run.ok++; run.last = `✓ ${shortLink(r.g.link)}: ${r.res.replace(/^\S+ /, '')}`; batch.items.push(item);
+        } catch (e) { r.res = '✗ ' + e.message; r.cls = 'err'; run.fail++; run.last = `✗ ${shortLink(r.g.link)}: ${e.message}`; if (item.refill.length || item.bu.length) batch.items.push(item); }
+        run.done++; draw();
+      }
+      run.cur = ''; busy = false;
+      if (batch.items.length) { await DB.set(WARR, [...(await warrBatches()).filter(b => Date.now() - b.at < 60 * 864e5), batch]); App.tabs.services?.refresh?.(); App.inbox?.orderChanged?.(); }
+      draw();
+      if (!batch.items.length) { err.textContent = 'Chưa bảo hành được link nào (lỗi ghi ở từng dòng). Đổi sang Đơn bù miễn phí hoặc thử lại sau.'; err.hidden = false; return; }
+      // Tin "đã nhận bảo hành" + ảnh số hiện tại của các link.
+      const text = ['🛡 BẢO HÀNH ĐƠN HÀNG', `Dạ shop đã nhận bảo hành ${batch.items.length} link cho mình ạ:`,
+        ...batch.items.map((it, i) => `   ${i + 1}. ${shortLink(it.link)} · ${it.mode === 'bu' ? `bù thêm ${it.qty.toLocaleString('vi-VN')}` : 'đã gửi bảo hành'}`),
+        '', '⏳ Hệ thống bù trong 24–72 giờ, xong em báo mình ngay ạ 🙏'].join('\n');
+      await new Promise(r => setTimeout(r, 900)); dlg.close();
+      sendDialog({ title: '🛡 Báo khách đã nhận bảo hành', key: ctx.key, text,
+        makeImage: snapIn.checked ? () => snapGrid(batch.items.map(it => ({ link: it.link, name: it.name })), '🛡 Ghi nhận lúc nhận bảo hành') : null });
+    } });
+    dlg.append(h('div', { className: 'card-head' }, h('h3', { className: 'card-title', textContent: '🛡 Bảo hành · ' + (ctx.name || 'Khách') }), h('button', { type: 'button', className: 'icon-btn', 'aria-label': 'Đóng', textContent: '×', onclick: () => dlg.close() })),
+      h('p', { className: 'hint', style: 'margin:0', textContent: 'Thời hạn theo máy chủ Baostar (tên ghi "BH 30 ngày"…), tính từ lúc đơn chạy xong; Baostar chỉ nhận refill sau 24 giờ. Không refill được thì chọn Đơn bù miễn phí: khách không trả thêm, tiền gốc tính là chi phí bảo hành.' }),
+      prog,
+      h('div', { className: 'scroll svc-bulk-wrap' }, h('table', { className: 'svc-table svc-bulk-table' }, h('thead', {}, h('tr', {}, ...['', 'Link · đơn', 'Bảo hành', 'Cách bù'].map(t => h('th', { textContent: t })))), body)),
+      h('label', { className: 'row', style: 'gap:6px' }, snapIn, 'Chụp số like / follow hiện tại của từng link làm bằng chứng (gửi kèm tin cho khách)'),
+      sum, err, h('div', { className: 'row svc-actions', style: 'gap:8px;justify-content:flex-end' }, h('button', { type: 'button', className: 'btn btn-ghost', textContent: 'Đóng', onclick: () => dlg.close() }), go));
+    document.body.append(dlg); draw(); dlg.showModal();
+  }
+  // Lượt bảo hành xong hết (refill xong / bị từ chối, đơn bù chạy xong) → báo bạn + gợi ý "Báo khách đã bảo hành xong" trên ô soạn tin.
+  async function checkWarranty() {
+    const bs = await warrBatches(); if (!bs.some(b => !b.done)) return 0;
+    const orders = await DB.get(ORDERS, []), byId = new Map(orders.map(o => [o.id, o])); let ch = 0;
+    for (const b of bs) { if (b.done) continue;
+      const states = b.items.flatMap(it => [...it.refill.map(id => { const r = byId.get(id)?.refills?.filter(x => x.batch === b.id).pop(); return r ? (REFILL_DONE.test(r.status || '') ? (/completed/i.test(r.status) ? 'ok' : 'bad') : 'run') : 'ok'; }),
+        ...it.bu.map(id => { const o = byId.get(id); return !o ? 'ok' : o.status === 'done' ? 'ok' : o.status === 'cancelled' ? 'bad' : 'run'; })]);
+      if (states.some(s => s === 'run')) continue;
+      b.done = Date.now(); b.bad = states.filter(s => s === 'bad').length; ch++;
+      App.notify?.(`🛡 Bảo hành xong: ${b.name || 'Khách'}`, b.bad ? `${b.bad} phần bị từ chối / huỷ: mở hộp Bảo hành để tạo đơn bù` : `${b.items.length} link đã bù xong`);
+      if (b.key && !b.bad) addNudge(b.key, 'wdone', 'wb:' + b.id);
+    }
+    if (ch) await DB.set(WARR, bs);
+    return ch;
+  }
+
+  App.services = { warrantyDialog, complaintInfo, checkWarranty, splitLinks, bulkDialog, orderedLinks, linkKey, nudgeCard, askCheck, platBadge, linkPlatform: l => LINK_PLAT[platformOf(l)] || '', createDialog, closeDock, orderStates, orderBar, inboxBox, refreshStatus, linksIn, call, openWeb, mapStatus, catalogProgress, noteLines, speedOf, invoiceDialog, invoiceText, paymentDialog, confirmCreate, quotes, renewQuote, vipTick, termOf, requestRefill, refreshRefills };
 })();

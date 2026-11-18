@@ -185,6 +185,7 @@
             h('button', { type: 'button', className: 'ib-newmsg', id: 'ibNewMsg', hidden: true, textContent: '↓ Tin mới', onclick: () => toBottom(true) })),
           h('div', { id: 'ibCrm', className: 'crm', hidden: true }),
           h('div', { className: 'composer' },
+            h('div', { className: 'ib-bulk ib-warr', id: 'ibWarr', hidden: true }),
             h('div', { className: 'ib-bulk', id: 'ibBulk', hidden: true }),
             h('div', { id: 'ibOrder', hidden: true }),
             h('div', { className: 'popover', id: 'ibPicker', hidden: true }, picker.el),
@@ -533,7 +534,22 @@
   // Khách gửi nhiều link: thanh "Tạo đơn hàng loạt" trên ô soạn tin — các link bạn đã tích, không thì các link chưa lên đơn (từ 2 link).
   S.pickLinks = new Set();
   const syncTicks = () => document.querySelectorAll('#ibThread .msg-link-tick input').forEach(i => { i.checked = S.pickLinks.has(i.dataset.link); });
+  // Khách báo tụt / đòi bảo hành và có đơn dịch vụ → thanh "🛡 Khách báo tụt" (bấm mới mở hộp Bảo hành).
+  S.warrHide = new Set();
+  async function drawWarr() {
+    const box = $('ibWarr'); if (!box) return;
+    const c = S.conv; if (!c || !App.services?.complaintInfo) { box.hidden = true; return; }
+    const info = await App.services.complaintInfo(c.key, S.messages).catch(() => null); if (S.conv !== c) return;
+    const sig = c.id + '|' + (info?.said || '');
+    if (!info || S.warrHide.has(sig)) { box.hidden = true; return box.replaceChildren(); }
+    box.hidden = false;
+    box.replaceChildren(h('span', { className: 'ib-bulk-ico', textContent: '🛡' }),
+      h('span', { className: 'ib-bulk-txt', title: info.said, textContent: `Khách báo tụt · ${info.ok}/${info.groups.length} link còn bảo hành` }),
+      h('button', { type: 'button', className: 'btn btn-primary btn-sm', textContent: 'Bảo hành', onclick: () => App.services.warrantyDialog({ page: c.page, key: c.key, name: c.other.name || '', messages: S.messages }) }),
+      h('button', { type: 'button', className: 'btn btn-ghost btn-sm', textContent: 'Ẩn', title: 'Ẩn thanh này (khách nhắn báo tụt lần sau sẽ hiện lại)', onclick: () => { S.warrHide.add(sig); box.hidden = true; } }));
+  }
   async function drawBulk() {
+    drawWarr().catch(() => {});
     const box = $('ibBulk'); if (!box) return;
     const c = S.conv; if (!c || !App.services?.bulkDialog) { box.hidden = true; return; }
     const links = App.services.linksIn(S.messages || []); // mới nhất trước
@@ -1116,7 +1132,7 @@
   App.inbox.setPane = setPane;
   function resetThread() {
     setPane(S.conv ? 'thread' : 'list'); S.lastMsgs = []; if ($('ibMiniBtn')) $('ibMiniBtn').hidden = !S.conv; pushMini(true); // đang mở khách (resetThread trước khi vẽ khách mới) → giữ màn hội thoại
-    S.reply = null; drawReply(); closePop(); setCView('chat'); S.pickLinks.clear(); if ($('ibBulk')) $('ibBulk').hidden = true; if ($('ibCTabs')) $('ibCTabs').hidden = !S.conv;
+    S.reply = null; drawReply(); closePop(); setCView('chat'); S.pickLinks.clear(); if ($('ibBulk')) $('ibBulk').hidden = true; if ($('ibWarr')) $('ibWarr').hidden = true; if ($('ibCTabs')) $('ibCTabs').hidden = !S.conv;
     S.draftReady = false; S.image = ''; S.tpl = null;
     if(!$('ibText'))return; // Đổi Page trước khi mở Hộp thư vẫn hợp lệ.
     $('ibText').value = ''; $('ibText').disabled = true; drawAttach();

@@ -606,3 +606,7 @@ body.dark-mode .tone-gray{background:#2a2a2a;color:#d4d4d4}
 .svc-prog-bar>span.warn{background:linear-gradient(90deg,var(--primary),#e3a008)}
 .svc-prog .hint{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .svc-line.now{outline:1px solid var(--primary);background:var(--primary-soft)}
+/* Bảo hành */
+.svc-w-link{display:flex;flex-direction:column;min-width:0}.svc-w-link a{color:var(--primary);text-decoration:none;word-break:break-all}.svc-w-link small{line-height:1.4}
+.svc-bulk-table .hint.pos{color:var(--ok-text)}.svc-bulk-table .hint.neg{color:var(--err-text)}
+.svc-inbox-warr{margin-bottom:8px}
