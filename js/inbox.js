@@ -539,19 +539,20 @@
   // Khách báo tụt / đòi bảo hành và có đơn dịch vụ → thanh "🛡 Khách báo tụt" (bấm mới mở hộp Bảo hành).
   S.warrHide = new Set();
   // ── Dụ khách chốt đơn: lọc Chưa chốt / Phân vân / Chờ chuyển tiền + tin soạn sẵn (từng khách hoặc hàng loạt) ──
-  const STAGES = ['open', 'hesitant', 'quoted'], STAGE_CHIP = { open: 'Chưa chốt', hesitant: 'Phân vân', quoted: 'Chưa CK' };
+  const STAGES = ['open', 'done'], STAGE_CHIP = { open: 'Chưa chốt', done: 'Đã chốt' }, STAGE_TIP = { open: 'Chưa có đơn, hoặc có báo giá chưa chuyển tiền', done: 'Đã có đơn / đã chuyển tiền (không có báo giá nào đang chờ)' };
   const custTexts = msgs => (msgs || []).filter(m => !m.sep && (m.isCustomer || m.mine === false) && m.text).map(m => ({ text: m.text, ts: m.ts || 0 }));
   const stageTexts = new Map(); S.dukHide = new Set();
-  // Mỗi khách chỉ thuộc 1 nhóm, theo thứ tự: Chưa CK (có báo giá chưa thu) → Phân vân → Chưa chốt.
-  // Đã chuyển tiền / đang có đơn chạy → không thuộc nhóm nào. Phân vân chỉ tính câu nói SAU lần mua gần nhất.
+  // Đã chốt = có đơn (bất kỳ lúc nào) hoặc đã chuyển tiền, và không có báo giá nào đang chờ. Còn lại là Chưa chốt.
+  // Phân vân (chỉ để chọn tin gợi ý) chỉ tính câu nói SAU lần mua gần nhất.
   function stageOf(c, texts, info) {
     const st = S.orderMap?.get(c.key), fresh = Date.now() - new Date(c.updated_time || 0) < 30 * 864e5;
     const last = info.lastBuy.get(c.key) || 0, bought = !!last || info.bought.has(c.key);
     const busy = st?.kind === 'paid' || st?.kind === 'run';
     // Không có giờ tin: đã từng mua thì không đoán phân vân (tránh lấy câu cũ trước khi mua).
     const hes = App.services.hesitation(texts.filter(t => t.ts ? t.ts > last : !bought));
-    const quoted = st?.kind === 'pay', hesitant = !quoted && !busy && fresh && !!hes, open = !quoted && !hesitant && !busy && fresh && !bought;
-    return { quoted, q: st?.q, hesitant, price: !!hes?.price, said: hes?.text || '', hes: !!hes, open };
+    const quoted = st?.kind === 'pay', hesitant = !quoted && !busy && fresh && !!hes, done = !quoted && (busy || bought);
+    // Hai nhóm lọc: Chưa chốt (chưa mua, hoặc có báo giá chờ chuyển tiền) / Đã chốt. quoted/hesitant chỉ để chọn tin gợi ý.
+    return { quoted, q: st?.q, hesitant, price: !!hes?.price, said: hes?.text || '', hes: !!hes, open: !done, done, fresh };
   }
   async function computeStages() {
     if (!App.services?.salesInfo) return;
@@ -575,9 +576,9 @@
     const pool = S.convs.filter(c => S.plat === 'all' || platOf(c) === S.plat);
     const n = k => pool.filter(c => S.stages?.get(c.id)?.[k]).length, on = STAGES.includes(S.filter) ? S.filter : '';
     box.replaceChildren(
-      ...STAGES.map(k => h('button', { type: 'button', className: 'chip ib-stage ' + k, dataset: { f: k }, 'aria-pressed': String(on === k), title: App.services?.STAGE_NAME?.[k] || '',
+      ...STAGES.map(k => h('button', { type: 'button', className: 'chip ib-stage ' + k, dataset: { f: k }, 'aria-pressed': String(on === k), title: STAGE_TIP[k],
         onclick: () => { S.filter = S.filter === k ? 'all' : k; drawList(); } }, STAGE_CHIP[k], S.stages ? h('span', { className: 'n', textContent: String(n(k)) }) : null)),
-      on ? h('button', { type: 'button', className: 'btn btn-soft btn-sm ib-stage-send', title: 'Gửi tin dụ khách hàng loạt cho cả nhóm đang lọc', 'aria-label': 'Gửi hàng loạt', textContent: '📣', onclick: () => dukBulk(on) }) : null);
+      on === 'open' ? h('button', { type: 'button', className: 'btn btn-soft btn-sm ib-stage-send', title: 'Gửi tin dụ khách hàng loạt cho cả nhóm đang lọc', 'aria-label': 'Gửi hàng loạt', textContent: '📣', onclick: () => dukBulk(on) }) : null);
   }
   async function drawDuk() {
     const box = $('ibDuk'); if (!box) return;
@@ -586,7 +587,7 @@
     const sg = stageOf(c, custTexts(S.messages), S.salesInfo || { bought: new Set(), lastBuy: new Map() }); S.stages?.set(c.id, sg);
     // Khách vừa hỏi mà mình chưa trả lời: trả lời bình thường, chưa cần "dụ". Phân vân thì gợi ý ngay.
     const quiet = !c.fromCustomer && Date.now() - new Date(c.updated_time || 0) > 30 * 60e3;
-    const stage = sg.hesitant || sg.quoted && sg.hes ? 'hesitant' : sg.quoted && quiet ? 'quoted' : sg.open && quiet ? 'open' : '';
+    const stage = sg.hesitant || sg.quoted && sg.hes ? 'hesitant' : sg.quoted && quiet ? 'quoted' : sg.open && sg.fresh && quiet ? 'open' : '';
     const sig = c.id + '|' + stage + '|' + c.updated_time;
     if (!stage || S.dukHide.has(sig)) { box.hidden = true; return box.replaceChildren(); }
     const items = App.services.dukTexts(stage, { name: c.other.name, q: sg.q, price: sg.price });
@@ -606,7 +607,7 @@
     if (!pool.length) return toast('Không có khách nào trong nhóm này.', 4000);
     const day = c => (Date.now() - new Date(c.updated_time || 0)) / 864e5;
     const rows = pool.map(c => ({ c, on: day(c) <= 7, res: '' }));
-    let tpl = P.DUK[stage][0][1], busy = false, stop = false;
+    const tpls = [...P.DUK.open, ...P.DUK.quoted.slice(0, 2).map(([l, t]) => ['Có báo giá · ' + l, t]), ['Trấn an', P.DUK.hesitant[0][1]]]; let tpl = tpls[0][1], busy = false, stop = false;
     const dlg = h('dialog', { className: 'svc-dialog svc-bulk', onclose: () => { stop = true; dlg.remove(); } });
     const ta = h('textarea', { rows: 4, value: tpl, oninput: () => { tpl = ta.value; prev(); } }), pv = h('div', { className: 'hint ib-duk-prev' });
     const body = h('tbody'), prog = h('div', { className: 'svc-prog', hidden: true }), go = h('button', { type: 'button', className: 'btn btn-primary' });
@@ -635,9 +636,9 @@
       }
       busy = false; prog.textContent = stop ? 'Đã dừng.' : `Xong: ${rows.filter(r => r.res.startsWith('✓')).length} tin đã gửi.`; draw();
     };
-    dlg.append(h('div', { className: 'card-head' }, h('h3', { className: 'card-title', textContent: '📣 Gửi tin dụ khách · ' + P.STAGE_NAME[stage] }),
+    dlg.append(h('div', { className: 'card-head' }, h('h3', { className: 'card-title', textContent: '📣 Gửi tin dụ khách · Chưa chốt đơn' }),
         h('button', { type: 'button', className: 'icon-btn', 'aria-label': 'Đóng', textContent: '×', onclick: () => dlg.close() })),
-      h('div', { className: 'row', style: 'gap:6px;flex-wrap:wrap' }, ...P.DUK[stage].map(([l, t]) => h('button', { type: 'button', className: 'chip', textContent: l.replace('{tang}', P.dukBonus()), onclick: () => { tpl = ta.value = t; prev(); } }))),
+      h('div', { className: 'row', style: 'gap:6px;flex-wrap:wrap' }, ...tpls.map(([l, t]) => h('button', { type: 'button', className: 'chip', textContent: l.replace('{tang}', P.dukBonus()), onclick: () => { tpl = ta.value = t; prev(); } }))),
       h('div', { className: 'field' }, 'Tin nhắn ({ten} tên khách · {tang} % tặng · {ma} mã báo giá · {tien} số tiền · {dv} dịch vụ)', ta), pv,
       h('div', { className: 'hint' }, 'Khách nhắn quá 7 ngày không được tích sẵn: Meta có thể chặn tin hoặc khoá tính năng nhắn của Page nếu gửi nhiều.'),
       h('div', { className: 'svc-bulk-scroll' }, h('table', { className: 'svc-tbl' }, body)), prog,
@@ -836,7 +837,7 @@
     box.hidden = !bar && !nudge; box.replaceChildren(...[nudge, bar].filter(Boolean)); drawCTabs();
     if (App.current() === 'inbox') drawList();
   }
-  App.inbox.orderChanged = () => { drawOrder().catch(() => {}); drawBulk().catch(() => {}); };
+  App.inbox.orderChanged = () => { S.stagesAt = 0; drawOrder().catch(() => {}); drawBulk().catch(() => {}); };
   setInterval(() => { if (App.current() === 'inbox' && !document.hidden) drawOrder().catch(() => {}); }, 60e3);
   async function tagAndCrm(c, { render }) {
     const st = await settings();
