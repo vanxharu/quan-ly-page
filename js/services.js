@@ -1407,6 +1407,15 @@
       checking = true;
       webCatalog(true).then(() => services()).then(l => { list = l; }).catch(() => {}).finally(() => { checking = false; draw(); });
     }
+    // Tiến độ khi đang tạo: thanh % + số đã tạo / lỗi; từng dòng ghi Đang tạo… / ✓ Đã tạo #mã / ✗ Lỗi (kèm lý do).
+    let run = null; const runErr = new Set();
+    const prog = h('div', { className: 'svc-prog', hidden: true });
+    const drawProg = () => { prog.hidden = !run; if (!run) return; const pct = run.total ? Math.round(run.done / run.total * 100) : 0;
+      prog.replaceChildren(h('div', { className: 'svc-prog-top' },
+          h('strong', { textContent: run.cur ? `Đang tạo đơn ${Math.min(run.done + 1, run.total)}/${run.total}…` : `Xong: ${run.ok}/${run.total} đơn đã tạo` }),
+          h('span', {}, h('span', { className: 'pos', textContent: `✓ ${run.ok} thành công` }), run.fail ? h('span', { className: 'neg', textContent: ` · ✗ ${run.fail} lỗi` }) : null)),
+        h('div', { className: 'svc-prog-bar' }, h('span', { style: `width:${pct}%`, className: run.fail ? 'warn' : '' })),
+        run.last ? h('div', { className: 'hint', textContent: run.last }) : null); };
     const lineCheck = l => { const x = svcOf(l), n = Number(l.qty) || 0;
       if (l.done) return null;
       if (!x) return 'Không còn máy chủ này';
@@ -1418,16 +1427,17 @@
       const ls = lines(), pending = ls.filter(l => !l.done), bad = pending.filter(l => lineCheck(l));
       const nowCost = pending.reduce((t, l) => t + (svcOf(l) ? estCost(svcOf(l), Number(l.qty) || 0) : 0), 0);
       const quotedCost = pending.reduce((t, l) => t + (Number(l.cost) || 0), 0), sell = sumOf(ls, 'sell');
-      box.replaceChildren(...ls.map((l, i) => { const x = svcOf(l), why = lineCheck(l);
-        const [st, cls] = l.done ? [`✓ Đã tạo #${l.done.providerOrderId}`, 'ok'] : x ? stateOf(x) : ['Không còn máy chủ', 'err'];
-        return h('div', { className: 'svc-line' + (l.done ? ' done' : why ? ' bad' : '') },
+      drawProg();
+      box.replaceChildren(...ls.map((l, i) => { const x = svcOf(l), why = lineCheck(l), now = run?.cur === l.id, failed = run && runErr.has(l.id) && !l.done;
+        const [st, cls] = now ? ['⏳ Đang tạo…', 'pending'] : l.done ? [`✓ Đã tạo #${l.done.providerOrderId}`, 'ok'] : failed ? ['✗ Lỗi', 'err'] : run && run.todo.has(l.id) ? ['Chờ tạo', 'pending'] : x ? stateOf(x) : ['Không còn máy chủ', 'err'];
+        return h('div', { className: 'svc-line' + (l.done ? ' done' : why || failed ? ' bad' : '') + (now ? ' now' : ''), dataset: { lid: l.id } },
           h('span', { className: 'svc-line-no', textContent: String(i + 1) }), x ? platBadge(x.platform, 20) : null,
           h('span', { className: 'cp-main' }, h('span', { className: 'cp-title', textContent: `${l.displayName} · ${Number(l.qty).toLocaleString('vi-VN')}` }),
             h('span', { className: 'cp-sub', textContent: `${l.extra ? '⑂ phần thêm · ' : ''}MC ${sid(l)}${alt.has(l.id) ? ' (đã đổi)' : ''} · ${l.link}${edits.has(l.id) && !l.done ? ' · ✏ đã sửa' : ''}` }),
-            l.error && !l.done ? h('span', { className: 'neg hint', textContent: 'Lỗi lần trước: ' + l.error }) : null,
+            l.error && !l.done ? h('span', { className: 'neg hint', textContent: (failed ? '✗ ' : 'Lỗi lần trước: ') + l.error }) : null,
             why ? h('span', { className: 'neg hint', textContent: '✗ ' + why }) : null),
           h('span', { className: 'status svc-pill ' + (l.done ? 'ok' : cls), textContent: checking && !l.done ? '…' : st }),
-          l.done ? null : h('span', { className: 'row', style: 'gap:4px;flex:none' },
+          l.done || busy ? null : h('span', { className: 'row', style: 'gap:4px;flex:none' },
             h('button', { type: 'button', className: 'btn btn-ghost btn-sm', textContent: '⑂ Tách', title: 'Chia dòng này thành 2 đơn (khác máy chủ / link / số lượng)', disabled: busy, onclick: () => {
               const n = Number(l.qty) || 0, half = Math.floor(n / 2);
               if (!isExtra(l) && n > 1) setEdit(l, 'qty', n - half); else if (isExtra(l) && n > 1) l.qty = n - half;
@@ -1468,7 +1478,8 @@
       const est = todo.reduce((t, l) => t + estCost(svcOf(l), Number(l.qty)), 0);
       if (!confirm(`Tạo ${todo.length} đơn trên Baostar?\n\n${todo.map((l, i) => `${i + 1}. MC ${sid(l)} · ${l.displayName} · ${Number(l.qty).toLocaleString('vi-VN')}${edits.has(l.id) ? `\n   ✏ đã sửa · ${l.link}` : ''}`).join('\n')}\n\nBaostar sẽ trừ khoảng ${money(est)}.`)) return;
       if (creating.has(q.id)) return toast('Báo giá này đang được tạo đơn ở cửa sổ khác.', 7000);
-      creating.add(q.id); busy = true; err.hidden = true; draw();
+      creating.add(q.id); busy = true; err.hidden = true; runErr.clear();
+      run = { total: todo.length, done: 0, ok: 0, fail: 0, cur: '', last: '', todo: new Set(todo.map(l => l.id)) }; draw();
       const made = [];
       try {
         // Chống tạo trùng: báo giá phải còn, không cửa sổ nào khác đang tạo; mỗi dòng kiểm tra đơn cùng mã thanh toán + dòng.
@@ -1481,9 +1492,11 @@
         const multi = !!fresh.lines?.length;
         for (const l of q.lines) {
           if (l.done || !todo.some(t => t.id === l.id)) continue;
-          const L = eff(l), x = svcOf(L); if (!x || lineCheck(L)) continue; // L = dòng đã sửa tay (số lượng, link…), l = dòng của báo giá (ghi trạng thái đã tạo)
+          const L = eff(l), x = svcOf(L); if (!x || lineCheck(L)) { run.done++; continue; } // L = dòng đã sửa tay (số lượng, link…), l = dòng của báo giá (ghi trạng thái đã tạo)
+          run.cur = l.id; draw(); box.querySelector(`[data-lid="${l.id}"]`)?.scrollIntoView({ block: 'nearest' });
+          const short = `${L.displayName} · ${Number(L.qty).toLocaleString('vi-VN')} · ${shortLink(L.link)}`;
           const dup = (await DB.get(ORDERS, [])).find(o => o.payCode === q.payCode && (multi ? o.quoteLineId === l.id : true));
-          if (dup) { l.done = { orderId: dup.id, providerOrderId: dup.providerOrderId }; l.error = ''; await saveQuote(q); continue; }
+          if (dup) { l.done = { orderId: dup.id, providerOrderId: dup.providerOrderId }; l.error = ''; await saveQuote(q); run.done++; run.ok++; run.last = `✓ Đã có sẵn #${dup.providerOrderId}: ${short}`; continue; }
           try {
             const r = await call('add', { service: Number(x.id), link: L.link, quantity: Number(L.qty), ...(needsComments(x) ? { comments: L.comments || '' } : {}) });
             if (r && !r.order) r.order = r.order_id ?? r.orderId ?? r.id;
@@ -1491,15 +1504,18 @@
             const order = orderFor(x, L, r, q, q.lines);
             await DB.set(ORDERS, [...await DB.get(ORDERS, []), order]);
             made.push(order); l.done = { orderId: order.id, providerOrderId: order.providerOrderId }; l.error = '';
-          } catch (e2) { l.error = e2.message; }
-          await saveQuote(q); draw();
+            run.ok++; run.last = `✓ Đã tạo #${order.providerOrderId}: ${short}`;
+          } catch (e2) { l.error = e2.message; runErr.add(l.id); run.fail++; run.last = `✗ Lỗi: ${short} · ${e2.message}`; }
+          run.done++; await saveQuote(q); draw();
         }
+        run.cur = ''; draw();
         const left = q.lines.filter(l => !l.done);
         q.creatingAt = 0;
         if (q.customerKey && made.length) App.crm?.update?.(q.customerKey, { orderStatus: 'Đã đặt hàng' }).catch(() => {});
         if (!left.length) {
           await dropQuote(q.id);
           if (q.renewOf) { const all = await DB.get(ORDERS, []), old = all.find(o => o.id === q.renewOf); if (old) { old.renewedBy = made[0]?.id || q.lines[0].done.orderId; await DB.set(ORDERS, all); } }
+          await new Promise(r => setTimeout(r, 1200)); // để thấy "Xong: n/n" trước khi chuyển sang khung gửi khách
           dlg.close(); toast(`Đã tạo ${q.lines.length > 1 ? `đủ ${q.lines.length} đơn` : `đơn #${made[0]?.providerOrderId || ''}`} trên Baostar.`, 5000);
           await refreshStatus(made).catch(() => {});
           App.tabs.services?.refresh?.();
@@ -1516,7 +1532,7 @@
     dlg.append(h('div', { className: 'card-head' }, h('h3', { className: 'card-title', textContent: `Kiểm tra & tạo đơn · ${q.payCode}` }),
         h('button', { type: 'button', className: 'icon-btn', 'aria-label': 'Đóng', textContent: '×', onclick: () => dlg.close() })),
       h('p', { className: 'hint', textContent: `${q.customer?.name || 'Khách'} · ${lines().length} dịch vụ · mỗi dòng là 1 đơn Baostar` }),
-      box,
+      prog, box,
       h('div', { className: 'row', style: 'gap:6px;margin:-2px 0 4px' }, h('button', { type: 'button', className: 'btn btn-soft btn-sm', textContent: '＋ Thêm dịch vụ / máy chủ', title: 'Thêm 1 đơn Baostar nữa vào lần tạo này (không tính thêm tiền khách)',
         onclick: async () => { if (busy) return; const v = await pickServerDialog(list.filter(y => stateOf(y)[1] !== 'err'), ''); if (!v) return; const x = list.find(y => y.id === v), first = linesOf(q)[0] || {};
           const part = { id: uid('ln'), serviceId: v, serviceName: x?.name || '', displayName: x?.category || x?.name || 'Dịch vụ', link: first.link || q.link || '', qty: x?.min || 100, sell: 0, cost: 0, listPrice: 0,

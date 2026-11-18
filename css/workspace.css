@@ -597,3 +597,12 @@ body.dark-mode .tone-gray{background:#2a2a2a;color:#d4d4d4}
 .svc-rx-mode{height:26px;padding:0 8px;border:1px dashed var(--border);border-radius:13px;background:transparent;font-size:11px;color:var(--text-secondary);cursor:pointer}
 .svc-bulk-allrx .svc-rx{margin-top:0}
 .svc-bulk-total{display:inline-flex;align-items:center;gap:6px}.svc-bulk-total input{height:30px}
+/* Tạo đơn: tiến độ (dính trên đầu hộp khi cuộn) + dòng đang tạo */
+.svc-prog{position:sticky;top:-20px;z-index:3;display:grid;gap:6px;margin:0 0 6px;padding:10px 12px;border-radius:8px;border:1px solid var(--border);background:var(--bg-card);box-shadow:var(--shadow-sm)}
+.svc-prog-top{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;font-size:13px}
+.svc-prog-top .pos{color:var(--ok-text)}.svc-prog-top .neg{color:var(--err-text)}
+.svc-prog-bar{height:6px;border-radius:3px;background:var(--bg-hover);overflow:hidden}
+.svc-prog-bar>span{display:block;height:100%;background:var(--primary);border-radius:3px;transition:width .3s}
+.svc-prog-bar>span.warn{background:linear-gradient(90deg,var(--primary),#e3a008)}
+.svc-prog .hint{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.svc-line.now{outline:1px solid var(--primary);background:var(--primary-soft)}
