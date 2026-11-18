@@ -2351,17 +2351,25 @@
   const plain = t => String(t || '').normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[đĐ]/g, 'd').toLowerCase().replace(/\s+/g, ' ');
   const WHO = '(minh|em|e|anh|a|chi|c|t|toi|tui|tao|m|ac|bac|co)';
   const HESITATE = new RegExp([`\\bde ${WHO}? ?(suy nghi|xem (lai|da|sao|the nao)|tinh (lai|da|sau)|hoi (lai|y|chong|vo|sep|ban)|can nhac|coi lai)`, 'suy nghi (them|da|lai)', 'can nhac', 'phan van', 'ban khoan', 'luong lu', 'chua chac',
-    'dat (qua|the|vay|nhi|ha|ghe|xiu)', 'hoi (dat|mac|cao)', 'mac (qua|the|vay|nhi|ha|ghe)', 'gia (cao|chat) (qua|the|vay)', 'giam (gia|chut|duoc|dc|it|xiu|di)', 'bot (chut|duoc|dc|it|xiu|di|gia)', 're hon', 'cho (xin )?(gia|giam) (tot|mem|re)',
-    'uy tin (khong|ko|k|hong|ha|ko\\?)', 'co uy tin', 'lua dao', 'co lua', 'co that (khong|ko|k|hong)', 'an toan (khong|ko|k|hong)', 'co bi (khoa|die|tut|mat|checkpoint|chet|block|giam)', 'so (bi|mat|lua|tut)', 'lo (bi|mat|tut)',
+    'gia (cao|chat) (qua|the|vay)', 'giam (gia|chut xiu|chut|duoc|dc|it|xiu) (khong|ko|k|hong|di|nha|nhe|duoc|dc|cho)', 'bot (chut|duoc|dc|it|xiu|cho|gia)', 'co giam (gia|duoc|dc|khong|ko|k|hong)', 're hon', 'cho (xin )?(gia|giam) (tot|mem|re)',
+    'uy tin (khong|ko|k|hong|ha|ko\\?)', 'co uy tin', 'lua dao', 'co lua', 'co that (khong|ko|k|hong)', 'an toan (khong|ko|k|hong)', 'co bi (khoa|die|tut|mat|checkpoint|chet|block|giam)[^.!]{0,25}(khong|ko|k|hong|\\?)', 'so (bi lua|bi khoa|bi die|mat tien)', 'lo bi (lua|khoa|die)',
     'tinh sau', 'luc khac', 'de sau', 'hom khac', 'bua khac', 'chua can', 'chua co tien', 'het tien', 'cuoi thang', 'dau thang', 'luong ve', '\\bde (mai|toi|chieu|tuan sau)', '\\bhmm+', '\\buhm+'].join('|'));
-  const PRICE = /dat (qua|the|vay|nhi|ha|ghe|xiu)|hoi (dat|mac|cao)|mac (qua|the|vay|nhi|ha|ghe)|gia (cao|chat)|giam|bot (chut|duoc|dc|it|xiu|di|gia)|re hon|chua co tien|het tien|cuoi thang|dau thang|luong ve/;
-  const hesitation = texts => { for (const t of (texts || []).slice(-5).reverse()) { const p = plain(t); if (HESITATE.test(p)) return { text: t, price: PRICE.test(p) }; } return null; };
+  const PRICE = /gia (cao|chat)|giam|bot (chut|duoc|dc|it|xiu|cho|gia)|re hon|chua co tien|het tien|cuoi thang|dau thang|luong ve/;
+  // "đắt" và "đặt" (đặt đơn) giống nhau khi bỏ dấu: chỉ nhận "đắt / mắc" có dấu, hoặc tin gõ không dấu cả câu.
+  const PRICY = /(đắt|mắc|chát)\s*(quá|thế|vậy|vại|nhỉ|ha|ghê|xỉu|v\b)|hơi (đắt|mắc|cao)|(?:^|\s)(dat|mac) (qua|ghe|xiu)(?:\s|$|[!?.])/i;
+  const accented = t => /[^\x00-\x7f]/.test(t);
+  // Xét 3 tin gần nhất của khách (chuỗi hoặc { text, ts }).
+  const hesitation = texts => { for (const x of (texts || []).slice(-3).reverse()) { const t = typeof x === 'string' ? x : x?.text || '', p = plain(t);
+    const pricy = PRICY.test(t.toLowerCase()) && (accented(t) ? /đắt|mắc|chát|cao/i.test(t) : true);
+    if (pricy || HESITATE.test(p)) return { text: t, price: pricy || PRICE.test(p) }; } return null; };
   // Khách đã từng mua (đơn bất kỳ còn hiệu lực, hoặc báo giá đã thu tiền): không còn là "chưa chốt".
+  // lastBuy: lần mua gần nhất theo khách (đơn tạo từ Hộp thư có customerKey; đơn nhập tay / tab Dịch vụ thì ghép theo Page + tên khách).
   async function salesInfo() {
-    const bought = new Set();
-    for (const o of await DB.get(ORDERS, [])) if (o.customerKey && o.status !== 'cancelled' && !o.warrantyFor) bought.add(o.customerKey);
-    for (const q of await quotes()) if (q.state === 'paid') bought.add(q.customerKey);
-    return { bought };
+    const bought = new Set(), lastBuy = new Map(), mark = (k, at) => { if (!k) return; bought.add(k); if ((at || 0) > (lastBuy.get(k) || 0)) lastBuy.set(k, at || 1); };
+    for (const o of await DB.get(ORDERS, [])) { if (o.status === 'cancelled' || o.warrantyFor) continue;
+      mark(o.customerKey, o.at); const n = o.customer?.name; if (n) { mark(App.crmKey(o.pageKey || '', n), o.at); if (!o.pageKey) bought.add('*|' + norm(n)); } }
+    for (const q of await quotes()) if (q.state === 'paid') mark(q.customerKey, q.paidAt || q.at);
+    return { bought: { has: k => bought.has(k) || bought.has('*|' + String(k).split('|').slice(1).join('|')) }, lastBuy };
   }
   const dukBonus = () => Math.max(1, Math.min(100, Number(local.get('dukBonus')) || 10));
   const callName = n => { const w = String(n || '').trim().split(/\s+/).filter(Boolean); return !w.length || /^kh[aá]ch$/i.test(n) ? 'mình' : w[w.length - 1]; };

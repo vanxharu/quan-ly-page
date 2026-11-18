@@ -446,7 +446,7 @@
     if (silent && !older && c.bsSig === sig) return;
     if (!older) { c.bsSig = sig; const keep = { snippet: c.snippet, messages: (r.messages || []).filter(m => !/^blob:/.test(m.pic || '')).slice(-60) }; bsMsgCache.set(c.id, keep); DB.set('bsMsg:' + c.id, keep).catch(() => {}); }
     drawBs(c, r, older ? { silent: true, keepTop: true } : { silent, older });
-    S.messages = (r.messages || []).filter(m => !m.sep).map(m => ({ isCustomer: !m.mine, text: [m.text, m.share].filter(Boolean).join(' ') }));
+    S.messages = (r.messages || []).filter(m => !m.sep).map(m => ({ isCustomer: !m.mine, text: [m.text, m.share].filter(Boolean).join(' '), ts: m.ts || 0 }));
     drawBulk();
     S.lastMsgs = (r.messages || []).filter(m => !m.sep).slice(-6).map(m => ({ mine: !!m.mine, text: m.text || '', pic: !!m.pic, ts: m.ts || 0 })); pushMini();
     // Tin cuối trong hội thoại khác dòng trên danh sách (danh sách chưa kịp cập nhật): sửa luôn dòng đó + đưa lên đầu nếu mới hơn.
@@ -540,27 +540,34 @@
   S.warrHide = new Set();
   // ── Dụ khách chốt đơn: lọc Chưa chốt / Phân vân / Chờ chuyển tiền + tin soạn sẵn (từng khách hoặc hàng loạt) ──
   const STAGES = ['open', 'hesitant', 'quoted'], STAGE_CHIP = { open: 'Chưa chốt', hesitant: 'Phân vân', quoted: 'Chưa CK' };
-  const custTexts = msgs => (msgs || []).filter(m => !m.sep && (m.isCustomer || m.mine === false)).map(m => m.text || '').filter(Boolean);
+  const custTexts = msgs => (msgs || []).filter(m => !m.sep && (m.isCustomer || m.mine === false) && m.text).map(m => ({ text: m.text, ts: m.ts || 0 }));
   const stageTexts = new Map(); S.dukHide = new Set();
-  function stageOf(c, texts, bought) {
-    const st = S.orderMap?.get(c.key), hes = App.services.hesitation(texts), fresh = Date.now() - new Date(c.updated_time || 0) < 30 * 864e5;
-    return { quoted: st?.kind === 'pay', q: st?.q, hesitant: fresh && !!hes && st?.kind !== 'paid' && st?.kind !== 'run', price: !!hes?.price, said: hes?.text || '', open: fresh && !bought.has(c.key) && !st };
+  // Mỗi khách chỉ thuộc 1 nhóm, theo thứ tự: Chưa CK (có báo giá chưa thu) → Phân vân → Chưa chốt.
+  // Đã chuyển tiền / đang có đơn chạy → không thuộc nhóm nào. Phân vân chỉ tính câu nói SAU lần mua gần nhất.
+  function stageOf(c, texts, info) {
+    const st = S.orderMap?.get(c.key), fresh = Date.now() - new Date(c.updated_time || 0) < 30 * 864e5;
+    const last = info.lastBuy.get(c.key) || 0, bought = !!last || info.bought.has(c.key);
+    const busy = st?.kind === 'paid' || st?.kind === 'run';
+    // Không có giờ tin: đã từng mua thì không đoán phân vân (tránh lấy câu cũ trước khi mua).
+    const hes = App.services.hesitation(texts.filter(t => t.ts ? t.ts > last : !bought));
+    const quoted = st?.kind === 'pay', hesitant = !quoted && !busy && fresh && !!hes, open = !quoted && !hesitant && !busy && fresh && !bought;
+    return { quoted, q: st?.q, hesitant, price: !!hes?.price, said: hes?.text || '', hes: !!hes, open };
   }
   async function computeStages() {
     if (!App.services?.salesInfo) return;
     S.stageBusy = true;
     try {
       if (!S.orderMap) S.orderMap = await App.services.orderStates().catch(() => null);
-      const { bought } = await App.services.salesInfo(), out = new Map();
+      const info = await App.services.salesInfo(), out = new Map();
       for (const c of S.convs) {
         const sig = (c.snippet || '') + '|' + c.updated_time; let hit = stageTexts.get(c.id);
         if (!hit || hit.sig !== sig) {
           const m = bsMsgCache.get(c.id) || await DB.get('bsMsg:' + c.id, null).catch(() => null);
-          hit = { sig, texts: m?.messages?.length ? custTexts(m.messages) : c.fromCustomer && c.snippet ? [c.snippet] : [] }; stageTexts.set(c.id, hit);
+          hit = { sig, texts: m?.messages?.length ? custTexts(m.messages) : c.fromCustomer && c.snippet ? [{ text: c.snippet, ts: c.lastAt || new Date(c.updated_time).getTime() || 0 }] : [] }; stageTexts.set(c.id, hit);
         }
-        out.set(c.id, stageOf(c, S.conv?.id === c.id && S.messages?.length ? custTexts(S.messages) : hit.texts, bought));
+        out.set(c.id, stageOf(c, S.conv?.id === c.id && S.messages?.length ? custTexts(S.messages) : hit.texts, info));
       }
-      S.stages = out; S.S_bought = bought; S.stagesAt = Date.now(); S.stagesN = S.convs.length;
+      S.stages = out; S.salesInfo = info; S.stagesAt = Date.now(); S.stagesN = S.convs.length;
     } finally { S.stageBusy = false; }
   }
   function drawStages() {
@@ -575,11 +582,11 @@
   async function drawDuk() {
     const box = $('ibDuk'); if (!box) return;
     const c = S.conv; if (!c || !App.services?.dukTexts) { box.hidden = true; return; }
-    if (!S.S_bought) await computeStages().catch(() => {}); if (S.conv !== c) return;
-    const sg = stageOf(c, custTexts(S.messages), S.S_bought || new Set()); S.stages?.set(c.id, sg);
+    if (!S.salesInfo) await computeStages().catch(() => {}); if (S.conv !== c) return;
+    const sg = stageOf(c, custTexts(S.messages), S.salesInfo || { bought: new Set(), lastBuy: new Map() }); S.stages?.set(c.id, sg);
     // Khách vừa hỏi mà mình chưa trả lời: trả lời bình thường, chưa cần "dụ". Phân vân thì gợi ý ngay.
     const quiet = !c.fromCustomer && Date.now() - new Date(c.updated_time || 0) > 30 * 60e3;
-    const stage = sg.hesitant ? 'hesitant' : sg.quoted && quiet ? 'quoted' : sg.open && quiet ? 'open' : '';
+    const stage = sg.hesitant || sg.quoted && sg.hes ? 'hesitant' : sg.quoted && quiet ? 'quoted' : sg.open && quiet ? 'open' : '';
     const sig = c.id + '|' + stage + '|' + c.updated_time;
     if (!stage || S.dukHide.has(sig)) { box.hidden = true; return box.replaceChildren(); }
     const items = App.services.dukTexts(stage, { name: c.other.name, q: sg.q, price: sg.price });
@@ -1326,7 +1333,7 @@
       loadSeen(c);
       thread.scrollTop = !silent || atBottom ? thread.scrollHeight : oldTop;
       c.unread_count = 0;
-      S.messages = msgs.map(m => ({ isCustomer: m.from?.id !== c.page.id, text: m.message || '' })); drawBulk();
+      S.messages = msgs.map(m => ({ isCustomer: m.from?.id !== c.page.id, text: m.message || '', ts: new Date(m.created_time).getTime() || 0 })); drawBulk();
       S.lastMsgs = msgs.slice(-6).map(m => ({ mine: m.from?.id === c.page.id, text: m.message || '', pic: !!m.attachments, ts: Date.parse(m.created_time) || 0 })); pushMini();
       // Tải tin mới không dựng lại biểu mẫu CRM đang nhập dở.
       await tagAndCrm(c, { render: !silent || switching });
