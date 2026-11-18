@@ -2413,7 +2413,7 @@
     const prices = (s.packages || []).map(p => ({ p, v: byId.get(String(p.serviceId)) })).filter(({ v }) => !v || stateOf(v)[1] !== 'err').slice(0, 80).map(({ p, v }) => {
       const days = v ? warrDays({}, v) : 0;
       const price = p.kind === 'fixed' ? `${Number(p.qty || 0).toLocaleString('vi-VN')} = ${vnd(p.price)}` : `${vnd(Number(p.unitPrice) * 1000)} / 1.000 (đơn giá ${p.unitPrice}đ)`;
-      return `- [${p.id}] ${p.name}: ${price}${v ? `; mua từ ${Number(v.min).toLocaleString('vi-VN')} đến ${Number(v.max).toLocaleString('vi-VN')}` : ''}; ${days ? `bảo hành ${days} ngày` : 'không bảo hành'}${v?.avgTime ? `; thời gian chạy ${v.avgTime}` : ''}`; });
+      return `- [${p.id}] ${p.name}: ${price}${v ? `; mua từ ${Number(v.min).toLocaleString('vi-VN')} đến ${Number(v.max).toLocaleString('vi-VN')}` : ''}${days ? `; bảo hành ${days} ngày` : ''}${v?.avgTime ? `; thời gian chạy ${v.avgTime}` : ''}`; });
     const os = key ? (await DB.get(ORDERS, [])).filter(o => o.customerKey === key && !o.warrantyFor).sort((a, b) => b.at - a.at).slice(0, 8) : [];
     const orders = os.map(o => `- ${new Date(o.at).toLocaleDateString('vi-VN')}: ${o.displayName || o.serviceName || 'đơn'} · ${vnd(orderSell(o))} · ${o.status === 'done' ? 'đã xong' : o.status === 'cancelled' ? 'đã huỷ' : 'đang chạy'}${o.link ? ' · ' + o.link : ''}`);
     const qs = key ? (await quotes()).filter(q => q.customerKey === key) : [];

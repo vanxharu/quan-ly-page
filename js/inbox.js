@@ -628,6 +628,7 @@
     return [`Bạn là nhân viên chăm sóc khách của shop "${shop.name || 'shop'}", bán dịch vụ tăng tương tác mạng xã hội (like, follow, view, thành viên nhóm…). Shop xưng "${shop.me || 'em'}", gọi khách là "${shop.you || 'anh/chị'}". Viết tiếng Việt tự nhiên, thân thiện, ngắn như nhắn Messenger (1–3 câu, emoji vừa phải).`,
       'Nhiệm vụ: soạn 3 câu trả lời KHÁC NHAU về cách tiếp cận cho tin nhắn mới nhất của khách ở HỘI THOẠI bên dưới, nhằm giải đáp đúng và giúp khách chốt đơn.',
       'Quy tắc:', '- Chỉ báo giá đúng theo BẢNG GIÁ. Tiền = đơn giá × số lượng. Không bịa giá, gói, ưu đãi hay cam kết mà shop không có.',
+      '- Bảo hành: chỉ nói theo gói có ghi "bảo hành N ngày" ở BẢNG GIÁ hoặc Chính sách của shop. TUYỆT ĐỐI không nói gói/dịch vụ "không bảo hành", không nói về bảo hành nếu khách không hỏi và không có thông tin.',
       '- Khách muốn mua mà chưa gửi link thì xin link. Số lượng dưới mức tối thiểu thì nói rõ mức tối thiểu.', '- Không nói mình là AI, không nhắc "bảng giá" hay mã gói trong ngoặc vuông.',
       '- Nếu tin cuối là của shop (khách chưa nhắn thêm), soạn tin nhắc khéo để khách trả lời.',
       'Chỉ trả về MỘT khối JSON, không viết thêm gì:', '{"replies":["câu 1","câu 2","câu 3"],"order":null}',
@@ -683,7 +684,7 @@
   const MASS_SENT = 'massSentV1', MASS_CFG = 'massCfgV1';
   const MASS_GOAL = {
     reply: 'Trả lời tin nhắn mới nhất của khách: giải đáp đúng câu hỏi, báo giá theo bảng giá nếu khách hỏi, xin link nếu khách muốn mua.',
-    open: 'Nhắn lại khách chưa chốt đơn: nhắc khéo nhu cầu khách đã hỏi, trấn an (có bảo hành), mời chốt đơn hôm nay.',
+    open: 'Nhắn lại khách chưa chốt đơn: nhắc khéo nhu cầu khách đã hỏi, trấn an khách yên tâm, mời chốt đơn hôm nay.',
     done: 'Hỏi thăm khách cũ về kết quả đơn trước, mời mua lại hoặc thử thêm dịch vụ phù hợp với trang của khách.',
     all: 'Hỏi thăm khách, giới thiệu ngắn dịch vụ phù hợp, mời khách nhắn khi cần.'
   };
@@ -708,6 +709,7 @@
     return [`Bạn là nhân viên chăm sóc khách của shop "${shop.name || 'shop'}" bán dịch vụ tăng tương tác mạng xã hội. Shop xưng "${shop.me || 'em'}", gọi khách là "${shop.you || 'anh/chị'}". Tiếng Việt tự nhiên, thân thiện, ngắn như nhắn Messenger (1–3 câu, emoji vừa phải).`,
       'Nhiệm vụ: ' + task,
       'Quy tắc: chỉ báo giá theo BẢNG GIÁ, không bịa giá / ưu đãi / cam kết; không nói mình là AI; không nhắc mã gói trong ngoặc vuông; mỗi tin khác nhau, không lặp y hệt.',
+      'Quy tắc: Bảo hành: chỉ nói theo gói có ghi "bảo hành N ngày" ở BẢNG GIÁ hoặc Chính sách của shop. TUYỆT ĐỐI không nói gói/dịch vụ "không bảo hành", không nói về bảo hành nếu khách không hỏi và không có thông tin.',
       'Chỉ trả về MỘT khối JSON: {"msgs":[{"id":"mã khách","text":"tin nhắn"}]} — đủ mỗi khách một tin, đúng mã khách.', '',
       '## THÔNG TIN SHOP', bank ? 'Chuyển khoản: ' + bank : '', shop.policy ? 'Chính sách: ' + shop.policy : '', shop.notes ? 'Lưu ý: ' + shop.notes : '', '',
       '## BẢNG GIÁ', prices.length ? prices.slice(0, 40).map(l => cut(l, 200)).join('\n') : '(chưa có: không báo giá cụ thể)', '',
