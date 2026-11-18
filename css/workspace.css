@@ -590,3 +590,10 @@ body.dark-mode .tone-gray{background:#2a2a2a;color:#d4d4d4}
 .svc-bulk-st{min-width:120px;font-size:12px}.svc-bulk-st .warn{color:var(--pending-text);margin-top:3px}
 .svc-bulk-all{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:8px 10px;border-radius:8px;background:var(--bg-input);border:1px dashed var(--border)}
 .svc-bulk-all select{flex:1;min-width:220px;max-width:420px}
+.svc-rx{display:flex;flex-wrap:wrap;align-items:center;gap:4px;margin-top:5px}
+.svc-rx-chip{display:inline-flex;align-items:center;gap:3px;height:26px;padding:0 7px;border:1px solid var(--border);border-radius:13px;background:transparent;font-size:14px;line-height:1;cursor:pointer;opacity:.55;filter:grayscale(.6)}
+.svc-rx-chip small{font-size:11px;color:var(--text-secondary)}
+.svc-rx-chip.on{opacity:1;filter:none;border-color:var(--text-secondary);background:var(--bg-hover)}
+.svc-rx-mode{height:26px;padding:0 8px;border:1px dashed var(--border);border-radius:13px;background:transparent;font-size:11px;color:var(--text-secondary);cursor:pointer}
+.svc-bulk-allrx .svc-rx{margin-top:0}
+.svc-bulk-total{display:inline-flex;align-items:center;gap:6px}.svc-bulk-total input{height:30px}

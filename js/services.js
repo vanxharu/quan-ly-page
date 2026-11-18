@@ -534,6 +534,21 @@
     if (p === 'telegram') return 'member';
     return '';
   }
+  const RX_ALL = ['like', 'love', 'care', 'haha', 'wow', 'sad', 'angry'];
+  const RX_EMO = { like: '👍', love: '❤️', care: '🥰', haha: '😆', wow: '😮', sad: '😢', angry: '😡' }, RX_NAME = { like: 'Like', love: 'Love', care: 'Care', haha: 'Haha', wow: 'Wow', sad: 'Sad', angry: 'Angry' };
+  const RX_KEY = t => { t = String(t || '').toLowerCase(); return /thương thương|care/.test(t) ? 'care' : /tim|love|yêu/.test(t) ? 'love' : /buồn|sad/.test(t) ? 'sad' : /phẫn nộ|angry/.test(t) ? 'angry' : /haha/.test(t) ? 'haha' : /wow/.test(t) ? 'wow' : /like|thích/.test(t) ? 'like' : t; };
+  const RX_WEIGHT = { like: 50, love: 25, care: 10, haha: 8, wow: 4, sad: 2, angry: 1, tim: 25, 'thả tim': 25, 'thương thương': 10 };
+  // Chip chọn nhiều cảm xúc (bấm bật / tắt, giữ ít nhất 1) + Chia đều / Tự nhiên. items: [[giá trị, nhãn]]. empty: cho phép không chọn (hàng Áp dụng).
+  function rxChips(items, set, mode = 'deu', onChange, parts = null, empty = false) {
+    set = new Set(set || []);
+    const cnt = new Map((parts || []).map(([x, k]) => [x.id, k]));
+    return h('div', { className: 'svc-rx' }, ...items.map(([v, label]) => { const on = set.has(v);
+        return h('button', { type: 'button', className: 'svc-rx-chip' + (on ? ' on' : ''), 'aria-pressed': String(on), title: label + (cnt.has(v) ? ` · ${cnt.get(v).toLocaleString('vi-VN')}` : ''),
+          onclick: () => { const n = new Set(set); if (n.has(v)) { if (n.size > 1 || empty) n.delete(v); } else n.add(v); onChange(n, mode); } },
+          RX_EMO[RX_KEY(label)] || '•', cnt.has(v) ? h('small', { textContent: cnt.get(v) >= 1000 ? (cnt.get(v) / 1000).toLocaleString('vi-VN', { maximumFractionDigits: 1 }) + 'K' : cnt.get(v) }) : null); }),
+      (set.size > 1 || empty) ? h('button', { type: 'button', className: 'svc-rx-mode', title: mode === 'tn' ? 'Tự nhiên: Like nhiều nhất, rồi Love, Care… như bài thật. Bấm để chia đều.' : 'Chia đều cho các cảm xúc đã chọn. Bấm để chia tự nhiên.',
+        textContent: mode === 'tn' ? 'Tự nhiên' : 'Chia đều', onclick: () => onChange(set, mode === 'tn' ? 'deu' : 'tn') }) : null);
+  }
   async function bulkDialog(ctx = {}, preset = []) {
     const s = await settings();
     let list = []; try { list = await services(); } catch (e) { return toast(e.message, 7000); }
@@ -575,13 +590,23 @@
       if (!qty && svc) qty = Math.min(Math.max(1000, Number(svc.min) || 1), Number(svc.max) || 1000);
       const unitSell = pk ? (pk.kind === 'fixed' ? 0 : Number(pk.unitPrice) || 0) : svc ? (s.prices[svc.id] ?? autoUnitPrice(svc.unitCost, markup)) : 0;
       const autoSell = pk?.kind === 'fixed' ? Number(pk.price) || 0 : Math.round(unitSell * qty);
-      const sell = r.sell != null ? Number(r.sell) || 0 : autoSell, cost = Math.round(estCost(svc, qty));
+      const sell = r.sell != null ? Number(r.sell) || 0 : autoSell;
+      // Cảm xúc (máy chủ có like / love / care…): chọn nhiều loại, mỗi loại 1 đơn Baostar; tổng số lượng chia đều hoặc tự nhiên.
+      const fam = svc ? reactionFamily(list, svc) : [];
+      let parts = null;
+      if (fam.length) { if (!r.reacts?.size || ![...r.reacts].some(id => fam.some(x => x.id === id))) r.reacts = new Set([svc.id]);
+        const ids = fam.filter(x => r.reacts.has(x.id)), w = ids.map(x => r.rmode === 'tn' ? RX_WEIGHT[String(x.child).toLowerCase()] || 5 : 1), W = w.reduce((a, b) => a + b, 0);
+        const ks = ids.map((x, i) => Math.floor(qty * w[i] / W)); let rest = qty - ks.reduce((a, b) => a + b, 0); for (let i = 0; rest > 0; i = (i + 1) % ks.length, rest--) ks[i]++;
+        parts = ids.map((x, i) => [x, ks[i]]); }
+      const cost = Math.round(parts ? parts.reduce((t, [x, k]) => t + estCost(x, k), 0) : estCost(svc, qty));
+      const lowRx = parts?.find(([x, k]) => k < x.min);
       const listPrice = pk ? autoSell : svc && s.prices[svc.id] != null ? Math.round(s.prices[svc.id] * qty) : 0;
       const lp = LINK_PLAT[platformOf(r.link)] || '', sp = svc?.platform || (pk ? platOfPkg(pk) : '');
       const error = !/^https?:\/\/\S+\.\S+/i.test(r.link) ? 'Link không hợp lệ' : !svc ? (pk ? 'Máy chủ gốc của gói không còn' : 'Chọn gói') : stateOf(svc)[1] === 'err' ? 'Máy chủ đang bảo trì'
-        : needsComments(svc) ? 'Máy chủ cần nội dung bình luận: tạo riêng bằng nút Tạo đơn' : (qty < svc.min || qty > svc.max) ? `Số lượng ${Number(svc.min).toLocaleString('vi-VN')}–${Number(svc.max).toLocaleString('vi-VN')}` : !(sell > 0) ? 'Nhập tiền khách trả' : '';
+        : needsComments(svc) ? 'Máy chủ cần nội dung bình luận: tạo riêng bằng nút Tạo đơn' : lowRx ? `${lowRx[0].child}: ${lowRx[1]} dưới mức tối thiểu ${lowRx[0].min}`
+        : !parts && (qty < svc.min || qty > svc.max) ? `Số lượng ${Number(svc.min).toLocaleString('vi-VN')}–${Number(svc.max).toLocaleString('vi-VN')}` : !(sell > 0) ? 'Nhập tiền khách trả' : '';
       const warns = [lp && sp && norm(lp) !== norm(sp) ? `Link ${lp}, dịch vụ ${sp}` : '', ordered.get(linkKey(r.link)) ? 'Đã có ' + ordered.get(linkKey(r.link)) : ''].filter(Boolean);
-      return { pk, svc, qty, sell, cost, listPrice, error, warns, fixed: pk?.kind === 'fixed' };
+      return { pk, svc, qty, sell, cost, listPrice, error, warns, fixed: pk?.kind === 'fixed', fam, parts };
     };
     const dlg = h('dialog', { className: 'svc-dialog svc-bulk', onclose: () => dlg.remove() });
     const body = h('tbody'), sum = h('div', { className: 'svc-sum' }), err = h('div', { className: 'status err', hidden: true });
@@ -606,7 +631,8 @@
           h('td', {}, h('input', { type: 'checkbox', checked: r.on, title: 'Tạo đơn cho link này', onchange: e => { r.on = e.target.checked; draw(); } })),
           h('td', { className: 'svc-bulk-link' }, plat ? platBadge(plat, 18) : h('span', { className: 'plat-badge any', textContent: '?' }),
             h('input', { type: 'text', value: r.link, title: r.link, onchange: e => { r.link = e.target.value.trim(); draw(); } })),
-          h('td', {}, sel, r.why && r.pkgId ? h('div', { className: 'hint', textContent: 'Tự chọn ' + r.why }) : null),
+          h('td', {}, sel, c.fam.length ? rxChips(c.fam.map(x => [x.id, x.child]), r.reacts, r.rmode, (set, mode) => { r.reacts = set; r.rmode = mode; draw(); }, c.parts) : null,
+            r.why && r.pkgId ? h('div', { className: 'hint', textContent: 'Tự chọn ' + r.why }) : null),
           h('td', {}, h('input', { type: 'number', min: 1, step: 1, value: c.qty || '', readOnly: c.fixed, title: c.fixed ? 'Số lượng theo gói' : '', style: 'width:96px',
             onchange: e => { r.qty = Number(e.target.value) || 0; r.sell = null; draw(); } })),
           h('td', {}, h('input', { type: 'number', min: 0, step: 'any', value: c.sell || '', style: 'width:110px', title: 'Tiền khách trả cho dòng này',
@@ -619,22 +645,42 @@
       }));
       const on = rows.filter(r => r.on).map(r => [r, calc(r)]), good = on.filter(([, c]) => !c.error);
       const sell = good.reduce((t, [, c]) => t + c.sell, 0), cost = good.reduce((t, [, c]) => t + c.cost, 0);
+      if (document.activeElement !== totalIn) totalIn.value = sell || '';
       sum.replaceChildren(h('span', {}, h('strong', { textContent: `${good.length}/${rows.length}` }), ' link sẽ lên đơn'),
-        h('span', {}, 'Khách trả ', h('strong', { textContent: money(sell) })), h('span', {}, 'Gốc ≈ ', h('strong', { textContent: money(cost) })),
+        h('label', { className: 'svc-bulk-total' }, 'Tổng khách trả ', totalIn, 'đ'), h('span', {}, 'Gốc ≈ ', h('strong', { textContent: money(cost) })),
         h('span', {}, 'Lãi ', h('strong', { className: sell - cost < 0 ? 'neg' : '', textContent: money(sell - cost) + pct(sell, cost) })),
         on.length > good.length ? h('span', { className: 'neg', textContent: `${on.length - good.length} dòng cần sửa` }) : null);
       go.disabled = !good.length; go.textContent = good.length ? `Tạo 1 báo giá chung (${good.length} link) & gửi →` : 'Tạo báo giá & gửi →';
       allBox.hidden = rows.length < 2; empty0.hidden = rows.length > 0;
     };
     // Áp dụng cho tất cả dòng đang chọn: gói + số lượng.
-    let allPkg = '';
-    const allQty = h('input', { type: 'number', min: 1, step: 1, placeholder: 'Số lượng', style: 'width:110px' });
+    let allPkg = '', allRx = new Set(), allMode = 'deu';
+    const allQty = h('input', { type: 'number', min: 1, step: 1, placeholder: 'Số lượng', style: 'width:100px' });
+    const allSell = h('input', { type: 'number', min: 0, step: 'any', placeholder: 'Khách trả / link', style: 'width:130px', title: 'Số tiền khách trả cho MỖI link' });
+    const allRxBox = h('span', { className: 'svc-bulk-allrx' });
+    const drawAllRx = () => allRxBox.replaceChildren(rxChips(RX_ALL.map(k => [k, RX_NAME[k]]), allRx, allMode, (set, mode) => { allRx = set; allMode = mode; drawAllRx(); }, null, true));
+    drawAllRx();
     const allBox = h('div', { className: 'svc-bulk-all' }, h('strong', { textContent: 'Áp dụng cho tất cả' }),
-      pkgSelect('', '', e => { allPkg = e.target.value; }, true), allQty,
+      pkgSelect('', '', e => { allPkg = e.target.value; }, true), allQty, allSell, allRxBox,
       h('button', { type: 'button', className: 'btn btn-soft btn-sm', textContent: 'Áp dụng cho các dòng đã tích', onclick: () => {
-        const n = Number(allQty.value) || 0; if (!allPkg && !n) return toast('Chọn gói hoặc nhập số lượng để áp dụng.', 3000);
-        for (const r of rows) if (r.on) { if (allPkg) { r.pkgId = allPkg; r.svcId = ''; r.why = ''; } if (n) r.qty = n; r.sell = null; } draw(); } }));
-    const paste = h('textarea', { rows: 3, placeholder: 'Dán thêm link: mỗi dòng một link (hoặc dán cả đoạn tin, app tự lọc link)' });
+        const n = Number(allQty.value) || 0, money1 = allSell.value === '' ? null : Number(allSell.value);
+        if (!allPkg && !n && money1 == null && !allRx.size) return toast('Chọn gói, số lượng, tiền khách trả hoặc cảm xúc để áp dụng.', 3500);
+        let rxMiss = 0;
+        for (const r of rows) if (r.on) {
+          if (allPkg) { r.pkgId = allPkg; r.svcId = ''; r.why = ''; r.reacts = null; }
+          if (n) r.qty = n;
+          if (allRx.size) { const fam = calc(r).fam; const ids = fam.filter(x => allRx.has(RX_KEY(x.child))).map(x => x.id); if (ids.length) { r.reacts = new Set(ids); r.rmode = allMode; } else if (fam.length) rxMiss++; }
+          r.sell = money1 != null ? money1 : (allPkg || n || allRx.size) ? null : r.sell;
+        }
+        draw(); if (rxMiss && allRx.size) toast(`${rxMiss} dòng có gói không chọn được cảm xúc (máy chủ không có loại đó).`, 5000); } }));
+    // Tổng khách trả: nhập tổng → chia cho các link theo tỷ lệ tiền từng link (làm tròn nghìn, dòng cuối nhận phần lẻ).
+    const totalIn = h('input', { type: 'number', min: 0, step: 'any', style: 'width:140px', title: 'Tổng tiền khách trả cho cả báo giá: app chia cho các link theo tỷ lệ',
+      onchange: () => { const T = Math.round(Number(totalIn.value) || 0), good = rows.filter(r => r.on).map(r => [r, calc(r)]).filter(([, c]) => c.svc && !(/Chọn gói|Link|bảo trì|không còn|bình luận/.test(c.error)));
+        if (!(T > 0) || !good.length) return draw();
+        const base = good.map(([, c]) => c.sell > 0 ? c.sell : 1), B = base.reduce((a, b) => a + b, 0); let rest = T;
+        good.forEach(([r], i) => { const v = i === good.length - 1 ? rest : Math.round(T * base[i] / B / 1000) * 1000; r.sell = Math.max(0, v); rest -= r.sell; });
+        draw(); } });
+    const paste = h('textarea', { rows: 1, style: 'min-height:38px;resize:vertical', placeholder: 'Dán thêm link: mỗi dòng một link (hoặc dán cả đoạn tin, app tự lọc link)' });
     const addPaste = () => { const found = linksIn([{ isCustomer: true, text: paste.value }]).reverse(); const raw = found.length ? found : paste.value.split(/\s+/).filter(x => /\.\w{2,}\//.test(x));
       let n = 0; for (const l of raw) if (addLink(l)) n++; paste.value = ''; draw(); toast(n ? `Đã thêm ${n} link.` : 'Không thấy link mới nào.', 3000); };
     const empty0 = h('p', { className: 'hint', textContent: 'Chưa có link nào. Dán danh sách link vào ô trên rồi bấm Thêm link.' });
@@ -646,8 +692,13 @@
       if (!on.length) return;
       const warns = on.flatMap(([r, c]) => c.warns.map(w => `• ${r.link.replace(/^https?:\/\/(www\.|m\.)?/, '').slice(0, 50)}: ${w}`));
       if (warns.length && !confirm(['Kiểm tra trước khi tạo:', ...warns, '', 'Vẫn tạo báo giá?'].join('\n'))) return;
-      const lines = on.map(([r, c]) => ({ id: uid('ln'), link: r.link, serviceId: c.svc.id, serviceName: c.svc.name, qty: c.qty, sell: c.sell, cost: c.cost, costManual: false,
-        displayName: c.pk?.name || c.svc.category || 'Dịch vụ', packageId: c.pk?.id || '', termMonths: termOf(c.svc, c.pk), comments: '', listPrice: c.listPrice }));
+      const lines = on.flatMap(([r, c]) => { const label = c.pk?.name || c.svc.category || 'Dịch vụ', base = { link: r.link, costManual: false, packageId: c.pk?.id || '', termMonths: termOf(c.svc, c.pk), comments: '' };
+        if (!c.parts || c.parts.length < 2) { const [x] = c.parts?.[0] || [c.svc];
+          return [{ ...base, id: uid('ln'), serviceId: x.id, serviceName: x.name, ...(c.parts ? { reaction: x.child } : {}), qty: c.qty, sell: c.sell, cost: c.cost, listPrice: c.listPrice, displayName: c.parts ? `${label} (${x.child})` : label }]; }
+        // Nhiều cảm xúc: mỗi loại 1 dòng (1 đơn Baostar), chia tiền khách trả / giá gói theo số lượng.
+        let restS = c.sell, restL = c.listPrice;
+        return c.parts.map(([x, k], i) => { const last = i === c.parts.length - 1, sl = last ? restS : Math.round(c.sell * k / c.qty), lp = last ? restL : Math.round(c.listPrice * k / c.qty); restS -= sl; restL -= lp;
+          return { ...base, id: uid('ln'), serviceId: x.id, serviceName: x.name, reaction: x.child, qty: k, sell: sl, cost: Math.round(estCost(x, k)), listPrice: lp, displayName: `${label} (${x.child})` }; }); });
       go.disabled = true;
       const q = await makeQuote(ctx, lines, lines[0].link, 'link');
       orderedCache = null; App.inbox?.bulkDone?.(lines.map(l => l.link));
