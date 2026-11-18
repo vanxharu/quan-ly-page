@@ -1049,7 +1049,7 @@
   function togglePin(id) { const s = pinSet(); if (s.has(id)) s.delete(id); else s.add(id); local.set('inboxPins', JSON.stringify([...s].slice(-50))); drawList(); }
   function secHead(k, arr, col) {
     const page = k.startsWith('p:') ? App.pageById?.(k.slice(2)) : null, n = arr.filter(c => c.unread_count).length;
-    const label = k === 'pin' ? 'Mục yêu thích' : k === 'zalo' ? 'Zalo cá nhân' : page?.name || 'Page';
+    const label = k === 'pin' ? 'Mục yêu thích' : k === 'all' ? 'Gần đây' : k === 'zalo' ? 'Zalo cá nhân' : page?.name || 'Page';
     return h('button', { type: 'button', className: 'tm-sec', 'aria-expanded': String(!col), dataset: { sec: k }, title: col ? 'Mở nhóm' : 'Gập nhóm',
       onclick: () => { const s = collapsedSet(); if (s.has(k)) s.delete(k); else s.add(k); local.set('inboxCollapsed', JSON.stringify([...s])); drawList(); } },
       h('span', { className: 'tm-chev' }), h('span', { className: 'tm-sec-t', textContent: label }), n ? h('span', { className: 'tm-sec-n', textContent: String(n) }) : null);
@@ -1070,7 +1070,8 @@
     const total = list.length;
     // Giới hạn 15 dòng tính riêng cho mỗi nền tảng: khách Zalo cũ hơn không bị tin Business Suite mới đẩy mất.
     // Kiểu Teams: nhóm Ghim ở trên, rồi mỗi Page một nhóm (gập / mở được); giới hạn 15 dòng tính riêng từng nhóm.
-    const pins = pinSet(), secOf = c => pins.has(c.id) ? 'pin' : platOf(c) === 'zalo' ? 'zalo' : 'p:' + c.page.id;
+    const pins = pinSet(), secOf = c => pins.has(c.id) ? 'pin' : 'all'; // Không chia theo Page nữa: một danh sách chung, mới nhất ở trên.
+    list.sort((a, b) => new Date(b.updated_time || 0) - new Date(a.updated_time || 0));
     if (!q) { const lim = S.showN || 15, cnt = {}; const keep = list.filter(c => { const p = secOf(c); if (p === 'pin') return true; cnt[p] = (cnt[p] || 0) + 1; return cnt[p] <= lim; }); list.length = 0; list.push(...keep); }
     S.hiddenMore = total - list.length;
     $('ibMore').hidden = !S.hiddenMore && ![...S.more.values()].some(x => x.after) && !bsFirst();
@@ -1101,7 +1102,7 @@
             })()));
       };
     const groups = new Map(); for (const c of list) { const k = secOf(c); if (!groups.has(k)) groups.set(k, []); groups.get(k).push(c); }
-    const order = ['pin', ...App.selected().map(p => 'p:' + p.id), 'zalo']; for (const k of groups.keys()) if (!order.includes(k)) order.push(k);
+    const order = ['pin', 'all', ...App.selected().map(p => 'p:' + p.id), 'zalo']; for (const k of groups.keys()) if (!order.includes(k)) order.push(k);
     const secs = order.filter(k => groups.has(k)), heads = secs.length > 1 || groups.has('pin'), shut = collapsedSet();
     const rowEls = (list.length ? secs.flatMap(k => { const arr = groups.get(k), col = heads && shut.has(k) && !q;
         return [heads ? secHead(k, arr, col) : null, ...(col ? [] : arr.map(itemEl))].filter(Boolean); }) : [empty(S.plat === 'zalo' && !S.convs.some(c => platOf(c) === 'zalo') ? (S.zErr === 'login' ? 'Zalo Web đang ở trang đăng nhập: mở cột Zalo (Ctrl+Shift+Z) và quét mã QR. Quét xong danh sách tự hiện ở đây.' : S.zErr && S.zErr !== 'loading' ? 'Chưa đọc được Zalo: ' + S.zErr : S.zSince && Date.now() - S.zSince > 60e3 ? 'Zalo Web chưa mở xong sau 1 phút: bấm Ctrl+Shift+Z xem cột Zalo đang hiện gì (trang đăng nhập / quay vòng), chụp màn hình gửi người hỗ trợ.' : 'Đang mở Zalo Web để đọc tin… (lần đầu mất khoảng 10–20 giây)') : S.convs.length ? 'Không có hội thoại khớp bộ lọc.' : 'Chưa có tin nhắn.')]);
