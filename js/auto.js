@@ -521,9 +521,33 @@
   const inp = (obj, key, type = 'text', w) => h('input', { type, value: obj[key] ?? '', style: w ? `width:${w}px` : '', onchange: e => { obj[key] = type === 'number' ? Number(e.target.value) : e.target.value; save(); } });
   const chk = (obj, key, label, title = '') => h('label', { className: 'ap-chk', title }, h('input', { type: 'checkbox', checked: !!obj[key], onchange: e => { obj[key] = e.target.checked; save(); if (key === 'on') draw(); } }), ' ', label);
   const sel = (obj, key, opts) => h('select', { onchange: e => { obj[key] = e.target.value; save(); } }, ...opts.map(([v, t]) => h('option', { value: v, textContent: t, selected: String(obj[key] ?? '') === v })));
-  // Chọn Page (không chọn Page nào = mọi Page).
-  const pagePick = (obj, key) => h('span', { className: 'ap-pages' }, ...App.pages.map(p => h('button', { type: 'button', className: 'chip', 'aria-pressed': String((obj[key] || []).includes(String(p.id))), textContent: p.name, title: 'Bấm để chọn / bỏ Page này (không chọn Page nào = mọi Page)',
-    onclick: e => { const s = new Set(obj[key] || []), id = String(p.id); s.has(id) ? s.delete(id) : s.add(id); obj[key] = [...s]; e.target.setAttribute('aria-pressed', String(s.has(id))); e.target.parentNode.dataset.all = String(!s.size); save(); } })));
+  // Chọn Page: nút tóm tắt ("Mọi Page" / "3 Page: A, B…") → hộp chọn có ô tìm, ảnh Page, đuôi ID (phân biệt Page trùng tên), Chọn hết / Bỏ hết.
+  const pageLabel = ids => { if (!ids?.length) return '📄 Mọi Page'; const names = ids.map(id => pageBy(id)?.name).filter(Boolean);
+    return `📄 ${ids.length} Page: ${names.slice(0, 2).map(n => n.length > 26 ? n.slice(0, 24) + '…' : n).join(', ')}${names.length > 2 ? ` +${names.length - 2}` : ''}`; };
+  function pagePick(obj, key) {
+    const btn = h('button', { type: 'button', className: 'btn btn-soft btn-sm ap-pagebtn', textContent: pageLabel(obj[key]) + ' ▾', title: 'Chọn Page (không chọn Page nào = mọi Page)' });
+    btn.onclick = () => {
+      const sel = new Set((obj[key] || []).map(String)), q = h('input', { type: 'search', placeholder: 'Tìm Page theo tên hoặc ID…', className: 'ap-pp-q' });
+      const list = h('div', { className: 'ap-pp-list' }), info = h('span', { className: 'hint' });
+      const draw = () => { const t = q.value.trim().toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+        const fit = App.pages.filter(p => !t || (p.name + ' ' + p.id).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').includes(t));
+        list.replaceChildren(...fit.map(p => { const id = String(p.id), av = App.pageAvatarUrl?.(p);
+          return h('label', { className: 'ap-pp-i' + (sel.has(id) ? ' on' : '') }, h('input', { type: 'checkbox', checked: sel.has(id), onchange: e => { e.target.checked ? sel.add(id) : sel.delete(id); draw(); } }),
+            av ? h('img', { src: av, alt: '' }) : h('span', { className: 'ap-pp-av', textContent: (p.name || '?')[0] }),
+            h('span', { className: 'ap-pp-n' }, h('span', { textContent: p.name }), h('small', { className: 'hint', textContent: 'ID …' + id.slice(-5) })));
+        }), fit.length ? null : h('div', { className: 'hint', textContent: 'Không có Page nào khớp.' }));
+        info.textContent = sel.size ? `Đã chọn ${sel.size}/${App.pages.length} Page` : 'Chưa chọn = mọi Page'; };
+      const dlg = h('dialog', { className: 'svc-dialog ap-pp', onclose: () => dlg.remove() });
+      const done = () => { obj[key] = [...sel]; btn.textContent = pageLabel(obj[key]) + ' ▾'; save(); dlg.close(); };
+      q.oninput = draw;
+      dlg.append(h('div', { className: 'card-head' }, h('h3', { className: 'card-title', textContent: 'Chọn Page' }), h('button', { type: 'button', className: 'icon-btn', 'aria-label': 'Đóng', textContent: '×', onclick: () => dlg.close() })),
+        q, h('div', { className: 'row', style: 'gap:6px;align-items:center' }, h('button', { type: 'button', className: 'btn btn-ghost btn-sm', textContent: 'Chọn hết', onclick: () => { App.pages.forEach(p => sel.add(String(p.id))); draw(); } }),
+          h('button', { type: 'button', className: 'btn btn-ghost btn-sm', textContent: 'Bỏ hết (= mọi Page)', onclick: () => { sel.clear(); draw(); } }), h('span', { className: 'grow' }), info),
+        list, h('div', { className: 'row', style: 'justify-content:flex-end' }, h('button', { type: 'button', className: 'btn btn-primary', textContent: 'Xong', onclick: done })));
+      document.body.append(dlg); dlg.showModal(); draw(); q.focus();
+    };
+    return btn;
+  }
   const card = (title, ...kids) => h('section', { className: 'card ap-card' }, h('h3', { className: 'card-title', textContent: title }), ...kids);
   const row = (...kids) => h('div', { className: 'ap-row' }, ...kids);
   function drawStatus() {
