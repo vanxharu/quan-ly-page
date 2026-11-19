@@ -23,7 +23,7 @@
     remarket: { gapDays: 7, pageLimit: 50, rules: [] },
     orders: { nudges: true, kinds: NUDGE_KINDS.map(([k]) => k), warranty: true },
     post: { schedule: false, scheduleAt: '07:30', scan: false, scanAt: '21:00', scanDays: 3 },
-    tg: { token: '', chat: '', errors: true, daily: true, dailyAt: '21:30' }
+    tg: { token: '', chat: '', errors: true, daily: true, dailyAt: '21:30', notify: true, control: true }
   });
   const merge = (a, b) => { for (const k of Object.keys(b || {})) a[k] = b[k] && typeof b[k] === 'object' && !Array.isArray(b[k]) && a[k] && typeof a[k] === 'object' ? merge({ ...a[k] }, b[k]) : b[k]; return a; };
   const getCfg = async () => merge(defaults(), await DB.get(CFG, {}));
@@ -191,6 +191,105 @@
     const r = await tg(text, c); await log('report', r?.ok ? 'ok' : 'err', r?.ok ? 'Đã gửi tóm tắt ngày về Telegram.' : 'Chưa gửi được tóm tắt: ' + (r?.error || ''));
   }
 
+
+  // ── 📱 Điều khiển qua Telegram: báo tin nhắn mới, trả lời khách (trả lời vào tin báo), AI soạn, lệnh bật/tắt ──
+  // Chỉ nhận lệnh từ đúng Chat ID đã nhập. Tin của khách → tin báo có nút; bạn "Trả lời" (reply) tin báo đó = gửi cho khách.
+  const tgApi = async (method, params, c) => { c ||= await getCfg(); const token = c.tg.token.trim();
+    if (D.tgApi) return D.tgApi({ token, method, params });
+    try { const r = await fetch(`https://api.telegram.org/bot${token}/${method}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(params || {}) }); return await r.json(); }
+    catch (e) { return { ok: false, description: e.message }; } };
+  const RC = { map: {}, drafts: {}, seen: null, mute: {} }; // map: id tin Telegram → khoá khách
+  const kb = rows => ({ inline_keyboard: rows });
+  const custBtns = k => kb([[{ text: '✨ AI soạn', callback_data: 'ai|' + k }, { text: '📋 5 tin gần đây', callback_data: 'his|' + k }, { text: '🔕 Tắt báo', callback_data: 'mute|' + k }]]);
+  const shortKey = key => { const id = Object.keys(RC.ref || {}).find(k => RC.ref[k] === key); if (id) return id; RC.ref ||= {}; const k = Math.random().toString(36).slice(2, 9); RC.ref[k] = key; return k; };
+  const convOf = key => App.inbox?.auto?.convs().find(c => c.key === key);
+  const nm = c => `${c.other?.name || 'Khách'}${c.page?.name ? ' · ' + c.page.name : ''}`;
+  async function tgNotify(c) {
+    if (!c.tg.notify || !c.tg.token || !c.tg.chat) return;
+    const A = App.inbox?.auto; if (!A) return;
+    const list = A.convs().filter(x => x.fromCustomer);
+    if (!RC.seen) { RC.seen = {}; list.forEach(x => { RC.seen[x.id] = x.updated_time; }); return; } // lần đầu: chỉ ghi mốc, không báo tin cũ
+    for (const x of list) {
+      if (RC.seen[x.id] === x.updated_time) continue; RC.seen[x.id] = x.updated_time;
+      if (RC.mute[x.key] && Date.now() < RC.mute[x.key]) continue;
+      const k = shortKey(x.key), snip = String(x.snippet || '').replace(/^Bạn:\s*/, '').slice(0, 300);
+      const r = await tgApi('sendMessage', { chat_id: c.tg.chat, text: `💬 ${nm(x)}\n${snip}\n\n↩️ Trả lời (reply) tin này để nhắn lại khách`, reply_markup: custBtns(k) }, c);
+      if (r?.ok) { RC.map[r.result.message_id] = x.key; trimMap(); }
+    }
+  }
+  const trimMap = () => { const ks = Object.keys(RC.map); if (ks.length > 400) ks.slice(0, ks.length - 400).forEach(k => delete RC.map[k]); };
+  const say = (c, text, extra = {}) => tgApi('sendMessage', { chat_id: c.tg.chat, text: String(text).slice(0, 4000), ...extra }, c);
+  async function tgSendToCustomer(c, key, text, image = '') {
+    const A = App.inbox.auto, x = convOf(key); if (!x) return say(c, '✗ Không tìm thấy khách trong danh sách hội thoại (có thể đã cũ).');
+    try { await A.send(x, text, image); await log('reply', 'ok', `📱 Từ Telegram → ${x.other.name || 'Khách'}: ${text.slice(0, 120)}`); return say(c, `✓ Đã gửi cho ${nm(x)}`); }
+    catch (e) { await log('reply', 'err', `📱 Từ Telegram → ${x.other.name || 'Khách'}: ${e.message}`); return say(c, '✗ Chưa gửi được: ' + e.message); }
+  }
+  async function tgWaiting(c) {
+    const A = App.inbox.auto; await A.refresh();
+    const list = A.convs().filter(x => x.fromCustomer && Date.now() - new Date(x.updated_time) < 3 * 864e5).slice(0, 10);
+    if (!list.length) return say(c, '✓ Không có khách nào đang chờ trả lời.');
+    for (const x of list) { const r = await say(c, `⏳ ${nm(x)} · ${Math.round((Date.now() - new Date(x.updated_time)) / 60e3)} phút\n${String(x.snippet || '').slice(0, 200)}`, { reply_markup: custBtns(shortKey(x.key)) }); if (r?.ok) RC.map[r.result.message_id] = x.key; }
+  }
+  async function tgStatus(c) {
+    const st = await getState(), L = (await DB.get(LOG, [])).filter(l => l.at > Date.now() - 864e5), n = t => L.filter(l => l.task === t && l.kind === 'ok').length;
+    const wait = App.inbox?.auto?.convs().filter(x => x.fromCustomer).length || 0;
+    return say(c, [`${c.on ? '▶ Kế hoạch đang BẬT' : '⏸ Kế hoạch đang TẮT'} · AI trả lời: ${c.reply.on ? 'bật' : 'tắt'}`, status ? 'Trạng thái: ' + status : '', `⏳ Khách đang chờ: ${wait}`,
+      `24 giờ: 💬 ${n('reply')} · 📣 ${n('remarket')} · 📦 ${n('orders')} · 🛡 ${n('warranty')} · ⚠️ ${L.filter(l => l.kind === 'err').length} lỗi`, st.hour?.length ? `AI đã trả lời ${st.hour.length} tin trong 1 giờ qua` : ''].filter(Boolean).join('\n'));
+  }
+  const HELP = ['📱 Điều khiển Get Helps', '/cho – khách đang chờ trả lời', '/trangthai – tình hình hôm nay', '/bat – bật kế hoạch tự động', '/tat – tắt kế hoạch tự động',
+    '/aibat – bật AI tự trả lời', '/aitat – tắt AI tự trả lời', '/tomtat – gửi tóm tắt 24 giờ', '', 'Trả lời (reply) vào tin báo của khách để nhắn lại khách đó.'].join('\n');
+  async function tgHandle(u, c) {
+    const chat = String(u.message?.chat?.id ?? u.callback_query?.message?.chat?.id ?? '');
+    if (chat !== String(c.tg.chat).trim()) return; // chỉ nghe đúng Chat ID của bạn
+    if (u.callback_query) {
+      const q = u.callback_query, [act, k] = String(q.data || '').split('|'); tgApi('answerCallbackQuery', { callback_query_id: q.id }, c);
+      if (act === 'send' || act === 'drop') { const d = RC.drafts[k]; delete RC.drafts[k]; if (!d) return say(c, 'Bản nháp đã hết hạn.');
+        return act === 'send' ? tgSendToCustomer(c, d.key, d.text, d.image) : say(c, '🗑 Đã bỏ bản nháp.'); }
+      const key = RC.ref?.[k]; if (!key) return say(c, 'Tin báo này đã cũ, gõ /cho để xem lại khách đang chờ.');
+      const x = convOf(key); if (!x) return say(c, '✗ Không tìm thấy khách.');
+      if (act === 'mute') { RC.mute[key] = Date.now() + 864e5; return say(c, `🔕 Tắt báo ${nm(x)} trong 24 giờ.`); }
+      if (act === 'his') { const m = (await App.inbox.auto.texts(x)).filter(m => m.text).slice(-5);
+        const r = await say(c, `📋 ${nm(x)}\n` + (m.map(m => (m.isCustomer ? '👤 ' : '🏪 ') + String(m.text).slice(0, 300)).join('\n') || '(chưa có tin đã lưu)'), { reply_markup: custBtns(k) }); if (r?.ok) RC.map[r.result.message_id] = key; return; }
+      if (act === 'ai') {
+        say(c, `✨ AI đang soạn cho ${nm(x)}…`);
+        try { const msgs = await App.inbox.auto.messagesOf(x), r = await App.inbox.auto.aiReply(x, msgs), id = Math.random().toString(36).slice(2, 9);
+          RC.drafts[id] = { key, text: r.text, image: r.image || '' };
+          const m = await say(c, `✨ Nháp cho ${nm(x)}:\n\n${r.text}${r.pt ? '\n\n📎 kèm ' + (r.pt.t.title || 'bảng giá') : ''}\n\n↩️ Muốn sửa: trả lời (reply) tin này bằng nội dung mới.`,
+            { reply_markup: kb([[{ text: '✅ Gửi', callback_data: 'send|' + id }, { text: '🗑 Bỏ', callback_data: 'drop|' + id }]]) });
+          if (m?.ok) RC.map[m.result.message_id] = key; }
+        catch (e) { say(c, '✗ AI chưa soạn được: ' + e.message); }
+        return;
+      }
+      return;
+    }
+    const m = u.message, text = String(m?.text || '').trim(); if (!text) return m?.photo ? say(c, 'Hiện chỉ gửi được chữ cho khách (chưa gửi ảnh từ Telegram).') : null;
+    const to = m.reply_to_message && RC.map[m.reply_to_message.message_id];
+    if (to) return tgSendToCustomer(c, to, text);
+    const cmd = text.split(/\s|@/)[0].toLowerCase();
+    if (cmd === '/start' || cmd === '/help' || cmd === '/trogiup') return say(c, HELP);
+    if (cmd === '/cho') return tgWaiting(c);
+    if (cmd === '/trangthai') return tgStatus(c);
+    if (cmd === '/bat' || cmd === '/tat') { c.on = cmd === '/bat'; await setCfg(c); if (C) { C.on = c.on; draw(); } await log('sys', 'info', `📱 Telegram: ${c.on ? 'bật' : 'tắt'} kế hoạch.`); return say(c, c.on ? '▶ Đã BẬT kế hoạch tự động.' : '⏸ Đã TẮT kế hoạch tự động.'); }
+    if (cmd === '/aibat' || cmd === '/aitat') { c.reply.on = cmd === '/aibat'; await setCfg(c); if (C) { C.reply.on = c.reply.on; draw(); } return say(c, `💬 AI tự trả lời: ${c.reply.on ? 'BẬT' : 'TẮT'}${c.on ? '' : ' (kế hoạch đang tắt: gõ /bat để chạy)'}`); }
+    if (cmd === '/tomtat') { const st = await getState(); delete st.ran.report; await DB.set(STATE, st); c.tg.daily = true; c.tg.dailyAt = '00:00'; return taskReport(c, st); }
+    return say(c, 'Không hiểu lệnh này.\n\n' + HELP);
+  }
+  let tgLoop = false;
+  async function tgPoll() {
+    if (tgLoop) return; tgLoop = true;
+    try {
+      const c0 = await getCfg(); tgApi('setMyCommands', { commands: [['cho', 'Khách đang chờ trả lời'], ['trangthai', 'Tình hình hôm nay'], ['bat', 'Bật kế hoạch tự động'], ['tat', 'Tắt kế hoạch tự động'], ['aibat', 'Bật AI tự trả lời'], ['aitat', 'Tắt AI tự trả lời'], ['tomtat', 'Tóm tắt 24 giờ'], ['help', 'Hướng dẫn']].map(([command, description]) => ({ command, description })) }, c0).catch(() => {});
+      while (true) {
+        const c = await getCfg(); if (!c.tg.control || !c.tg.token || !c.tg.chat) break;
+        const off = Number(local.get('tgOffset')) || 0;
+        const r = await tgApi('getUpdates', { offset: off, timeout: 25, allowed_updates: ['message', 'callback_query'] }, c);
+        if (!r?.ok) { if (/terminated by other|Conflict/i.test(r?.description || '')) await wait(30e3); else await wait(15e3); continue; }
+        for (const u of r.result || []) { local.set('tgOffset', String(u.update_id + 1)); await tgHandle(u, c).catch(e => log('sys', 'err', 'Telegram: ' + e.message)); }
+      }
+    } finally { tgLoop = false; }
+  }
+  setInterval(async () => { const c = await getCfg().catch(() => null); if (!c?.tg.token || !c.tg.chat) return; if (c.tg.control) tgPoll(); if (c.tg.notify) { await App.inbox?.auto?.refresh().catch(() => {}); tgNotify(c).catch(() => {}); } }, 20e3);
+
   // ── Vòng chạy ──
   let running = false, status = '';
   const canDrive = async () => (await idleSec()) >= 90;
@@ -287,6 +386,8 @@
         row(h('label', {}, 'Bot token ', inp(C.tg, 'token', 'password', 260)), h('label', {}, 'Chat ID ', inp(C.tg, 'chat', 'text', 140)),
           h('button', { type: 'button', className: 'btn btn-soft btn-sm', textContent: 'Gửi thử', onclick: async () => { const r = await tg('✅ Get Helps: kết nối Telegram thành công.', C); toast(r?.ok ? 'Đã gửi tin thử về Telegram.' : 'Chưa gửi được: ' + (r?.error || ''), 6000); } })),
         row(chk(C.tg, 'errors', 'Báo ngay khi có lỗi'), chk(C.tg, 'daily', 'Tóm tắt mỗi ngày lúc'), inp(C.tg, 'dailyAt', 'time')),
+        row(chk(C.tg, 'notify', '📱 Báo tin nhắn mới của khách'), chk(C.tg, 'control', '📱 Điều khiển & trả lời khách từ Telegram')),
+        h('div', { className: 'hint', textContent: 'Trên Telegram: trả lời (reply) vào tin báo của khách = nhắn lại khách đó; nút ✨ AI soạn → ✅ Gửi. Lệnh: /cho (khách đang chờ), /trangthai, /bat, /tat, /aibat, /aitat, /tomtat, /help. Bot chỉ nghe đúng Chat ID của bạn. Chạy được cả khi kế hoạch đang tắt, miễn là app đang mở.' }),
         h('div', { className: 'hint', textContent: 'Tạo bot: nhắn @BotFather trên Telegram → /newbot → chép token. Lấy Chat ID: nhắn bot của bạn 1 tin, rồi nhắn @userinfobot để xem ID. (Báo qua Zalo cá nhân chưa hỗ trợ: Zalo không có cách gửi tự động cho tài khoản cá nhân.)' })),
       card('📜 Nhật ký',
         row(h('select', { id: 'apLogF', onchange: drawLog }, h('option', { value: '', textContent: 'Tất cả việc' }), ...Object.entries(TASK).map(([k, t]) => h('option', { value: k, textContent: t }))),
@@ -295,5 +396,5 @@
     drawStatus(); drawLog();
   }
   App.tab('autoplan', { async refresh() { C = await getCfg(); draw(); } });
-  App.auto = { tick, log, tg, getCfg };
+  App.auto = { tick, log, tg, getCfg, tgHandle, tgNotify, RC };
 })();

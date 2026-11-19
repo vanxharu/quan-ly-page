@@ -569,6 +569,13 @@ app.whenReady().then(async () => {
         body: JSON.stringify({ chat_id: String(a?.chat || ''), text: String(a?.text || '').slice(0, 4000), disable_web_page_preview: true }) });
       const j = await r.json().catch(() => ({})); return j.ok ? { ok: true } : { error: j.description || ('HTTP ' + r.status) }; }
     catch (err) { return { error: err.message }; } });
+  // Telegram: gọi API bất kỳ (getUpdates chờ dài để điều khiển app từ điện thoại, sendMessage, answerCallbackQuery…).
+  ipcMain.handle('tg-api', async (e, a) => { if (!fromPage(e)) return { ok: false, description: 'denied' };
+    const tok = String(a?.token || '').trim(), method = String(a?.method || '');
+    if (!/^\d+:[\w-]+$/.test(tok) || !/^[a-zA-Z]+$/.test(method)) return { ok: false, description: 'Bot token không đúng dạng' };
+    try { const r = await net.fetch(`https://api.telegram.org/bot${tok}/${method}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(a?.params || {}) });
+      return await r.json().catch(() => ({ ok: false, description: 'HTTP ' + r.status })); }
+    catch (err) { return { ok: false, description: err.message }; } });
   // Trang app treo / bị đóng: tải lại. Có Kế hoạch bật mà 4 phút không nhận nhịp từ trang → tải lại trang.
   pageView.webContents.on('render-process-gone', (ev, d) => { if (d?.reason !== 'clean-exit') setTimeout(() => { try { pageView.webContents.reload(); } catch {} }, 2000); });
   let hangT = 0;
