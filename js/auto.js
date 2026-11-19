@@ -71,13 +71,19 @@
       const mark = x.updated_time;
       try {
         const msgs = await A.messagesOf(x);
-        const last = [...msgs].reverse().find(m => m.text);
+        const last = [...msgs].reverse().find(m => m.text || m.pic);
         if (!last || !last.isCustomer) { st.replied[x.id] = mark; continue; } // đã có người trả lời
-        const r = await A.aiReply(x, msgs);
+        // Khách gửi ảnh / nói "bài đầu" mà không có link: tự tìm bài trên trang khách, tìm được thì hỏi xác nhận + báo giá; không thì xin link.
+        let note = '';
+        if (A.needLink(x, msgs)) { const f = await A.findPost(x, msgs).catch(() => ({ need: true }));
+          note = f.link ? `Khách chưa gửi link, app đã tìm thấy bài khách nói trên trang của khách${f.byImage ? ' (khớp ảnh khách gửi)' : ''}: ${f.link}\nHãy gửi lại đúng link này, hỏi khách xác nhận có phải bài này không, và báo giá theo dịch vụ + số lượng khách đã nói.`
+            : 'Khách chưa gửi link bài và app không tự tìm được bài. Hãy xin khách link bài, kèm hướng dẫn ngắn: bấm "Chia sẻ" dưới bài (hoặc dấu ⋯) → "Sao chép liên kết" → dán vào đây.';
+          await log('reply', 'info', `${x.other.name || 'Khách'}: chưa có link bài → ${f.link ? 'tìm thấy ' + f.link : 'không tìm được, xin link'}`); }
+        const r = await A.aiReply(x, msgs, note);
         if (!r.text?.trim()) throw Error('AI không soạn được câu trả lời');
         await A.send(x, r.text, r.image || '');
         st.replied[x.id] = mark; st.hour.push(Date.now()); await DB.set(STATE, st);
-        await log('reply', 'ok', `${x.other.name || 'Khách'}: "${String(last.text).slice(0, 60)}" → ${r.text.slice(0, 120)}${r.pt ? ' + 📎 ' + (r.pt.t.title || 'bảng giá') : ''}`);
+        await log('reply', 'ok', `${x.other.name || 'Khách'}: "${String(last.text || '[ảnh]').slice(0, 60)}" → ${r.text.slice(0, 120)}${r.pt ? ' + 📎 ' + (r.pt.t.title || 'bảng giá') : ''}`);
       } catch (e) { st.failed[x.id] = Date.now(); await DB.set(STATE, st); await log('reply', 'err', `${x.other.name || 'Khách'}: ${e.message}`); if (/đăng nhập|Windows/.test(e.message)) return; }
     }
   }

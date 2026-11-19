@@ -660,3 +660,10 @@ body.teams .ib-ai-opt{background:transparent;border-color:var(--tm-compose-line)
 .ap-log-i{display:grid;grid-template-columns:96px 120px 1fr;gap:8px;padding:3px 4px;border-bottom:1px solid var(--border,#8882)}
 .ap-log-i.err{color:var(--danger,#d13438)}.ap-log-t{font-weight:600}
 .ap-row label{display:inline-flex;align-items:center;gap:4px}.ap-row input[type=number]{padding:4px 6px}
+/* Tìm bài trên trang khách */
+.ib-fp{width:min(860px,96vw)}
+.ib-fp-list{display:flex;flex-direction:column;gap:10px;max-height:62vh;overflow:auto;margin-top:8px}
+.ib-fp-i{display:flex;gap:12px;padding:8px;border:1px solid var(--border,#8884);border-radius:8px}.ib-fp-i.on{border-color:var(--primary);box-shadow:0 0 0 1px var(--primary)}
+.ib-fp-i img{width:220px;max-height:260px;object-fit:cover;object-position:top;border-radius:6px;flex:none}
+.ib-fp-meta{display:flex;flex-direction:column;gap:6px;min-width:0}.ib-fp-meta .hint{white-space:pre-wrap}
+.ib-fp-shot{height:64px;border-radius:4px}

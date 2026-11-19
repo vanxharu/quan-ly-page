@@ -1,6 +1,6 @@
 // Meta Assistant cho Windows: mở trang web (luôn là bản mới nhất trên GitHub Pages) trong cửa sổ riêng
 // và chạy sẵn tiện ích Studio AI (ChatGPT) bên trong, không cần Chrome.
-const { app, BaseWindow, BrowserWindow, Menu, WebContentsView, clipboard, ipcMain, net, powerMonitor, powerSaveBlocker, safeStorage, screen, session, shell } = require('electron');
+const { app, BaseWindow, BrowserWindow, Menu, WebContentsView, clipboard, ipcMain, nativeImage, net, powerMonitor, powerSaveBlocker, safeStorage, screen, session, shell } = require('electron');
 const path = require('path'), crypto = require('crypto');
 const { ElectronChromeExtensions } = require('electron-chrome-extensions');
 const { createMetaAuto } = require('./meta-auto');
@@ -8,6 +8,7 @@ const { createZaloAuto } = require('./zalo-auto');
 const { setupLock } = require('./app-lock');
 const { readCatalog } = require('./svc-catalog');
 const createFbPeople = require('./fb-people');
+const createFbPosts = require('./fb-posts');
 const createGpt = require('./gpt-ask');
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
@@ -582,6 +583,9 @@ app.whenReady().then(async () => {
   pageView.webContents.on('unresponsive', () => { clearTimeout(hangT); hangT = setTimeout(() => { if (autoSys.watchdog) try { pageView.webContents.forcefullyCrashRenderer(); pageView.webContents.reload(); } catch {} }, 60e3); });
   pageView.webContents.on('responsive', () => clearTimeout(hangT));
   setInterval(() => { if (autoSys.watchdog && lastBeat && Date.now() - lastBeat > 4 * 60e3) { lastBeat = Date.now(); try { pageView.webContents.reload(); } catch {} } }, 60e3);
+  // Khách không gửi link: tìm bài trên trang khách, so ảnh khách gửi.
+  const fbPosts = createFbPosts({ BrowserWindow, partition: META, asChrome, ses: metaSes, nativeImage });
+  ipcMain.handle('fb-find-posts', (e, args) => !fromPage(e) ? { error: 'denied' } : fbPosts.findPosts(args || {}));
   ipcMain.handle('fb-profile-counts', (e, args) => !fromPage(e) ? { error: 'denied' } : fbPeople.profileCounts(args || {}));
   ipcMain.handle('meta-lookup', (e, args) => fromPage(e) ? auto.lookupProfile(args || {}) : { error: 'denied' });
   // Lệnh trình duyệt (CDP) cho khung ngầm Zalo: bấm chuột / phím / chèn chữ thật như khung Business Suite.

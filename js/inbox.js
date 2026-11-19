@@ -188,6 +188,7 @@
           h('div', { className: 'composer' },
             h('div', { className: 'ib-bulk ib-warr', id: 'ibWarr', hidden: true }),
             h('div', { className: 'ib-bulk ib-duk', id: 'ibDuk', hidden: true }),
+            h('div', { className: 'ib-bulk ib-duk', id: 'ibLink', hidden: true }),
             h('div', { className: 'ib-bulk', id: 'ibBulk', hidden: true }),
             h('div', { id: 'ibOrder', hidden: true }),
             h('div', { className: 'popover', id: 'ibPicker', hidden: true }, picker.el),
@@ -419,7 +420,7 @@
   // (giống bạn gõ trong Business Suite), nên không vướng giới hạn của API.
   const bsMsgCache = new Map();
   // Tin Business Suite / Zalo → dạng chung { isCustomer, text, ts } (gợi ý AI, tạo đơn, bảo hành… dùng).
-  const bsMsgs = list => (list || []).filter(m => !m.sep).map(m => ({ isCustomer: !m.mine, text: [m.text, m.share].filter(Boolean).join(' '), ts: m.ts || 0 }));
+  const bsMsgs = list => (list || []).filter(m => !m.sep).map(m => ({ isCustomer: !m.mine, text: [m.text, m.share].filter(Boolean).join(' '), ts: m.ts || 0, pic: /^https?:/.test(m.pic || '') ? m.pic : '' }));
   async function openBs(c, { silent = false, older = false } = {}) {
     if (!silent) {
       App.services?.closeDock?.();
@@ -633,7 +634,7 @@
   const priceBlock = pts => pts.length ? ['## MẪU BẢNG GIÁ CÓ SẴN (shop gửi kèm cho khách)', ...pts.map(p => `[${p.code}] ${p.t.title || 'Mẫu'}: ${String(p.t.content || '').replace(/\s+/g, ' ').slice(0, 300)}${p.t.imageData ? ' (kèm ảnh bảng giá)' : ''}`),
     'Khi khách hỏi giá / muốn xem giá / chưa biết chọn gói của dịch vụ có mẫu ở trên: đặt "price" = mã mẫu hợp nhất với dịch vụ khách hỏi (vd "b1"); câu trả lời khi đó chỉ cần ngắn gọn kiểu "em gửi mình bảng giá ạ", không chép lại cả bảng giá. Không hợp thì "price": null.', ''] : [];
   const withPrice = (text, p, c) => p ? { text: [String(text || '').trim(), App.resolveVars(p.t.content || '', { name: c.other.name || '', pageName: c.page?.name || '' }).trim()].filter(Boolean).join('\n\n'), image: p.t.imageData || '' } : { text, image: '' };
-  function aiPrompt({ shop, cx, tpls, msgs, name, bank, pts = [] }) {
+  function aiPrompt({ shop, cx, tpls, msgs, name, bank, pts = [], note = '' }) {
     const cut = (t, n) => { t = String(t || '').replace(/\s+/g, ' ').trim(); return t.length > n ? t.slice(0, n) + '…' : t; };
     const conv = msgs.slice(-20).map(m => (m.isCustomer ? 'Khách: ' : 'Shop: ') + (cut(m.text, 400) || '[ảnh / tệp]')).join('\n');
     return [`Bạn là nhân viên chăm sóc khách của shop "${shop.name || 'shop'}", bán dịch vụ tăng tương tác mạng xã hội (like, follow, view, thành viên nhóm…). Shop xưng "${shop.me || 'em'}", gọi khách là "${shop.you || 'anh/chị'}". Viết tiếng Việt tự nhiên, thân thiện, ngắn như nhắn Messenger (1–3 câu, emoji vừa phải).`,
@@ -649,6 +650,7 @@
       '## BẢNG GIÁ', cx.prices.length ? cx.prices.slice(0, 50).map(l => cut(l, 220)).join('\n') : '(chưa có gói bán: không báo giá cụ thể, mời khách gửi link để báo giá)', '',
       `## KHÁCH: ${name || 'Khách'}`, 'Đơn đã mua:', cx.orders.join('\n') || '(chưa mua lần nào)', 'Báo giá:', cx.pending.join('\n') || '(không có)', '',
       '## MẪU TIN CỦA SHOP (học giọng văn, không cần chép nguyên)', tpls.map(t => '- ' + cut(t.content, 220)).join('\n') || '(không có)', '',
+      ...(note ? ['## GHI CHÚ QUAN TRỌNG CHO BẠN', note, ''] : []),
       '## HỘI THOẠI (cũ → mới)', conv].filter(x => x !== '').join('\n');
   }
   function aiParse(t) {
@@ -879,6 +881,68 @@
       h('div', { className: 'hint' }, 'Meta hạn chế nhắn cho khách im lặng quá 24 giờ / 7 ngày; gửi quá nhiều tin giống nhau có thể bị khoá tính năng nhắn tin của Page. Khi đang gửi, app mở lần lượt từng hội thoại.'));
     document.body.append(dlg); dlg.showModal(); textHint(); filter();
   }
+  // ── Khách không gửi link (gửi ảnh chụp bài / "bài đầu luôn"): tìm bài trên trang khách, so ảnh, xin link ──
+  const HAS_LINK = /https?:\/\/|(?:^|\s)(?:www\.)?(?:facebook|fb|tiktok|instagram|youtube|youtu)\.(?:com|be|me|watch)\//i;
+  const POST_WORD = /bài (đầu|trên|mới nhất|mới đăng|vừa đăng|ghim|này|đó|kia|đăng)|như (ảnh|hình|trên)|ảnh (trên|này)|trang (của )?(mình|em|chị|anh)|bài của (mình|em|chị|anh)/i;
+  const WANT = /like|lai\b|follow|theo dõi|\bfl\b|tim|tym|view|mắt|lượt xem|share|chia sẻ|cmt|bình luận|sub|mem|thành viên|tương tác|cảm xúc/i;
+  function needLink(msgs) {
+    const list = (msgs || []).filter(m => m.text || m.pic), recent = list.slice(-12), cust = recent.filter(m => m.isCustomer);
+    if (!cust.length || recent.some(m => m.isCustomer && HAS_LINK.test(m.text || ''))) return null;
+    const pics = cust.filter(m => m.pic).map(m => m.pic).slice(-3), said = cust.slice(-4).some(m => POST_WORD.test(m.text || ''));
+    if (!pics.length && !said) return null;
+    if (!list.slice(-24).some(m => m.isCustomer && WANT.test(m.text || ''))) return null;
+    return { pics, first: cust.slice(-4).some(m => /bài (đầu|trên cùng|mới nhất|mới đăng|vừa đăng)|đầu (luôn|tiên)/i.test(m.text || '')) };
+  }
+  const profileOf = c => { const m = S.manual?.[c.key]; return m?.profileUrl || (m?.uid ? 'https://www.facebook.com/profile.php?id=' + m.uid : ''); };
+  async function findPostAuto(c, msgs) { // cho Kế hoạch: { link, score } hoặc null
+    const nl = needLink(msgs), url = profileOf(c); if (!nl || !url || !window.metaDesktop?.fbFindPosts) return { need: !!nl };
+    const r = await window.metaDesktop.fbFindPosts({ url, pics: nl.pics }).catch(() => null);
+    if (!r?.posts?.length) return { need: true };
+    const i = r.best >= 0 ? r.best : nl.first && !nl.pics.length ? 0 : -1;
+    return { need: true, link: i >= 0 ? r.posts[i].link : '', byImage: r.best >= 0 };
+  }
+  function drawLinkBar() {
+    const box = $('ibLink'); if (!box) return; const c = S.conv, nl = c ? needLink(S.messages) : null;
+    if (!nl || S.linkHide === c.id + '|' + c.updated_time) { box.hidden = true; return box.replaceChildren(); }
+    box.hidden = false;
+    box.replaceChildren(h('span', { className: 'ib-bulk-ico', textContent: '📷' }),
+      h('span', { className: 'ib-bulk-txt', textContent: nl.pics.length ? 'Khách gửi ảnh, chưa gửi link bài' : 'Khách nói tới bài nhưng chưa gửi link' }),
+      h('button', { type: 'button', className: 'btn btn-soft btn-sm', textContent: '🔎 Tìm bài trên trang khách', onclick: () => findPostDialog(c, nl) }),
+      h('button', { type: 'button', className: 'btn btn-soft btn-sm', textContent: '✉ Xin link', title: 'Đưa tin xin link + hướng dẫn lấy link vào ô nhập', onclick: () => askLink(c) }),
+      h('button', { type: 'button', className: 'btn btn-ghost btn-sm', textContent: 'Ẩn', onclick: () => { S.linkHide = c.id + '|' + c.updated_time; box.hidden = true; } }));
+  }
+  async function askLink(c) {
+    const tpl = App.templates ? (await App.templates.list().catch(() => [])).find(t => /link/i.test(t.title || '') && /lấy|copy|sao chép|hướng dẫn/i.test((t.title || '') + (t.content || ''))) : null;
+    const text = tpl ? App.resolveVars(tpl.content || '', { name: c.other.name || '', pageName: c.page?.name || '' })
+      : 'Dạ mình gửi em link bài giúp em nha 🙏\nCách lấy link trên điện thoại: bấm nút "Chia sẻ" dưới bài (hoặc dấu ⋯ góc trên bài) → "Sao chép liên kết" → dán vào đây là được ạ.';
+    App.inbox.compose({ key: c.key, text, image: tpl?.imageData || '', autoSend: false });
+  }
+  async function findPostDialog(c, nl) {
+    if (!window.metaDesktop?.fbFindPosts) return toast('Tìm bài cần app Get Helps trên Windows (bản mới nhất).', 6000);
+    const urlIn = h('input', { type: 'text', value: profileOf(c), placeholder: 'Link trang Facebook của khách (facebook.com/…)', style: 'flex:1;min-width:0' });
+    const body = h('div', { className: 'ib-fp-list' }), st = h('div', { className: 'hint' });
+    const dlg = h('dialog', { className: 'svc-dialog ib-fp', onclose: () => dlg.remove() });
+    const go = async () => {
+      const url = urlIn.value.trim(); if (!url) { st.textContent = 'Nhập link trang Facebook của khách (bấm vào tên khách trong cột Meta để lấy).'; return; }
+      st.textContent = `Đang mở trang khách và đọc bài mới nhất${nl.pics.length ? ', so với ảnh khách gửi' : ''}… (15–40 giây)`; body.replaceChildren(); btn.disabled = true;
+      const r = await window.metaDesktop.fbFindPosts({ url, pics: nl.pics }).catch(e => ({ error: e.message })); btn.disabled = false;
+      if (r?.error) { st.textContent = '✗ ' + r.error; return; }
+      const pick = r.best >= 0 ? r.best : nl.first ? 0 : -1;
+      st.textContent = `${r.posts.length} bài mới nhất trên trang khách.` + (r.compared ? (r.best >= 0 ? ' ✓ Đã tìm thấy bài giống ảnh khách gửi.' : ' Chưa thấy bài nào giống hẳn ảnh khách gửi: bạn tự nhìn chọn.') : '') + (nl.first && r.best < 0 ? ' Khách nói "bài đầu": chọn sẵn bài đầu tiên.' : '');
+      body.replaceChildren(...r.posts.map((p, i) => h('div', { className: 'ib-fp-i' + (i === pick ? ' on' : '') },
+        p.thumb ? h('img', { src: p.thumb, alt: '' }) : h('div', { className: 'hint', textContent: '(không có ảnh xem trước)' }),
+        h('div', { className: 'ib-fp-meta' }, i === pick ? h('strong', { textContent: r.best === i ? '✓ Giống ảnh khách gửi nhất' : '★ Bài đầu tiên' }) : null,
+          h('div', { className: 'hint', textContent: p.text || '(không có chữ)' }), p.dist != null ? h('div', { className: 'hint', textContent: `Độ khác ảnh: ${p.dist}/64` }) : null,
+          h('div', { className: 'row', style: 'gap:6px' },
+            h('button', { type: 'button', className: 'btn btn-primary btn-sm', textContent: 'Chọn bài này → tạo đơn', onclick: () => { dlg.close(); App.services.bulkDialog({ page: c.page, key: c.key, name: c.other.name || '', messages: S.messages }, [p.link]); } }),
+            h('button', { type: 'button', className: 'btn btn-ghost btn-sm', textContent: 'Hỏi khách bài này', title: 'Đưa tin "có phải bài này không" + link vào ô nhập', onclick: () => { dlg.close(); App.inbox.compose({ key: c.key, text: `Dạ có phải bài này không ạ?\n${p.link}`, autoSend: false }); } }),
+            h('a', { href: p.link, target: '_blank', rel: 'noopener', className: 'btn btn-ghost btn-sm', textContent: 'Mở' }))))));
+    };
+    const btn = h('button', { type: 'button', className: 'btn btn-soft', textContent: '🔎 Tìm', onclick: go });
+    dlg.append(h('div', { className: 'card-head' }, h('h3', { className: 'card-title', textContent: '🔎 Tìm bài trên trang của ' + (c.other.name || 'khách') }), h('button', { type: 'button', className: 'icon-btn', 'aria-label': 'Đóng', textContent: '×', onclick: () => dlg.close() })),
+      h('div', { className: 'row', style: 'gap:8px' }, urlIn, btn), nl.pics.length ? h('div', { className: 'row', style: 'gap:6px' }, h('span', { className: 'hint', textContent: 'Ảnh khách gửi:' }), ...nl.pics.map(u => h('img', { src: u, className: 'ib-fp-shot', alt: '' }))) : null, st, body);
+    document.body.append(dlg); dlg.showModal(); if (urlIn.value) go();
+  }
   // ── Cho Kế hoạch tự động (js/auto.js): làm việc với Hộp thư không qua giao diện ──
   const autoWait = ms => new Promise(r => setTimeout(r, ms));
   async function autoOpen(c) {
@@ -909,12 +973,12 @@
     async sendKey(key, text, image = '') { const c = S.convs.find(x => x.key === key); if (!c) throw Error('khách không còn trong danh sách hội thoại'); return this.send(c, text, image); },
     messagesOf: async c => { await autoOpen(c); for (let t = 0; t < 32 && !S.messages?.length; t++) await autoWait(250); await autoWait(1500); return S.conv?.id === c.id ? S.messages || [] : []; },
     // AI trả lời 1 khách (đang mở): câu đầu tiên AI soạn + bảng giá nếu AI chọn.
-    async aiReply(c, msgs) {
+    async aiReply(c, msgs, note = '') {
       if (!window.metaDesktop?.gptAsk) throw Error('Cần app Get Helps trên Windows');
       const cx = await App.services.aiContext(c.key).catch(() => ({ prices: [], orders: [], pending: [] }));
       const shop = await aiShop({ shop: c.page?.name || '', ...(cx.invoice?.shop ? cx.invoice : {}) }), pts = await priceTpls(shop);
       const tpls = App.templates ? (await App.templates.list().catch(() => [])).filter(t => t.content).slice(0, 8) : [];
-      const text = await autoAsk(aiPrompt({ shop, cx, tpls, msgs: msgs.filter(m => m.text), name: c.other.name, bank: cx.bank, pts }), t => aiParse(t).replies.length > 0);
+      const text = await autoAsk(aiPrompt({ shop, cx, tpls, msgs: msgs.filter(m => m.text || m.pic).map(m => m.text ? m : { ...m, text: '[gửi một ảnh]' }), name: c.other.name, bank: cx.bank, pts, note }), t => aiParse(t).replies.length > 0);
       const { replies, price } = aiParse(text), pt = pts.find(p => p.code === price) || null;
       return { ...withPrice(replies[0], pt, c), pt };
     },
@@ -935,6 +999,7 @@
       }
       return out;
     },
+    needLink: (c, msgs) => needLink(msgs), findPost: (c, msgs) => findPostAuto(c, msgs),
     fill: (tpl, c) => App.services.dukFill(tpl, { name: c.other.name, q: S.stages?.get(c.id)?.q }),
     sentToday, MASS_SENT
   };
@@ -951,7 +1016,7 @@
       h('button', { type: 'button', className: 'btn btn-ghost btn-sm', textContent: 'Ẩn', title: 'Ẩn thanh này (khách nhắn báo tụt lần sau sẽ hiện lại)', onclick: () => { S.warrHide.add(sig); box.hidden = true; } }));
   }
   async function drawBulk() {
-    drawWarr().catch(() => {}); drawDuk().catch(() => {});
+    drawWarr().catch(() => {}); drawDuk().catch(() => {}); drawLinkBar();
     const box = $('ibBulk'); if (!box) return;
     const c = S.conv; if (!c || !App.services?.bulkDialog) { box.hidden = true; return; }
     const links = App.services.linksIn(S.messages || []); // mới nhất trước
@@ -1538,7 +1603,7 @@
   App.inbox.setPane = setPane;
   function resetThread() {
     setPane(S.conv ? 'thread' : 'list'); S.lastMsgs = []; if ($('ibMiniBtn')) $('ibMiniBtn').hidden = !S.conv; pushMini(true); // đang mở khách (resetThread trước khi vẽ khách mới) → giữ màn hội thoại
-    S.reply = null; drawReply(); closePop(); setCView('chat'); S.pickLinks.clear(); if ($('ibBulk')) $('ibBulk').hidden = true; if ($('ibWarr')) $('ibWarr').hidden = true; if ($('ibDuk')) $('ibDuk').hidden = true; if ($('ibAi')) { $('ibAi').hidden = true; $('ibAi').replaceChildren(); } S.aiFor = ''; if ($('ibCTabs')) $('ibCTabs').hidden = !S.conv;
+    S.reply = null; drawReply(); closePop(); setCView('chat'); S.pickLinks.clear(); if ($('ibBulk')) $('ibBulk').hidden = true; if ($('ibWarr')) $('ibWarr').hidden = true; if ($('ibDuk')) $('ibDuk').hidden = true; if ($('ibLink')) $('ibLink').hidden = true; if ($('ibAi')) { $('ibAi').hidden = true; $('ibAi').replaceChildren(); } S.aiFor = ''; if ($('ibCTabs')) $('ibCTabs').hidden = !S.conv;
     S.draftReady = false; S.image = ''; S.tpl = null;
     if(!$('ibText'))return; // Đổi Page trước khi mở Hộp thư vẫn hợp lệ.
     $('ibText').value = ''; $('ibText').disabled = true; drawAttach();
