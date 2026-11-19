@@ -97,34 +97,37 @@
         && !(st.remarketed[x.key] && Date.now() - st.remarketed[x.key] < (Number(c.remarket.gapDays) || 0) * 864e5); });
   }
   async function taskRemarket(c, st, A) {
-    for (const r of c.remarket.rules) {
-      if (!ruleDue(r, st)) continue;
-      st.ran['rm:' + r.id] ||= 0; // số tin đã gửi hôm nay theo lịch này
-      const max = Math.max(1, Number(r.limit) || 30), left = max - (Number(st.ran['rm:' + r.id]) || 0);
-      const cand = pickFor(r, c, st, A).slice(0, left);
-      if (!cand.length) { st.ran['rm:' + r.id] = 'done'; await DB.set(STATE, st); await log('remarket', 'info', `${r.name || 'Lịch'}: không còn khách nào khớp bộ lọc hôm nay.`); continue; }
-      if (!await canDrive()) return;
-      let texts = new Map();
+    for (const r of c.remarket.rules) { if (!ruleDue(r, st)) continue; if ((await runRule(r, c, st, A)).stop) return; }
+  }
+  // Chạy 1 lịch remarketing (theo giờ hẹn, hoặc "chạy ngay" từ app / Telegram). Trả { sent, stop }.
+  async function runRule(r, c, st, A) {
+    st.ran['rm:' + r.id] = Number(st.ran['rm:' + r.id]) || 0; // số tin đã gửi hôm nay theo lịch này
+    const max = Math.max(1, Number(r.limit) || 30), left = max - st.ran['rm:' + r.id];
+    const cand = pickFor(r, c, st, A).slice(0, left); let sent = 0;
+    if (!cand.length) { st.ran['rm:' + r.id] = 'done'; await DB.set(STATE, st); await log('remarket', 'info', `${r.name || 'Lịch'}: không còn khách nào khớp bộ lọc hôm nay.`); return { sent }; }
+    if (!await canDrive()) return { sent, stop: true };
+    let texts = new Map();
+    try {
+      if (r.mode === 'tpl') cand.forEach(x => texts.set(x.id, { text: A.fill(r.text || '', x), image: '' }));
+      else texts = await A.aiMass(cand, { mode: r.mode, goal: r.text || GOAL[r.group] || GOAL.all });
+    } catch (e) { await log('remarket', 'err', `${r.name || 'Lịch'}: ${e.message}`); return { sent, stop: true }; }
+    for (const x of cand) {
+      if (!r.adhoc && !(await getCfg()).on) return { sent, stop: true };
+      if (!await canDrive()) return { sent, stop: true }; // bạn quay lại dùng máy: tạm dừng, lần sau chạy tiếp
+      const m = texts.get(x.id); if (!m?.text?.trim()) { st.remarketed[x.key] = Date.now(); continue; }
+      const pk = String(x.page?.id || A.plat(x)), day = await A.sentToday();
+      if ((day.n[pk] || 0) >= (Number(c.remarket.pageLimit) || 50)) continue;
       try {
-        if (r.mode === 'tpl') cand.forEach(x => texts.set(x.id, { text: A.fill(r.text || '', x), image: '' }));
-        else texts = await A.aiMass(cand, { mode: r.mode, goal: r.text || GOAL[r.group] || GOAL.all });
-      } catch (e) { await log('remarket', 'err', `${r.name || 'Lịch'}: ${e.message}`); return; }
-      for (const x of cand) {
-        if (!(await getCfg()).on || !await canDrive()) return; // bạn quay lại dùng máy: tạm dừng, lần sau chạy tiếp
-        const m = texts.get(x.id); if (!m?.text?.trim()) { st.remarketed[x.key] = Date.now(); continue; }
-        const pk = String(x.page?.id || A.plat(x)), sent = await A.sentToday();
-        if ((sent.n[pk] || 0) >= (Number(c.remarket.pageLimit) || 50)) continue;
-        try {
-          await A.send(x, m.text, m.image || '');
-          sent.n[pk] = (sent.n[pk] || 0) + 1; await DB.set(A.MASS_SENT, sent);
-          st.remarketed[x.key] = Date.now(); st.ran['rm:' + r.id] = (Number(st.ran['rm:' + r.id]) || 0) + 1; await DB.set(STATE, st);
-          await log('remarket', 'ok', `${r.name || 'Lịch'} → ${x.other.name || 'Khách'}: ${m.text.slice(0, 120)}`);
-        } catch (e) { st.remarketed[x.key] = Date.now(); await DB.set(STATE, st); await log('remarket', 'err', `${r.name || 'Lịch'} → ${x.other.name || 'Khách'}: ${e.message}`); }
-        // AI viết: thời gian soạn đã giãn cách; mẫu chung: chờ 20–40 giây.
-        await wait(r.mode === 'tpl' ? 20e3 + Math.random() * 20e3 : 6e3 + Math.random() * 6e3);
-      }
-      if ((Number(st.ran['rm:' + r.id]) || 0) >= max || !pickFor(r, c, st, A).length) { st.ran['rm:' + r.id] = 'done'; await DB.set(STATE, st); }
+        await A.send(x, m.text, m.image || '');
+        day.n[pk] = (day.n[pk] || 0) + 1; await DB.set(A.MASS_SENT, day); sent++;
+        st.remarketed[x.key] = Date.now(); st.ran['rm:' + r.id] = (Number(st.ran['rm:' + r.id]) || 0) + 1; await DB.set(STATE, st);
+        await log('remarket', 'ok', `${r.name || 'Lịch'} → ${x.other.name || 'Khách'}: ${m.text.slice(0, 120)}`);
+      } catch (e) { st.remarketed[x.key] = Date.now(); await DB.set(STATE, st); await log('remarket', 'err', `${r.name || 'Lịch'} → ${x.other.name || 'Khách'}: ${e.message}`); }
+      // AI viết: thời gian soạn đã giãn cách; mẫu chung: chờ 20–40 giây.
+      await wait(r.mode === 'tpl' ? 20e3 + Math.random() * 20e3 : 6e3 + Math.random() * 6e3);
     }
+    if ((Number(st.ran['rm:' + r.id]) || 0) >= max || !pickFor(r, c, st, A).length) { st.ran['rm:' + r.id] = 'done'; await DB.set(STATE, st); }
+    return { sent };
   }
 
   // ── Việc 3: Đơn & bảo hành ──
@@ -238,7 +241,7 @@
     catch (e) { return { ok: false, description: e.message }; } };
   const RC = { map: {}, drafts: {}, seen: null, mute: {} }; // map: id tin Telegram → khoá khách
   const kb = rows => ({ inline_keyboard: rows });
-  const custBtns = k => kb([[{ text: '✨ AI soạn', callback_data: 'ai|' + k }, { text: '📋 5 tin gần đây', callback_data: 'his|' + k }, { text: '🔕 Tắt báo', callback_data: 'mute|' + k }]]);
+  const custBtns = k => kb([[{ text: '✨ AI soạn', callback_data: 'ai|' + k }, { text: '📋 5 tin gần đây', callback_data: 'his|' + k }, { text: '🔕 Tắt báo', callback_data: 'mute|' + k }], [{ text: '🧾 Báo giá', callback_data: 'quo|' + k }, { text: '🛡 Bảo hành', callback_data: 'war|' + k }]]);
   const shortKey = key => { const id = Object.keys(RC.ref || {}).find(k => RC.ref[k] === key); if (id) return id; RC.ref ||= {}; const k = Math.random().toString(36).slice(2, 9); RC.ref[k] = key; return k; };
   const convOf = key => App.inbox?.auto?.convs().find(c => c.key === key);
   const nm = c => `${c.other?.name || 'Khách'}${c.page?.name ? ' · ' + c.page.name : ''}`;
@@ -274,49 +277,209 @@
     return say(c, [`${c.on ? '▶ Kế hoạch đang BẬT' : '⏸ Kế hoạch đang TẮT'} · AI trả lời: ${c.reply.on ? 'bật' : 'tắt'}`, status ? 'Trạng thái: ' + status : '', `⏳ Khách đang chờ: ${wait}`,
       `24 giờ: 💬 ${n('reply')} · 📣 ${n('remarket')} · 📦 ${n('orders')} · 🛡 ${n('warranty')} · ⚠️ ${L.filter(l => l.kind === 'err').length} lỗi`, st.hour?.length ? `AI đã trả lời ${st.hour.length} tin trong 1 giờ qua` : ''].filter(Boolean).join('\n'));
   }
-  const HELP = ['📱 Điều khiển Get Helps', '/cho – khách đang chờ trả lời', '/trangthai – tình hình hôm nay', '/bat – bật kế hoạch tự động', '/tat – tắt kế hoạch tự động',
-    '/aibat – bật AI tự trả lời', '/aitat – tắt AI tự trả lời', '/tomtat – gửi tóm tắt 24 giờ', '', 'Trả lời (reply) vào tin báo của khách để nhắn lại khách đó.'].join('\n');
+  const HELP = ['📱 Điều khiển Get Helps', '/menu – bảng nút điều khiển', '/cho – khách đang chờ', '/baogia – báo giá chờ tiền', '/don – đơn gần đây', '/solieu – doanh thu, số dư Baostar',
+    '/bai – bài chờ duyệt', '/vietbai – AI viết bài mới', '/nhan – nhắn hàng loạt', '/lich – lịch remarketing', '/trangthai, /bat, /tat, /aibat, /aitat, /tomtat', '',
+    '↩️ Trả lời (reply) tin báo của khách = nhắn lại khách (gửi được cả ảnh).', '🧾 Gửi link + số lượng (vd "1k like https://…") = tạo báo giá; reply tin báo khách bằng "báo giá 1k like https://…" = báo giá cho khách đó.',
+    '🖼 Gửi ảnh (kèm chữ) = đăng bài lên Page.', '💬 Hoặc nói tự nhiên: "doanh thu hôm nay", "viết bài cho Page X về ưu đãi"…', '', 'Việc tốn tiền / không hoàn tác được luôn hỏi lại bằng nút ✅ Xác nhận.'].join('\n');
+  const rid = () => Math.random().toString(36).slice(2, 9);
+  const B = (text, data) => ({ text, callback_data: data });
+  RC.pend = {}; RC.q = {}; RC.posts = {}; RC.photos = {}; RC.wait = null;
+  // Hỏi lại trước việc tốn tiền / không hoàn tác: nút ✅ Xác nhận mới chạy.
+  const confirmAsk = (c, text, run) => { const id = rid(); RC.pend[id] = run; return say(c, text, { reply_markup: kb([[B('✅ Xác nhận', 'ok|' + id), B('✖ Huỷ', 'no|' + id)]]) }); };
+  const MENU = kb([[B('💬 Khách chờ', 'm|cho'), B('🧾 Báo giá chờ tiền', 'm|q')], [B('📦 Đơn gần đây', 'm|od'), B('💰 Số liệu', 'm|st')],
+    [B('📝 Bài chờ duyệt', 'm|pd'), B('✨ AI viết bài', 'm|pa')], [B('📣 Nhắn hàng loạt', 'm|mb'), B('🗓 Lịch remarketing', 'm|rl')], [B('⚙ Kế hoạch', 'm|pl')]]);
+  const S_ = () => App.services?.remote;
+  const QUEUE_KEY = 'fbScheduleQueueV1';
+  const pageBy = id => App.pages.find(p => String(p.id) === String(id));
+  const pageByName = n => { const t = String(n || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, ''); if (!t) return null;
+    return App.pages.find(p => p.name.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').includes(t)) || null; };
+
+  async function tgQuotes(c) {
+    const qs = (await S_().quotes()).slice(0, 8); if (!qs.length) return say(c, '✓ Không có báo giá nào đang chờ.');
+    for (const q of qs) { const k = rid(); RC.q[k] = q.id;
+      await say(c, `🧾 #${q.payCode} · ${q.customer?.name || 'Khách'}${q.pageName ? ' · ' + q.pageName : ''}\n${q.displayName}\n💵 ${money(q.sell)}${q.paidAmount ? ` · đã nhận ${money(q.paidAmount)}` : ''}${q.state === 'paid' ? ' · ĐÃ TRẢ, chờ tạo đơn' : ''}`,
+        { reply_markup: kb([[B('✅ Đã nhận tiền → tạo đơn', 'qp|' + k)], [B('📨 Gửi lại báo giá cho khách', 'qs|' + k), B('❌ Huỷ', 'qc|' + k)]]) }); }
+  }
+  async function tgOrders(c) {
+    const os = await S_().orders(3); if (!os.length) return say(c, 'Không có đơn nào trong 3 ngày qua.');
+    const st = o => o.status === 'done' ? '✅' : o.status === 'cancelled' ? '⛔' : /error|lỗi|fail/i.test(o.svcStatus || '') ? '⚠️' : '⏳';
+    return say(c, ['📦 Đơn 3 ngày qua (' + os.length + ')', ...os.slice(0, 15).map(o => `${st(o)} #${o.providerOrderId} · ${o.customer?.name || '-'} · ${o.displayName || o.serviceName} · ${money(o.sell ?? 0)} · ${o.svcStatus || o.status}`)].join('\n'));
+  }
+  async function tgStats(c) {
+    const x = await S_().stats(), b = x.balance;
+    return say(c, ['💰 Số liệu', `Hôm nay: ${x.today.n} đơn · doanh thu ${money(x.today.sell)} · lãi ≈ ${money(x.today.sell - x.today.cost)}`, `Tháng này: ${x.month.n} đơn · doanh thu ${money(x.month.sell)} · lãi ≈ ${money(x.month.sell - x.month.cost)}`,
+      `⏳ Đơn đang chạy: ${x.running} · 🧾 Báo giá chờ tiền: ${x.pending}`, `🏦 Số dư Baostar: ${b && Number.isFinite(b.v) ? (b.approx ? '≈ ' : '') + money(b.v) : 'không đọc được'}`].join('\n'));
+  }
+  async function tgDrafts(c) {
+    const q = (await DB.get(QUEUE_KEY, [])).filter(i => ['draft', 'error', 'missed'].includes(i.status) && String(i.text || '').trim()).slice(0, 6);
+    if (!q.length) return say(c, '✓ Không có bài nào chờ duyệt.', { reply_markup: kb([[B('✨ AI viết bài mới', 'm|pa')]]) });
+    for (const i of q) await say(c, `📝 ${i.pageName || pageBy(i.pageKey)?.name || '?'} · ${i.status === 'error' ? '⚠️ ' + (i.error || 'lỗi') : 'chờ duyệt'}\n\n${String(i.text).slice(0, 900)}`,
+      { reply_markup: kb([[B('✅ Duyệt', 'pk|' + i.id), B('🗑 Xoá', 'px|' + i.id)]]) });
+    return say(c, 'Duyệt xong bấm để Facebook đăng vào giờ trống của từng Page:', { reply_markup: kb([[B('🕒 Lên lịch tất cả bài đã duyệt', 'pall|x')]]) });
+  }
+  const patchQ = async (id, ch) => { const q = await DB.get(QUEUE_KEY, []), i = q.find(x => x.id === id); if (!i) return null; Object.assign(i, ch); await DB.set(QUEUE_KEY, q); if (App.current() === 'planner') App.tabs.planner?.refresh?.(); return i; };
+  async function aiOnePost(page, topic, image) {
+    const shop = await DB.get('aiShopV1', {});
+    let recent = []; try { recent = (await apiPaged(`/${page.id}/posts`, { fields: 'message', limit: 6 }, page.access_token, 1)).map(x => String(x.message || '').replace(/\s+/g, ' ').slice(0, 200)).filter(Boolean); } catch {}
+    const prompt = [`Viết 1 bài đăng Facebook MỚI cho Fanpage "${page.name}"${shop.name ? ' của shop ' + shop.name : ''} (dịch vụ tăng tương tác mạng xã hội).`, 'Tiếng Việt tự nhiên, 3–8 câu, emoji vừa phải, kêu gọi nhắn tin cho Page, 2–4 hashtag cuối bài. Không bịa giá cụ thể.',
+      topic ? 'Chủ đề / ý chính: ' + topic : 'Chủ đề: tự chọn góc nhìn hữu ích.', image ? 'Bài có kèm 1 ảnh (bạn không thấy ảnh): viết chữ hợp chủ đề, không tả chi tiết ảnh.' : '',
+      shop.policy ? 'Chính sách shop: ' + shop.policy : '', recent.length ? 'Không lặp ý các bài gần đây:\n' + recent.map(t => '- ' + t).join('\n') : '', 'Chỉ trả về MỘT khối JSON: {"post":"nội dung bài"}'].filter(Boolean).join('\n');
+    for (let k = 0; k < 3; k++) { const r = await D.gptAsk({ prompt, fresh: k > 0 }); if (r?.error === 'login') throw Error('Chưa đăng nhập ChatGPT trong app');
+      try { const t = String(r?.text || '').replace(/```(?:json)?/gi, ''), j = JSON.parse(t.slice(t.indexOf('{'), t.lastIndexOf('}') + 1)); if (String(j.post || '').trim().length > 20) return String(j.post).trim(); } catch {} }
+    throw Error('AI chưa viết được bài');
+  }
+  async function showPost(c, d) { // d = { page, text, image }
+    const id = rid(); RC.posts[id] = d;
+    const body = `📝 Bài cho ${d.page.name}${d.image ? ' (kèm ảnh)' : ''}:\n\n${d.text || '(chưa có chữ)'}\n\n↩️ Muốn sửa chữ: trả lời (reply) tin này bằng nội dung mới.`;
+    const r = await say(c, body, { reply_markup: kb([[B('🚀 Đăng ngay', 'pn|' + id), B('🕒 Lên lịch (giờ trống)', 'ps|' + id)], [B('✨ AI viết lại', 'pr|' + id), B('🗑 Bỏ', 'pdel|' + id)]]) });
+    if (r?.ok) RC.map[r.result.message_id] = 'post:' + id;
+  }
+  const pagesKb = (prefix, extra = '') => kb(App.pages.map(p => [B(p.name, prefix + '|' + p.id + (extra ? '|' + extra : ''))]));
+  async function tgMassAsk(c, group) {
+    const A = App.inbox.auto; await A.refresh(); const st = await getState(), cfg = await getCfg();
+    const r = { id: 'tg' + Date.now(), adhoc: true, name: 'Nhắn hàng loạt (Telegram)', group, min: 0, max: 7, limit: 30, mode: 'ai', text: '', page: '', label: '' };
+    const n = pickFor(r, cfg, st, A).length; if (!n) return say(c, 'Không có khách nào hợp (nhắn trong 7 ngày, chưa nhắn lại trong ' + cfg.remarket.gapDays + ' ngày).');
+    r.limit = Math.min(n, 30);
+    return confirmAsk(c, `📣 ${group === 'open' ? 'Khách CHƯA chốt' : group === 'done' ? 'Khách ĐÃ chốt' : 'Mọi khách'} nhắn trong 7 ngày: ${n} người.\nAI viết riêng từng tin và gửi ${r.limit} khách (tối đa ${cfg.remarket.pageLimit} tin/Page/ngày)?`,
+      async () => { const res = await runRule(r, cfg, await getState(), A); return `📣 Xong: đã gửi ${res.sent} tin${res.stop ? ' (dừng giữa chừng: máy đang có người dùng hoặc AI lỗi, xem Nhật ký)' : ''}.`; });
+  }
+  async function tgRules(c) {
+    const cfg = await getCfg(); if (!cfg.remarket.rules.length) return say(c, 'Chưa có lịch remarketing nào (tạo trong app: Tự động › Kế hoạch).');
+    for (const r of cfg.remarket.rules) await say(c, `🗓 ${r.name || 'Lịch'} · ${r.on ? 'BẬT' : 'tắt'} · ${r.at} ${(r.days || []).map(d => DAYS[d]).join(',')}\nNhóm ${r.group} · im lặng ${r.min}–${r.max} ngày · tối đa ${r.limit} tin`,
+      { reply_markup: kb([[B('▶ Chạy ngay', 'rr|' + r.id), B(r.on ? '⏸ Tắt' : '▶ Bật', 'rt|' + r.id)]]) });
+  }
+  const tgPlan = async c => { const cfg = await getCfg(); return say(c, `⚙ Kế hoạch: ${cfg.on ? 'BẬT' : 'TẮT'} · AI trả lời: ${cfg.reply.on ? 'bật' : 'tắt'} · AI viết bài: ${cfg.post.ai ? 'bật' : 'tắt'}`,
+    { reply_markup: kb([[B(cfg.on ? '⏸ Tắt kế hoạch' : '▶ Bật kế hoạch', 'pl|on'), B(cfg.reply.on ? '💬 Tắt AI trả lời' : '💬 Bật AI trả lời', 'pl|ai')], [B('📊 Trạng thái', 'm|ts')]]) }); };
+  async function menuAct(c, k) {
+    if (k === 'cho') return tgWaiting(c); if (k === 'q') return tgQuotes(c); if (k === 'od') return tgOrders(c); if (k === 'st') return tgStats(c);
+    if (k === 'pd') return tgDrafts(c); if (k === 'pa') return say(c, '✨ AI viết bài cho Page nào?', { reply_markup: pagesKb('pw') });
+    if (k === 'mb') return say(c, '📣 Nhắn hàng loạt cho nhóm nào?', { reply_markup: kb([[B('Chưa chốt', 'mb|open'), B('Đã chốt (khách cũ)', 'mb|done'), B('Tất cả', 'mb|all')]]) });
+    if (k === 'rl') return tgRules(c); if (k === 'pl') return tgPlan(c); if (k === 'ts') return tgStatus(c);
+  }
+  // Báo giá từ chữ có link: xem trước (gói + số lượng + tiền) → nút tạo / tạo & gửi khách.
+  async function tgQuoteFrom(c, text, key) {
+    const links = (S_().linksIn(text) || []).filter(x => typeof x === 'object').map(x => x.link);
+    if (!links.length) return say(c, 'Gửi kèm link bài / trang cần chạy, vd: "1k like https://facebook.com/…".');
+    const x = key ? convOf(key) : null, ctx = x ? { page: x.page, key: x.key, name: x.other.name || '' } : {};
+    const p = await S_().preview({ ...ctx, messages: [{ isCustomer: true, text }] }, links);
+    if (p?.error) return say(c, '✗ ' + p.error + (p.summary ? '\n' + p.summary.join('\n') : '') + '\n\nGhi rõ số lượng + loại, vd "500 follow", "1k like", "2k view".');
+    const id = rid(); RC.q[id] = { make: p.make, key: x?.key };
+    return say(c, [`🧾 Báo giá${x ? ' cho ' + nm(x) : ''}:`, ...p.summary, `Tổng: ${money(p.total)}`, ...p.warns.map(w => '⚠️ ' + w)].join('\n'),
+      { reply_markup: kb([[B('✅ Tạo báo giá', 'qn|' + id), ...(x ? [B('📨 Tạo & gửi khách', 'qg|' + id)] : [])], [B('✖ Bỏ', 'qx|' + id)]]) });
+  }
+  // Nói tự nhiên: AI đọc câu lệnh → việc cần làm.
+  async function tgNatural(c, text) {
+    if (!D.gptAsk) return say(c, 'Không hiểu lệnh này.\n\n' + HELP);
+    say(c, '🤔 Đang hiểu lệnh…');
+    const prompt = ['Bạn là bộ điều khiển app bán dịch vụ tăng tương tác. Đọc lệnh của chủ shop và trả về MỘT khối JSON {"intent":"...","page":"","topic":"","group":""}.',
+      'intent là một trong: waiting (khách đang chờ), quotes (báo giá chờ tiền), orders (đơn gần đây), stats (doanh thu / số dư / số liệu), drafts (bài chờ duyệt), write_post (viết bài: page = tên Page, topic = chủ đề), mass (nhắn hàng loạt: group = open | done | all), rules (lịch remarketing), plan_on, plan_off, ai_on, ai_off, summary, help, unknown.',
+      'Các Page: ' + App.pages.map(p => p.name).join(', '), 'Lệnh: ' + text].join('\n');
+    let j = null; try { const r = await D.gptAsk({ prompt }); const t = String(r?.text || '').replace(/```(?:json)?/gi, ''); j = JSON.parse(t.slice(t.indexOf('{'), t.lastIndexOf('}') + 1)); } catch {}
+    const it = j?.intent || 'unknown', map = { waiting: 'cho', quotes: 'q', orders: 'od', stats: 'st', drafts: 'pd', rules: 'rl' };
+    if (map[it]) return menuAct(c, map[it]);
+    if (it === 'write_post') { const p = pageByName(j.page); if (!p) return say(c, '✨ Viết bài cho Page nào?', { reply_markup: pagesKb('pw') });
+      say(c, `✨ AI đang viết bài cho ${p.name}…`); try { return showPost(c, { page: p, text: await aiOnePost(p, j.topic || ''), image: '' }); } catch (e) { return say(c, '✗ ' + e.message); } }
+    if (it === 'mass') return tgMassAsk(c, ['open', 'done', 'all'].includes(j.group) ? j.group : 'open');
+    if (it === 'plan_on' || it === 'plan_off') return tgHandle({ message: { chat: { id: c.tg.chat }, text: it === 'plan_on' ? '/bat' : '/tat' } }, c);
+    if (it === 'ai_on' || it === 'ai_off') return tgHandle({ message: { chat: { id: c.tg.chat }, text: it === 'ai_on' ? '/aibat' : '/aitat' } }, c);
+    if (it === 'summary') return tgHandle({ message: { chat: { id: c.tg.chat }, text: '/tomtat' } }, c);
+    return say(c, 'Chưa hiểu lệnh này. Gõ /menu để chọn bằng nút.', { reply_markup: MENU });
+  }
   async function tgHandle(u, c) {
     const chat = String(u.message?.chat?.id ?? u.callback_query?.message?.chat?.id ?? '');
     if (chat !== String(c.tg.chat).trim()) return; // chỉ nghe đúng Chat ID của bạn
     if (u.callback_query) {
-      const q = u.callback_query, [act, k] = String(q.data || '').split('|'); tgApi('answerCallbackQuery', { callback_query_id: q.id }, c);
+      const q = u.callback_query, [act, k, k2] = String(q.data || '').split('|'); tgApi('answerCallbackQuery', { callback_query_id: q.id }, c);
+      if (act === 'ok' || act === 'no') { const run = RC.pend[k]; delete RC.pend[k]; if (!run) return say(c, 'Yêu cầu đã hết hạn.'); if (act === 'no') return say(c, '✖ Đã huỷ.');
+        say(c, '⏳ Đang làm…'); try { return say(c, (await run()) || '✓ Xong.'); } catch (e) { return say(c, '✗ ' + e.message); } }
+      if (act === 'm') return menuAct(c, k);
       if (act === 'send' || act === 'drop') { const d = RC.drafts[k]; delete RC.drafts[k]; if (!d) return say(c, 'Bản nháp đã hết hạn.');
         return act === 'send' ? tgSendToCustomer(c, d.key, d.text, d.image) : say(c, '🗑 Đã bỏ bản nháp.'); }
+      // Báo giá
+      if (['qp', 'qs', 'qc'].includes(act)) { const id = RC.q[k]; if (!id) return say(c, 'Hết hạn, gõ /baogia để xem lại.'); const qq = (await S_().quotes()).find(x => x.id === id); if (!qq) return say(c, 'Báo giá không còn.');
+        if (act === 'qp') return confirmAsk(c, `✅ Xác nhận đã nhận ${money(Math.max(0, qq.sell - (qq.paidAmount || 0)))} cho #${qq.payCode} (${qq.customer?.name || 'Khách'}) và TẠO ĐƠN trên Baostar (trừ tiền số dư)?`,
+          async () => { const r = await S_().payAndCreate(id); if (r?.error) return '✗ ' + r.error; await log('orders', r.fail ? 'err' : 'ok', `📱 Telegram: #${qq.payCode} tạo ${r.ok}/${r.total} đơn${r.fail ? ', lỗi ' + r.fail : ''}`); return `🧾 #${qq.payCode}: tạo ${r.ok}/${r.total} đơn${r.fail ? ` · ⚠️ ${r.fail} lỗi (${r.last})` : ' ✓'}`; });
+        if (act === 'qc') return confirmAsk(c, `❌ Huỷ báo giá #${qq.payCode} (${money(qq.sell)})?${qq.paidAmount ? ` Khách đã chuyển ${money(qq.paidAmount)}: nhớ hoàn tiền.` : ''}`, async () => { const r = await S_().cancel(id); return r.error ? '✗ ' + r.error : `Đã huỷ #${qq.payCode}.`; });
+        if (act === 'qs') { if (!qq.customerKey) return say(c, 'Báo giá này không gắn với khách nào trong hộp thư.'); const mm = await S_().quoteMessage(qq); return tgSendToCustomer(c, qq.customerKey, mm.text, mm.image); } }
+      if (['qn', 'qg', 'qx'].includes(act)) { const d = RC.q[k]; delete RC.q[k]; if (!d?.make) return say(c, 'Hết hạn, gửi lại link.'); if (act === 'qx') return say(c, '✖ Đã bỏ.');
+        const qq = await d.make(); await log('orders', 'ok', `📱 Telegram: tạo báo giá #${qq.payCode} ${money(qq.sell)}`);
+        if (act === 'qg' && d.key) { const mm = await S_().quoteMessage(qq); await tgSendToCustomer(c, d.key, mm.text, mm.image); }
+        const kk = rid(); RC.q[kk] = qq.id;
+        return say(c, `🧾 Đã tạo báo giá #${qq.payCode} · ${money(qq.sell)} · nội dung CK: ${qq.payCode}`, { reply_markup: kb([[B('✅ Đã nhận tiền → tạo đơn', 'qp|' + kk)]]) }); }
+      // Bài đăng
+      if (act === 'pk') { const i = await patchQ(k, { status: 'approved', error: '' }); return say(c, i ? '✅ Đã duyệt. Bấm "Lên lịch tất cả" để hẹn lên Facebook.' : 'Bài không còn.', { reply_markup: kb([[B('🕒 Lên lịch tất cả bài đã duyệt', 'pall|x')]]) }); }
+      if (act === 'px') return confirmAsk(c, '🗑 Xoá bài này khỏi Lịch đăng?', async () => { await DB.set(QUEUE_KEY, (await DB.get(QUEUE_KEY, [])).filter(x => x.id !== k)); return 'Đã xoá.'; });
+      if (act === 'pall') return confirmAsk(c, '🕒 Lên lịch TẤT CẢ bài đã duyệt lên Facebook (đăng vào giờ trống của từng Page)?', async () => 'Lên lịch: ' + (await App.planner.scheduleAll(App.pages.map(p => p.id)) || 'xong'));
+      if (act === 'pw') { const p = pageBy(k); if (!p) return; const img = k2 ? RC.photos[k2] : null; say(c, `✨ AI đang viết bài cho ${p.name}…`);
+        try { return showPost(c, { page: p, text: img?.caption || await aiOnePost(p, '', img?.dataUrl), image: img?.dataUrl || '' }); } catch (e) { return say(c, '✗ ' + e.message); } }
+      if (['pn', 'ps', 'pr', 'pdel'].includes(act)) { const d = RC.posts[k]; if (!d) return say(c, 'Bài nháp đã hết hạn.');
+        if (act === 'pdel') { delete RC.posts[k]; return say(c, '🗑 Đã bỏ.'); }
+        if (act === 'pr') { say(c, '✨ AI đang viết lại…'); try { d.text = await aiOnePost(d.page, '', d.image); return showPost(c, d); } catch (e) { return say(c, '✗ ' + e.message); } }
+        if (act === 'ps') { delete RC.posts[k]; await App.planner.addItems([{ pageKey: d.page.id, pageName: d.page.name, status: 'approved', text: d.text, imageData: d.image || '', source: 'telegram' }]);
+          const r = await App.planner.scheduleAll([d.page.id]); await log('post', 'ok', `📱 Telegram: lên lịch bài cho ${d.page.name}`); return say(c, '🕒 ' + (r || 'Đã lên lịch.')); }
+        if (act === 'pn') return confirmAsk(c, `🚀 Đăng NGAY bài này lên ${d.page.name}?`, async () => { const r = await App.publish(d.page, d.text, d.image || '', 0); delete RC.posts[k];
+          await log('post', 'ok', `📱 Telegram: đăng ngay lên ${d.page.name}`); return `🚀 Đã đăng lên ${d.page.name}${r?.post_id || r?.id ? ': https://www.facebook.com/' + (r.post_id || r.id) : ''}`; }); }
+      // Nhắn hàng loạt & lịch
+      if (act === 'mb') return tgMassAsk(c, k);
+      if (act === 'rr' || act === 'rt') { const cfg = await getCfg(), r = cfg.remarket.rules.find(x => x.id === k); if (!r) return say(c, 'Lịch không còn.');
+        if (act === 'rt') { r.on = !r.on; await setCfg(cfg); if (C) { C = cfg; draw(); } return say(c, `🗓 ${r.name}: ${r.on ? 'BẬT' : 'TẮT'}`); }
+        return confirmAsk(c, `▶ Chạy ngay lịch "${r.name}" (gửi tối đa ${r.limit} tin)?`, async () => { const st = await getState(); delete st.ran['rm:' + r.id]; const res = await runRule(r, cfg, st, App.inbox.auto); return `🗓 ${r.name}: đã gửi ${res.sent} tin${res.stop ? ' (dừng giữa chừng, xem Nhật ký)' : ''}.`; }); }
+      if (act === 'pl') { const cfg = await getCfg(); if (k === 'on') cfg.on = !cfg.on; else cfg.reply.on = !cfg.reply.on; await setCfg(cfg); if (C) { C = cfg; draw(); } return tgPlan(c); }
+      // Nút trên tin báo khách
       const key = RC.ref?.[k]; if (!key) return say(c, 'Tin báo này đã cũ, gõ /cho để xem lại khách đang chờ.');
       const x = convOf(key); if (!x) return say(c, '✗ Không tìm thấy khách.');
       if (act === 'mute') { RC.mute[key] = Date.now() + 864e5; return say(c, `🔕 Tắt báo ${nm(x)} trong 24 giờ.`); }
+      if (act === 'quo') { RC.wait = { kind: 'quote', key }; return say(c, `🧾 Gửi link + số lượng cho ${nm(x)}, vd: "1k like https://facebook.com/…"`); }
+      if (act === 'war') return confirmAsk(c, `🛡 Bảo hành (refill Baostar) các link còn hạn của ${nm(x)} và báo khách?`, async () => {
+        const msgs = await App.inbox.auto.messagesOf(x), r = await App.services.autoWarranty({ key: x.key, name: x.other.name, page: x.page, messages: msgs });
+        if (!r) return 'Khách không có tin báo tụt hoặc không có đơn nào để bảo hành.'; if (r.skipped) return '⚠️ ' + r.skipped; if (r.error) return '✗ ' + r.error;
+        await App.inbox.auto.sendKey(x.key, r.text, r.image || ''); return `🛡 Đã refill ${r.n} link và báo khách.`; });
       if (act === 'his') { const m = (await App.inbox.auto.texts(x)).filter(m => m.text).slice(-5);
         const r = await say(c, `📋 ${nm(x)}\n` + (m.map(m => (m.isCustomer ? '👤 ' : '🏪 ') + String(m.text).slice(0, 300)).join('\n') || '(chưa có tin đã lưu)'), { reply_markup: custBtns(k) }); if (r?.ok) RC.map[r.result.message_id] = key; return; }
       if (act === 'ai') {
         say(c, `✨ AI đang soạn cho ${nm(x)}…`);
-        try { const msgs = await App.inbox.auto.messagesOf(x), r = await App.inbox.auto.aiReply(x, msgs), id = Math.random().toString(36).slice(2, 9);
+        try { const msgs = await App.inbox.auto.messagesOf(x), r = await App.inbox.auto.aiReply(x, msgs), id = rid();
           RC.drafts[id] = { key, text: r.text, image: r.image || '' };
           const m = await say(c, `✨ Nháp cho ${nm(x)}:\n\n${r.text}${r.pt ? '\n\n📎 kèm ' + (r.pt.t.title || 'bảng giá') : ''}\n\n↩️ Muốn sửa: trả lời (reply) tin này bằng nội dung mới.`,
-            { reply_markup: kb([[{ text: '✅ Gửi', callback_data: 'send|' + id }, { text: '🗑 Bỏ', callback_data: 'drop|' + id }]]) });
+            { reply_markup: kb([[B('✅ Gửi', 'send|' + id), B('🗑 Bỏ', 'drop|' + id)]]) });
           if (m?.ok) RC.map[m.result.message_id] = key; }
         catch (e) { say(c, '✗ AI chưa soạn được: ' + e.message); }
         return;
       }
       return;
     }
-    const m = u.message, text = String(m?.text || '').trim(); if (!text) return m?.photo ? say(c, 'Hiện chỉ gửi được chữ cho khách (chưa gửi ảnh từ Telegram).') : null;
-    const to = m.reply_to_message && RC.map[m.reply_to_message.message_id];
+    const m = u.message, text = String(m?.text || m?.caption || '').trim();
+    const to = m?.reply_to_message && RC.map[m.reply_to_message.message_id];
+    // Ảnh từ Telegram
+    if (m?.photo?.length) {
+      const f = await (D.tgFile ? D.tgFile({ token: c.tg.token.trim(), fileId: m.photo[m.photo.length - 1].file_id }) : Promise.resolve({ error: 'Cần app bản mới nhất' }));
+      if (f?.error) return say(c, '✗ Chưa tải được ảnh: ' + f.error);
+      if (to && String(to).startsWith('post:')) { const d = RC.posts[String(to).slice(5)]; if (d) { d.image = f.dataUrl; return showPost(c, d); } }
+      if (to) return tgSendToCustomer(c, to, text, f.dataUrl);
+      const id = rid(); RC.photos[id] = { dataUrl: f.dataUrl, caption: text.replace(/^\/?(đăng|dang)\s*:?\s*/i, '') };
+      return say(c, '🖼 Đăng ảnh này lên Page nào?' + (text ? '' : ' (chưa có chữ: AI sẽ viết)'), { reply_markup: pagesKb('pw', id) });
+    }
+    if (!text) return;
+    if (to && String(to).startsWith('post:')) { const d = RC.posts[String(to).slice(5)]; if (!d) return say(c, 'Bài nháp đã hết hạn.'); d.text = text; return showPost(c, d); }
+    if (to && /^\/?(báo giá|bao gia|baogia)\b/i.test(text)) return tgQuoteFrom(c, text, to);
     if (to) return tgSendToCustomer(c, to, text);
+    if (RC.wait?.kind === 'quote') { const w = RC.wait; RC.wait = null; return tgQuoteFrom(c, text, w.key); }
     const cmd = text.split(/\s|@/)[0].toLowerCase();
-    if (cmd === '/start' || cmd === '/help' || cmd === '/trogiup') return say(c, HELP);
-    if (cmd === '/cho') return tgWaiting(c);
-    if (cmd === '/trangthai') return tgStatus(c);
+    if (cmd === '/start' || cmd === '/help' || cmd === '/trogiup') return say(c, HELP, { reply_markup: MENU });
+    if (cmd === '/menu' || /^menu$/i.test(text)) return say(c, '📱 Bảng điều khiển Get Helps', { reply_markup: MENU });
+    const short = { '/cho': 'cho', '/baogia': 'q', '/don': 'od', '/solieu': 'st', '/bai': 'pd', '/vietbai': 'pa', '/nhan': 'mb', '/lich': 'rl', '/trangthai': 'ts' };
+    if (short[cmd]) return menuAct(c, short[cmd]);
     if (cmd === '/bat' || cmd === '/tat') { c.on = cmd === '/bat'; await setCfg(c); if (C) { C.on = c.on; draw(); } await log('sys', 'info', `📱 Telegram: ${c.on ? 'bật' : 'tắt'} kế hoạch.`); return say(c, c.on ? '▶ Đã BẬT kế hoạch tự động.' : '⏸ Đã TẮT kế hoạch tự động.'); }
     if (cmd === '/aibat' || cmd === '/aitat') { c.reply.on = cmd === '/aibat'; await setCfg(c); if (C) { C.reply.on = c.reply.on; draw(); } return say(c, `💬 AI tự trả lời: ${c.reply.on ? 'BẬT' : 'TẮT'}${c.on ? '' : ' (kế hoạch đang tắt: gõ /bat để chạy)'}`); }
     if (cmd === '/tomtat') { const st = await getState(); delete st.ran.report; await DB.set(STATE, st); c.tg.daily = true; c.tg.dailyAt = '00:00'; return taskReport(c, st); }
-    return say(c, 'Không hiểu lệnh này.\n\n' + HELP);
+    if (/https?:\/\/|\b(fb|facebook|tiktok|youtube|instagram)\.(com|me|be)\//i.test(text)) return tgQuoteFrom(c, text, null);
+    return tgNatural(c, text);
   }
   let tgLoop = false;
   async function tgPoll() {
     if (tgLoop) return; tgLoop = true;
     try {
-      const c0 = await getCfg(); tgApi('setMyCommands', { commands: [['cho', 'Khách đang chờ trả lời'], ['trangthai', 'Tình hình hôm nay'], ['bat', 'Bật kế hoạch tự động'], ['tat', 'Tắt kế hoạch tự động'], ['aibat', 'Bật AI tự trả lời'], ['aitat', 'Tắt AI tự trả lời'], ['tomtat', 'Tóm tắt 24 giờ'], ['help', 'Hướng dẫn']].map(([command, description]) => ({ command, description })) }, c0).catch(() => {});
+      const c0 = await getCfg(); tgApi('setMyCommands', { commands: [['menu', 'Bảng nút điều khiển'], ['cho', 'Khách đang chờ trả lời'], ['baogia', 'Báo giá chờ tiền'], ['don', 'Đơn gần đây'], ['solieu', 'Doanh thu, số dư'], ['bai', 'Bài chờ duyệt'], ['vietbai', 'AI viết bài'], ['nhan', 'Nhắn hàng loạt'], ['lich', 'Lịch remarketing'], ['trangthai', 'Tình hình hôm nay'], ['bat', 'Bật kế hoạch tự động'], ['tat', 'Tắt kế hoạch tự động'], ['aibat', 'Bật AI tự trả lời'], ['aitat', 'Tắt AI tự trả lời'], ['tomtat', 'Tóm tắt 24 giờ'], ['help', 'Hướng dẫn']].map(([command, description]) => ({ command, description })) }, c0).catch(() => {});
       while (true) {
         const c = await getCfg(); if (!c.tg.control || !c.tg.token || !c.tg.chat) break;
         const off = Number(local.get('tgOffset')) || 0;

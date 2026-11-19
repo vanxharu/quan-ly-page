@@ -577,6 +577,16 @@ app.whenReady().then(async () => {
     try { const r = await net.fetch(`https://api.telegram.org/bot${tok}/${method}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(a?.params || {}) });
       return await r.json().catch(() => ({ ok: false, description: 'HTTP ' + r.status })); }
     catch (err) { return { ok: false, description: err.message }; } });
+  // Telegram: tải ảnh bạn gửi bot (để gửi cho khách / làm ảnh bài) → dataURL.
+  ipcMain.handle('tg-file', async (e, a) => { if (!fromPage(e)) return { error: 'denied' };
+    const tok = String(a?.token || '').trim(); if (!/^\d+:[\w-]+$/.test(tok)) return { error: 'Bot token không đúng dạng' };
+    try { const g = await (await net.fetch(`https://api.telegram.org/bot${tok}/getFile`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ file_id: String(a?.fileId || '') }) })).json();
+      if (!g.ok) return { error: g.description || 'getFile lỗi' };
+      const r = await net.fetch(`https://api.telegram.org/file/bot${tok}/${g.result.file_path}`); if (!r.ok) return { error: 'HTTP ' + r.status };
+      const buf = Buffer.from(await r.arrayBuffer()); if (buf.length > 15e6) return { error: 'Ảnh quá lớn' };
+      const ext = String(g.result.file_path).split('.').pop().toLowerCase(), mime = ext === 'png' ? 'image/png' : ext === 'webp' ? 'image/webp' : 'image/jpeg';
+      return { dataUrl: `data:${mime};base64,${buf.toString('base64')}` }; }
+    catch (err) { return { error: err.message }; } });
   // Trang app treo / bị đóng: tải lại. Có Kế hoạch bật mà 4 phút không nhận nhịp từ trang → tải lại trang.
   pageView.webContents.on('render-process-gone', (ev, d) => { if (d?.reason !== 'clean-exit') setTimeout(() => { try { pageView.webContents.reload(); } catch {} }, 2000); });
   let hangT = 0;

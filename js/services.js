@@ -619,6 +619,22 @@
       const warns = [lp && sp && norm(lp) !== norm(sp) ? `Link ${lp}, dịch vụ ${sp}` : '', ordered.get(linkKey(r.link)) ? 'Đã có ' + ordered.get(linkKey(r.link)) : ''].filter(Boolean);
       return { pk, svc, qty, sell, cost, listPrice, error, warns, fixed: pk?.kind === 'fixed', fam, parts };
     };
+    const toLines = on => on.flatMap(([r, c]) => { const label = c.pk?.name || c.svc.category || 'Dịch vụ', base = { link: r.link, costManual: false, packageId: c.pk?.id || '', termMonths: termOf(c.svc, c.pk), comments: '' };
+        if (!c.parts || c.parts.length < 2) { const [x] = c.parts?.[0] || [c.svc];
+          return [{ ...base, id: uid('ln'), serviceId: x.id, serviceName: x.name, ...(c.parts ? { reaction: x.child } : {}), qty: c.qty, sell: c.sell, cost: c.cost, listPrice: c.listPrice, displayName: c.parts && x.id !== c.svc.id ? `${label} (${x.child})` : label }]; }
+        // Nhiều cảm xúc: mỗi loại 1 dòng (1 đơn Baostar), chia tiền khách trả / giá gói theo số lượng.
+        let restS = c.sell, restL = c.listPrice;
+        return c.parts.map(([x, k], i) => { const last = i === c.parts.length - 1, sl = last ? restS : Math.round(c.sell * k / c.qty), lp = last ? restL : Math.round(c.listPrice * k / c.qty); restS -= sl; restL -= lp;
+          return { ...base, id: uid('ln'), serviceId: x.id, serviceName: x.name, reaction: x.child, qty: k, sell: sl, cost: Math.round(estCost(x, k)), listPrice: lp, displayName: `${label} (${x.child})` }; }); });
+    // Không mở hộp (điều khiển qua Telegram): đoán gói + số lượng như hộp tạo đơn, trả về xem trước + hàm tạo báo giá.
+    if (ctx.headless) {
+      const on = rows.map(r => [r, calc(r)]), bad = on.filter(([, c]) => c.error);
+      const sum = on.map(([r, c]) => `${shortLink(r.link)} · ${c.pk?.name || c.svc?.name || '?'} · ${Number(c.qty || 0).toLocaleString('vi-VN')}${c.sell ? ' = ' + money(c.sell) : ''}${c.error ? ' ✗ ' + c.error : ''}`);
+      if (!on.length) return { error: 'Chưa có link.' };
+      if (bad.length) return { error: 'Cần sửa: ' + bad.map(([r, c]) => `${shortLink(r.link)}: ${c.error}`).join(' · '), summary: sum };
+      const lines = toLines(on);
+      return { summary: sum, total: sumOf(lines, 'sell'), warns: on.flatMap(([, c]) => c.warns), make: async () => { const q = await makeQuote(ctx, lines, lines[0].link, 'link'); orderedCache = null; App.inbox?.bulkDone?.(lines.map(l => l.link)); return q; } };
+    }
     const dlg = h('dialog', { className: 'svc-dialog svc-bulk', onclose: () => dlg.remove() });
     const body = h('tbody'), sum = h('div', { className: 'svc-sum' }), err = h('div', { className: 'status err', hidden: true });
     // Ô chọn gói: gói cùng nền tảng của link trước, rồi gói khác; cuối cùng "Máy chủ trực tiếp…".
@@ -703,13 +719,7 @@
       if (!on.length) return;
       const warns = on.flatMap(([r, c]) => c.warns.map(w => `• ${r.link.replace(/^https?:\/\/(www\.|m\.)?/, '').slice(0, 50)}: ${w}`));
       if (warns.length && !confirm(['Kiểm tra trước khi tạo:', ...warns, '', 'Vẫn tạo báo giá?'].join('\n'))) return;
-      const lines = on.flatMap(([r, c]) => { const label = c.pk?.name || c.svc.category || 'Dịch vụ', base = { link: r.link, costManual: false, packageId: c.pk?.id || '', termMonths: termOf(c.svc, c.pk), comments: '' };
-        if (!c.parts || c.parts.length < 2) { const [x] = c.parts?.[0] || [c.svc];
-          return [{ ...base, id: uid('ln'), serviceId: x.id, serviceName: x.name, ...(c.parts ? { reaction: x.child } : {}), qty: c.qty, sell: c.sell, cost: c.cost, listPrice: c.listPrice, displayName: c.parts && x.id !== c.svc.id ? `${label} (${x.child})` : label }]; }
-        // Nhiều cảm xúc: mỗi loại 1 dòng (1 đơn Baostar), chia tiền khách trả / giá gói theo số lượng.
-        let restS = c.sell, restL = c.listPrice;
-        return c.parts.map(([x, k], i) => { const last = i === c.parts.length - 1, sl = last ? restS : Math.round(c.sell * k / c.qty), lp = last ? restL : Math.round(c.listPrice * k / c.qty); restS -= sl; restL -= lp;
-          return { ...base, id: uid('ln'), serviceId: x.id, serviceName: x.name, reaction: x.child, qty: k, sell: sl, cost: Math.round(estCost(x, k)), listPrice: lp, displayName: `${label} (${x.child})` }; }); });
+      const lines = toLines(on);
       go.disabled = true;
       const q = await makeQuote(ctx, lines, lines[0].link, 'link');
       orderedCache = null; App.inbox?.bulkDone?.(lines.map(l => l.link));
@@ -1365,7 +1375,7 @@
     document.body.append(dlg); dlg.showModal(); draw(); amt.select();
   }
   // Kiểm tra & tạo đơn: mỗi dòng của báo giá = 1 đơn Baostar. Tạo lần lượt; dòng lỗi giữ lại để thử lại, dòng khác vẫn tạo.
-  async function confirmCreate(q0) {
+  async function confirmCreate(q0, opts = {}) {
     let q = q0;
     const s = await settings();
     let list = []; try { list = await services(); } catch (e) { return toast(e.message, 7000); }
@@ -1545,6 +1555,9 @@
       checks, err,
       h('div', { className: 'row', style: 'gap:8px;justify-content:flex-end' }, h('button', { type: 'button', className: 'btn btn-ghost', textContent: 'Để sau', onclick: () => dlg.close() }), btn));
     document.body.append(dlg); dlg.showModal(); draw();
+    // Tự tạo đơn (Telegram đã xác nhận): bấm nút tạo, tự đồng ý các hộp hỏi lại trong lúc tạo, trả kết quả.
+    if (opts.auto) { const c0 = window.confirm; window.confirm = () => true; try { await btn.onclick(); } finally { window.confirm = c0; }
+      const r = { ok: run?.ok || 0, fail: run?.fail || 0, total: run?.total || 0, last: run?.last || '' }; setTimeout(() => { if (dlg.open) dlg.close(); }, 3000); return r; }
   }
   // Nhóm các đơn cùng mã thanh toán thành 1 "đơn" để gửi khách 1 hoá đơn (lines = từng đơn).
   async function groupOf(code, orders) {
@@ -2452,5 +2465,31 @@
   async function autoNudgeFull(n) { const m = await nudgeText(n, true).catch(() => null); if (!m) { await dropNudge(n.id, n.key); return null; } return { ...m, title: NUDGE_TITLE[n.kind] || n.kind }; }
   const autoNudgeDone = n => dropNudge(n.id, n.key);
 
-  App.services = { autoWarranty, autoNudgeList, autoNudgeFull, autoNudgeDone, aiContext, hesitation, salesInfo, dukTexts, dukFill, dukBonus, DUK, STAGE_NAME, warrantyDialog, complaintInfo, checkWarranty, splitLinks, bulkDialog, orderedLinks, linkKey, nudgeCard, askCheck, platBadge, linkPlatform: l => LINK_PLAT[platformOf(l)] || '', createDialog, closeDock, orderStates, orderBar, inboxBox, refreshStatus, linksIn, call, openWeb, mapStatus, catalogProgress, noteLines, speedOf, invoiceDialog, invoiceText, paymentDialog, confirmCreate, quotes, renewQuote, vipTick, termOf, requestRefill, refreshRefills };
+  // ── Điều khiển từ xa (Telegram) ──
+  const remote = {
+    quotes: async () => (await quotes()).filter(q => q.state !== 'paid' || !q.lines?.every(l => l.done)).sort((a, b) => b.at - a.at),
+    async payAndCreate(id, amount) {
+      const q = (await quotes()).find(x => x.id === id); if (!q) return { error: 'Báo giá không còn (đã tạo đơn hoặc đã huỷ).' };
+      const add = amount == null ? amountDue(q) : Number(amount) || 0;
+      Object.assign(q, { paidAmount: (q.paidAmount || 0) + add, paidAt: Date.now(), state: 'paid', payNote: [q.payNote, 'Xác nhận qua Telegram'].filter(Boolean).join(' · ') });
+      await saveQuote(q); App.tabs.services?.refresh?.(); addNudge(q.customerKey, 'paid', q.id).catch(() => {});
+      return confirmCreate(q, { auto: true });
+    },
+    async cancel(id) { const q = (await quotes()).find(x => x.id === id); if (!q) return { error: 'Báo giá không còn.' };
+      await dropQuote(q.id); orderedCache = null; if (q.customerKey) App.crm?.update?.(q.customerKey, { orderStatus: '' }).catch(() => {}); App.tabs.services?.refresh?.(); App.inbox?.orderChanged?.(); return { ok: true, q }; },
+    preview: (ctx, links) => bulkDialog({ ...ctx, headless: true }, links),
+    async quoteMessage(q) { const s = await settings(), inv = s.invoice || {}; const img = await invoiceImage(q, inv, 'quote').catch(() => null); return { text: invoiceText(q, inv, 'quote'), image: img?.dataUrl || '' }; },
+    async orders(days = 3) { return (await DB.get(ORDERS, [])).filter(o => o.source === 'service' && Date.now() - o.at < days * 864e5).sort((a, b) => b.at - a.at); },
+    async stats() {
+      const os = (await DB.get(ORDERS, [])).filter(o => o.source === 'service' && o.status !== 'cancelled' && !o.warrantyFor), d0 = new Date(); d0.setHours(0, 0, 0, 0);
+      const m0 = new Date(d0); m0.setDate(1);
+      const sum = list => ({ n: list.length, sell: list.reduce((t, o) => t + orderSell(o), 0), cost: list.reduce((t, o) => t + (Number(o.items?.[0]?.cost) || 0) * (Number(o.items?.[0]?.qty) || 0), 0) });
+      let bal = null; try { bal = await vndBalance(); } catch {}
+      return { today: sum(os.filter(o => o.at >= d0.getTime())), month: sum(os.filter(o => o.at >= m0.getTime())), running: os.filter(o => !['done', 'cancelled'].includes(o.status)).length,
+        pending: (await quotes()).filter(q => q.state === 'quote').length, balance: bal };
+    },
+    guess: text => guessOrder([{ isCustomer: true, text }]), linksIn: t => splitLinks(t), money
+  };
+
+  App.services = { remote, autoWarranty, autoNudgeList, autoNudgeFull, autoNudgeDone, aiContext, hesitation, salesInfo, dukTexts, dukFill, dukBonus, DUK, STAGE_NAME, warrantyDialog, complaintInfo, checkWarranty, splitLinks, bulkDialog, orderedLinks, linkKey, nudgeCard, askCheck, platBadge, linkPlatform: l => LINK_PLAT[platformOf(l)] || '', createDialog, closeDock, orderStates, orderBar, inboxBox, refreshStatus, linksIn, call, openWeb, mapStatus, catalogProgress, noteLines, speedOf, invoiceDialog, invoiceText, paymentDialog, confirmCreate, quotes, renewQuote, vipTick, termOf, requestRefill, refreshRefills };
 })();

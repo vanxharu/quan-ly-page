@@ -30,6 +30,7 @@ contextBridge.exposeInMainWorld('metaDesktop', {
   sysIdle: () => ipcRenderer.invoke('sys-idle'),
   tgSend: args => ipcRenderer.invoke('tg-send', args),
   tgApi: args => ipcRenderer.invoke('tg-api', args),
+  tgFile: args => ipcRenderer.invoke('tg-file', args),
   titleBar: o => ipcRenderer.send('title-bar', o),
   uiFrame: native => ipcRenderer.invoke('ui-frame', native),
   fbProfileCounts: args => ipcRenderer.invoke('fb-profile-counts', args),
