@@ -1,7 +1,7 @@
 // Tìm bài trên trang cá nhân / Page của khách khi khách không gửi link (gửi ảnh chụp bài, nói "bài đầu luôn"…).
 // Mở trang khách bằng phiên Facebook trong app (ngầm, chỉ đọc), lấy vài bài mới nhất: link, chữ đầu, ảnh thu nhỏ của bài;
 // nếu khách có gửi ảnh: so ảnh khách gửi với ảnh của từng bài (img-match.js) và chọn sẵn bài giống nhất.
-const { gray, bestDistance } = require('./img-match');
+const { gray, bestDistance, wholeDistance } = require('./img-match');
 
 module.exports = function createFbPosts({ BrowserWindow, partition, asChrome, ses, nativeImage }) {
   const wait = ms => new Promise(r => setTimeout(r, ms));
@@ -23,7 +23,8 @@ module.exports = function createFbPosts({ BrowserWindow, partition, asChrome, se
     try { const r = await ses.fetch(url); if (!r.ok) return null; const img = nativeImage.createFromBuffer(Buffer.from(await r.arrayBuffer())); if (img.isEmpty()) return null;
       const s = img.resize({ width }), { width: w, height: h } = s.getSize(); return gray(s.toBitmap(), w, h, true); } catch { return null; }
   };
-  const findPosts = ({ url, pics = [], max = 6 } = {}) => one(async () => {
+  const plain = t => String(t || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[đĐ]/g, 'd').toLowerCase().replace(/\s+/g, ' ').trim();
+  const findPosts = ({ url, pics = [], max = 6, name = '' } = {}) => one(async () => {
     let u; try { u = new URL(url); } catch { return { error: 'Chưa có link trang Facebook của khách.' }; }
     const w = new BrowserWindow({ show: false, width: 1000, height: 1600, webPreferences: { partition, offscreen: true, sandbox: true, contextIsolation: true, backgroundThrottling: false } });
     w.webContents.setAudioMuted(true); w.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
@@ -33,6 +34,9 @@ module.exports = function createFbPosts({ BrowserWindow, partition, asChrome, se
       await wait(4000 + Math.random() * 1500);
       const at = w.webContents.getURL();
       if (/\/(login|checkpoint)/.test(new URL(at).pathname)) return { error: 'Phiên Facebook trong app cần đăng nhập lại (mở cột Meta).' };
+      // Đúng người không: tên khách có trên tiêu đề / đầu trang.
+      const head = await w.webContents.executeJavaScript(`(document.title + ' ' + ([...document.querySelectorAll('h1,h2')].slice(0, 3).map(e => e.innerText).join(' ')))`).catch(() => '');
+      const nameMatch = !name || plain(head).includes(plain(name)) || plain(name).split(' ').filter(x => x.length > 1).every(x => plain(head).includes(x));
       const seen = new Map();
       for (let i = 0; i < 6 && seen.size < max; i++) {
         const list = await w.webContents.executeJavaScript(READ).catch(() => []);
@@ -40,7 +44,7 @@ module.exports = function createFbPosts({ BrowserWindow, partition, asChrome, se
         await w.webContents.executeJavaScript('scrollBy(0, 1300)').catch(() => {}); await wait(1600 + Math.random() * 900);
       }
       const posts = [...seen.values()].sort((a, b) => a.top - b.top).slice(0, max);
-      if (!posts.length) return { error: 'Không đọc được bài nào trên trang khách (trang riêng tư, chỉ bạn bè xem, hoặc Facebook đổi giao diện).', url: at };
+      if (!posts.length) return { error: 'Không đọc được bài nào trên trang khách (trang riêng tư, chỉ bạn bè xem, hoặc Facebook đổi giao diện).', url: at, nameMatch };
       // Ảnh thu nhỏ từng bài để bạn nhìn chọn.
       for (const p of posts) {
         try { await w.webContents.executeJavaScript(`scrollTo(0, ${Math.max(0, p.top - 20)})`); await wait(700);
@@ -56,8 +60,43 @@ module.exports = function createFbPosts({ BrowserWindow, partition, asChrome, se
       let best = -1;
       if (shots.length) { const ds = posts.map(p => p.dist ?? 64), m = Math.min(...ds), second = ds.filter((_, i) => i !== ds.indexOf(m)).reduce((a, b) => Math.min(a, b), 64);
         if (m <= 12 && second - m >= 3) best = ds.indexOf(m); }
-      return { posts: posts.map(({ top, h, imgs, ...p }) => ({ ...p, hasImg: imgs.length > 0 })), best, compared: shots.length };
+      return { posts: posts.map(({ top, h, imgs, ...p }) => ({ ...p, hasImg: imgs.length > 0 })), best, compared: shots.length, nameMatch, url: at };
     } catch (e) { return { error: e.message }; } finally { if (!w.isDestroyed()) w.destroy(); }
   });
-  return { findPosts };
+  // Tìm trang khách theo tên trên Facebook, so ảnh đại diện với ảnh khách trong hộp thư → danh sách người, chọn sẵn người giống nhất.
+  const PEOPLE = `(() => {
+    const seen = new Map(), skip = /\/(groups|pages|events|watch|marketplace|gaming|search|hashtag|stories|reel|photo|help|policies|settings)(\/|$)/;
+    for (const a of document.querySelectorAll('[role="main"] a[href], [role="feed"] a[href]')) {
+      let u; try { u = new URL(a.href); } catch { continue; }
+      if (!/facebook\.com$/.test(u.hostname) || skip.test(u.pathname)) continue;
+      const id = u.pathname === '/profile.php' ? u.searchParams.get('id') : u.pathname.split('/').filter(Boolean)[0];
+      if (!id || /^(l\.php|login|home\.php)$/.test(id)) continue;
+      const link = u.pathname === '/profile.php' ? 'https://www.facebook.com/profile.php?id=' + id : 'https://www.facebook.com/' + id;
+      const name = (a.innerText || a.getAttribute('aria-label') || '').trim().split('\\n')[0];
+      let box = a, pic = ''; for (let i = 0; i < 6 && box && !pic; i++, box = box.parentElement) { const im = box.querySelector('image, img'); if (im) pic = im.getAttribute('xlink:href') || im.getAttribute('href') || im.currentSrc || im.src || ''; }
+      const x = seen.get(link) || { link, name: '', pic: '', info: '' }; if (name && name.length > x.name.length && name.length < 80) x.name = name; if (!x.pic && /fbcdn|scontent/.test(pic)) x.pic = pic;
+      if (!x.info && box) x.info = (box.innerText || '').split('\\n').slice(1, 3).join(' · ').slice(0, 120);
+      seen.set(link, x);
+    }
+    return [...seen.values()].filter(x => x.name);
+  })()`;
+  const findPeople = ({ name = '', avatar = '', max = 6 } = {}) => one(async () => {
+    if (!name.trim()) return { error: 'Thiếu tên khách.' };
+    const w = new BrowserWindow({ show: false, width: 1100, height: 1500, webPreferences: { partition, offscreen: true, sandbox: true, contextIsolation: true, backgroundThrottling: false } });
+    w.webContents.setAudioMuted(true); w.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+    try {
+      await asChrome(w.webContents);
+      await Promise.race([w.webContents.loadURL('https://www.facebook.com/search/people/?q=' + encodeURIComponent(name.trim())), wait(25e3)]).catch(() => {});
+      await wait(4500 + Math.random() * 1500);
+      if (/\/(login|checkpoint)/.test(new URL(w.webContents.getURL()).pathname)) return { error: 'Phiên Facebook trong app cần đăng nhập lại (mở cột Meta).' };
+      let people = await w.webContents.executeJavaScript(PEOPLE).catch(() => []);
+      const want = plain(name); people = people.filter(p => plain(p.name).includes(want) || want.split(' ').filter(x => x.length > 1).every(x => plain(p.name).includes(x))).slice(0, max);
+      if (!people.length) return { error: 'Không thấy ai tên "' + name + '" trong kết quả tìm kiếm Facebook.' };
+      const me = avatar ? await grab(avatar, 64) : null;
+      for (const p of people) { const g = me && p.pic ? await grab(p.pic, 64) : null; p.dist = g ? wholeDistance(me, g) : null; }
+      let best = -1; if (me) { const ds = people.map(p => p.dist ?? 64), m = Math.min(...ds); const second = ds.filter((_, i) => i !== ds.indexOf(m)).reduce((a, b) => Math.min(a, b), 64); if (m <= 10 && second - m >= 4) best = ds.indexOf(m); }
+      return { people, best, compared: !!me };
+    } catch (e) { return { error: e.message }; } finally { if (!w.isDestroyed()) w.destroy(); }
+  });
+  return { findPosts, findPeople };
 };

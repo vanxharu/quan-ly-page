@@ -667,3 +667,5 @@ body.teams .ib-ai-opt{background:transparent;border-color:var(--tm-compose-line)
 .ib-fp-i img{width:220px;max-height:260px;object-fit:cover;object-position:top;border-radius:6px;flex:none}
 .ib-fp-meta{display:flex;flex-direction:column;gap:6px;min-width:0}.ib-fp-meta .hint{white-space:pre-wrap}
 .ib-fp-shot{height:64px;border-radius:4px}
+.ib-fp-person img{width:72px;height:72px;border-radius:50%;object-fit:cover}.ib-fp-noimg{width:72px;height:72px;border-radius:50%;background:var(--border,#8884);display:grid;place-items:center;flex:none}
+.ib-fp-av{width:40px;height:40px;border-radius:50%}

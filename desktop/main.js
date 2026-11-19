@@ -586,6 +586,7 @@ app.whenReady().then(async () => {
   // Khách không gửi link: tìm bài trên trang khách, so ảnh khách gửi.
   const fbPosts = createFbPosts({ BrowserWindow, partition: META, asChrome, ses: metaSes, nativeImage });
   ipcMain.handle('fb-find-posts', (e, args) => !fromPage(e) ? { error: 'denied' } : fbPosts.findPosts(args || {}));
+  ipcMain.handle('fb-find-people', (e, args) => !fromPage(e) ? { error: 'denied' } : fbPosts.findPeople(args || {}));
   ipcMain.handle('fb-profile-counts', (e, args) => !fromPage(e) ? { error: 'denied' } : fbPeople.profileCounts(args || {}));
   ipcMain.handle('meta-lookup', (e, args) => fromPage(e) ? auto.lookupProfile(args || {}) : { error: 'denied' });
   // Lệnh trình duyệt (CDP) cho khung ngầm Zalo: bấm chuột / phím / chèn chữ thật như khung Business Suite.

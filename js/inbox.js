@@ -893,11 +893,25 @@
     if (!list.slice(-24).some(m => m.isCustomer && WANT.test(m.text || ''))) return null;
     return { pics, first: cust.slice(-4).some(m => /bài (đầu|trên cùng|mới nhất|mới đăng|vừa đăng)|đầu (luôn|tiên)/i.test(m.text || '')) };
   }
-  const profileOf = c => { const m = S.manual?.[c.key]; return m?.profileUrl || (m?.uid ? 'https://www.facebook.com/profile.php?id=' + m.uid : ''); };
+  // Trang Facebook của khách: đã lưu (hồ sơ khách) → UID đọc từ Business Suite (mã liên hệ của khách) → chưa có.
+  const savedProfile = c => { const m = S.manual?.[pictureKey(c)] || S.manual?.[c.key]; return m?.profileUrl || (m?.uid ? 'https://www.facebook.com/profile.php?id=' + m.uid : ''); };
+  const profileOf = c => savedProfile(c) || (c.bs && /^\d{5,}$/.test(String(c.uid || '')) ? 'https://www.facebook.com/profile.php?id=' + c.uid : '');
+  async function saveProfile(c, url) {
+    const key = pictureKey(c), all = await DB.get(App.customerUidKey, {}), uid = (String(url).match(/profile\.php\?id=(\d+)/) || [])[1] || '';
+    all[key] = S.manual[key] = { ...(S.manual[key] || {}), uid: uid || S.manual[key]?.uid || '', profileUrl: url, url: S.manual[key]?.url || S.pics.get(key) || '', at: Date.now(), auto: false };
+    await DB.set(App.customerUidKey, all);
+  }
+  // Không có / sai trang: tìm theo tên trên Facebook, so ảnh đại diện → { url, sure } hoặc danh sách để chọn.
+  const findPeople = c => window.metaDesktop?.fbFindPeople ? window.metaDesktop.fbFindPeople({ name: c.other.name || '', avatar: S.pics.get(pictureKey(c)) || '' }).catch(e => ({ error: e.message })) : Promise.resolve({ error: 'Cần app bản mới nhất.' });
   async function findPostAuto(c, msgs) { // cho Kế hoạch: { link, score } hoặc null
-    const nl = needLink(msgs), url = profileOf(c); if (!nl || !url || !window.metaDesktop?.fbFindPosts) return { need: !!nl };
-    const r = await window.metaDesktop.fbFindPosts({ url, pics: nl.pics }).catch(() => null);
-    if (!r?.posts?.length) return { need: true };
+    const nl = needLink(msgs); if (!nl || !window.metaDesktop?.fbFindPosts) return { need: !!nl };
+    let url = profileOf(c), r = url ? await window.metaDesktop.fbFindPosts({ url, pics: nl.pics, name: c.other.name || '' }).catch(() => null) : null;
+    if (!r?.posts?.length || r.nameMatch === false) { // chưa có / sai trang: tìm theo tên, chỉ dùng khi ảnh đại diện khớp chắc chắn
+      const p = await findPeople(c); if (!(p?.best >= 0)) return { need: true };
+      url = p.people[p.best].link; r = await window.metaDesktop.fbFindPosts({ url, pics: nl.pics, name: c.other.name || '' }).catch(() => null);
+      if (!r?.posts?.length) return { need: true };
+    }
+    if (url !== savedProfile(c)) await saveProfile(c, url).catch(() => {});
     const i = r.best >= 0 ? r.best : nl.first && !nl.pics.length ? 0 : -1;
     return { need: true, link: i >= 0 ? r.posts[i].link : '', byImage: r.best >= 0 };
   }
@@ -922,11 +936,28 @@
     const urlIn = h('input', { type: 'text', value: profileOf(c), placeholder: 'Link trang Facebook của khách (facebook.com/…)', style: 'flex:1;min-width:0' });
     const body = h('div', { className: 'ib-fp-list' }), st = h('div', { className: 'hint' });
     const dlg = h('dialog', { className: 'svc-dialog ib-fp', onclose: () => dlg.remove() });
-    const go = async () => {
-      const url = urlIn.value.trim(); if (!url) { st.textContent = 'Nhập link trang Facebook của khách (bấm vào tên khách trong cột Meta để lấy).'; return; }
+    // Bước tìm người: theo tên + ảnh đại diện; chọn sẵn người có ảnh giống, bạn xác nhận.
+    const people = async why => {
+      st.textContent = (why ? why + ' ' : '') + `Đang tìm "${c.other.name || ''}" trên Facebook, so ảnh đại diện… (10–30 giây)`; body.replaceChildren(); btn.disabled = true;
+      const p = await findPeople(c); btn.disabled = false;
+      if (p?.error) { st.textContent = '✗ ' + p.error + ' Dán link trang khách vào ô trên rồi bấm 🔎 Tìm.'; return; }
+      st.textContent = p.best >= 0 ? '✓ Tìm thấy người có ảnh đại diện giống khách: bấm "Đúng người này" để xem bài.' : `Có ${p.people.length} người trùng tên: chọn đúng khách (so ảnh đại diện bên cạnh).`;
+      const mine = S.pics.get(pictureKey(c));
+      body.replaceChildren(...p.people.map((x, i) => h('div', { className: 'ib-fp-i ib-fp-person' + (i === p.best ? ' on' : '') },
+        x.pic ? h('img', { src: x.pic, alt: '' }) : h('div', { className: 'ib-fp-noimg', textContent: '?' }), mine && i === 0 ? null : null,
+        h('div', { className: 'ib-fp-meta' }, h('strong', { textContent: x.name + (i === p.best ? '  ✓ ảnh giống khách' : '') }), h('div', { className: 'hint', textContent: x.info || x.link }),
+          x.dist != null ? h('div', { className: 'hint', textContent: `Độ khác ảnh đại diện: ${x.dist}/64` }) : null,
+          h('div', { className: 'row', style: 'gap:6px' }, h('button', { type: 'button', className: i === p.best ? 'btn btn-primary btn-sm' : 'btn btn-soft btn-sm', textContent: 'Đúng người này', onclick: async () => { urlIn.value = x.link; await saveProfile(c, x.link); go(true); } }),
+            h('a', { href: x.link, target: '_blank', rel: 'noopener', className: 'btn btn-ghost btn-sm', textContent: 'Mở' }))))),
+        mine ? h('div', { className: 'hint row', style: 'gap:6px;align-items:center' }, 'Ảnh khách trong hộp thư:', h('img', { src: mine, className: 'ib-fp-av', alt: '' })) : null);
+    };
+    const go = async confirmed => {
+      const url = urlIn.value.trim(); if (!url) return people('Chưa có link trang của khách.');
       st.textContent = `Đang mở trang khách và đọc bài mới nhất${nl.pics.length ? ', so với ảnh khách gửi' : ''}… (15–40 giây)`; body.replaceChildren(); btn.disabled = true;
-      const r = await window.metaDesktop.fbFindPosts({ url, pics: nl.pics }).catch(e => ({ error: e.message })); btn.disabled = false;
-      if (r?.error) { st.textContent = '✗ ' + r.error; return; }
+      const r = await window.metaDesktop.fbFindPosts({ url, pics: nl.pics, name: c.other.name || '' }).catch(e => ({ error: e.message })); btn.disabled = false;
+      if (r?.nameMatch === false && confirmed !== true) return people('Trang này có vẻ không phải của ' + (c.other.name || 'khách') + '.');
+      if (r?.error) { if (confirmed !== true) return people('✗ ' + r.error); st.textContent = '✗ ' + r.error; return; }
+      if (url !== savedProfile(c)) saveProfile(c, url).catch(() => {});
       const pick = r.best >= 0 ? r.best : nl.first ? 0 : -1;
       st.textContent = `${r.posts.length} bài mới nhất trên trang khách.` + (r.compared ? (r.best >= 0 ? ' ✓ Đã tìm thấy bài giống ảnh khách gửi.' : ' Chưa thấy bài nào giống hẳn ảnh khách gửi: bạn tự nhìn chọn.') : '') + (nl.first && r.best < 0 ? ' Khách nói "bài đầu": chọn sẵn bài đầu tiên.' : '');
       body.replaceChildren(...r.posts.map((p, i) => h('div', { className: 'ib-fp-i' + (i === pick ? ' on' : '') },
@@ -938,10 +969,10 @@
             h('button', { type: 'button', className: 'btn btn-ghost btn-sm', textContent: 'Hỏi khách bài này', title: 'Đưa tin "có phải bài này không" + link vào ô nhập', onclick: () => { dlg.close(); App.inbox.compose({ key: c.key, text: `Dạ có phải bài này không ạ?\n${p.link}`, autoSend: false }); } }),
             h('a', { href: p.link, target: '_blank', rel: 'noopener', className: 'btn btn-ghost btn-sm', textContent: 'Mở' }))))));
     };
-    const btn = h('button', { type: 'button', className: 'btn btn-soft', textContent: '🔎 Tìm', onclick: go });
+    const btn = h('button', { type: 'button', className: 'btn btn-soft', textContent: '🔎 Tìm', onclick: () => go(true) });
     dlg.append(h('div', { className: 'card-head' }, h('h3', { className: 'card-title', textContent: '🔎 Tìm bài trên trang của ' + (c.other.name || 'khách') }), h('button', { type: 'button', className: 'icon-btn', 'aria-label': 'Đóng', textContent: '×', onclick: () => dlg.close() })),
       h('div', { className: 'row', style: 'gap:8px' }, urlIn, btn), nl.pics.length ? h('div', { className: 'row', style: 'gap:6px' }, h('span', { className: 'hint', textContent: 'Ảnh khách gửi:' }), ...nl.pics.map(u => h('img', { src: u, className: 'ib-fp-shot', alt: '' }))) : null, st, body);
-    document.body.append(dlg); dlg.showModal(); if (urlIn.value) go();
+    document.body.append(dlg); dlg.showModal(); go(false);
   }
   // ── Cho Kế hoạch tự động (js/auto.js): làm việc với Hộp thư không qua giao diện ──
   const autoWait = ms => new Promise(r => setTimeout(r, ms));

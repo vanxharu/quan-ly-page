@@ -38,4 +38,6 @@ function bestDistance(hay, needle) {
   }
   return best;
 }
-module.exports = { gray, bestDistance, hashBox, integral };
+// So 2 ảnh đại diện (cả ảnh, không trượt khung): khoảng cách 0–64.
+function wholeDistance(a, b) { const A = hashBox(integral(a), 0, 0, a.w, a.h), B = hashBox(integral(b), 0, 0, b.w, b.h); return ham(A.bits, B.bits); }
+module.exports = { gray, bestDistance, wholeDistance, hashBox, integral };

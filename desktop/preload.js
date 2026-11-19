@@ -22,6 +22,7 @@ contextBridge.exposeInMainWorld('metaDesktop', {
   svcSnap: args => ipcRenderer.invoke('svc-snap', args),
   fbPostPeople: args => ipcRenderer.invoke('fb-post-people', args),
   fbFindPosts: args => ipcRenderer.invoke('fb-find-posts', args),
+  fbFindPeople: args => ipcRenderer.invoke('fb-find-people', args),
   gptAsk: args => ipcRenderer.invoke('gpt-ask', args),
   gptLogin: () => ipcRenderer.invoke('gpt-login'),
   autoSys: cfg => ipcRenderer.invoke('auto-sys', cfg),
