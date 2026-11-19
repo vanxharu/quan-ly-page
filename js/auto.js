@@ -42,6 +42,7 @@
   const lastErr = {};
   async function tg(text, c) { c ||= await getCfg(); if (!c.tg.token || !c.tg.chat) return { error: 'Chưa nhập Bot token / Chat ID' };
     const args = { token: c.tg.token.trim(), chat: c.tg.chat.trim(), text };
+    if (D.tgApi) { const r = await D.tgApi({ token: args.token, method: 'sendMessage', params: { chat_id: args.chat, text: String(text).slice(0, 4000), disable_web_page_preview: true } }); return r?.ok ? { ok: true } : { error: r?.description || 'lỗi' }; }
     if (D.tgSend) return D.tgSend(args);
     try { const r = await fetch(`https://api.telegram.org/bot${args.token}/sendMessage`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chat_id: args.chat, text, disable_web_page_preview: true }) });
       const j = await r.json(); return j.ok ? { ok: true } : { error: j.description }; } catch (e) { return { error: e.message }; } }
@@ -258,7 +259,10 @@
       if (r?.ok) { RC.map[r.result.message_id] = x.key; trimMap(); }
     }
   }
-  const trimMap = () => { const ks = Object.keys(RC.map); if (ks.length > 400) ks.slice(0, ks.length - 400).forEach(k => delete RC.map[k]); };
+  // Giữ nút trên các tin báo cũ dùng được sau khi tải lại app.
+  const RCSAVE = 'tgRefV1'; let rcT = 0; const rcSave = () => { clearTimeout(rcT); rcT = setTimeout(() => DB.set(RCSAVE, { ref: RC.ref || {}, map: RC.map }).catch(() => {}), 1500); };
+  DB.get(RCSAVE, null).then(v => { if (v) { RC.ref = { ...(v.ref || {}), ...(RC.ref || {}) }; RC.map = { ...(v.map || {}), ...RC.map }; } }).catch(() => {});
+  const trimMap = () => { const ks = Object.keys(RC.map); if (ks.length > 400) ks.slice(0, ks.length - 400).forEach(k => delete RC.map[k]); const rs = Object.keys(RC.ref || {}); if (rs.length > 400) rs.slice(0, rs.length - 400).forEach(k => delete RC.ref[k]); rcSave(); };
   const say = (c, text, extra = {}) => tgApi('sendMessage', { chat_id: c.tg.chat, text: String(text).slice(0, 4000), ...extra }, c);
   async function tgSendToCustomer(c, key, text, image = '') {
     const A = App.inbox.auto, x = convOf(key); if (!x) return say(c, '✗ Không tìm thấy khách trong danh sách hội thoại (có thể đã cũ).');
@@ -269,7 +273,7 @@
     const A = App.inbox.auto; await A.refresh();
     const list = A.convs().filter(x => x.fromCustomer && Date.now() - new Date(x.updated_time) < 3 * 864e5).slice(0, 10);
     if (!list.length) return say(c, '✓ Không có khách nào đang chờ trả lời.');
-    for (const x of list) { const r = await say(c, `⏳ ${nm(x)} · ${Math.round((Date.now() - new Date(x.updated_time)) / 60e3)} phút\n${String(x.snippet || '').slice(0, 200)}`, { reply_markup: custBtns(shortKey(x.key)) }); if (r?.ok) RC.map[r.result.message_id] = x.key; }
+    for (const x of list) { const r = await say(c, `⏳ ${nm(x)} · ${Math.round((Date.now() - new Date(x.updated_time)) / 60e3)} phút\n${String(x.snippet || '').slice(0, 200)}`, { reply_markup: custBtns(shortKey(x.key)) }); if (r?.ok) RC.map[r.result.message_id] = x.key; trimMap(); }
   }
   async function tgStatus(c) {
     const st = await getState(), L = (await DB.get(LOG, [])).filter(l => l.at > Date.now() - 864e5), n = t => L.filter(l => l.task === t && l.kind === 'ok').length;
@@ -332,7 +336,7 @@
     const id = rid(); RC.posts[id] = d;
     const body = `📝 Bài cho ${d.page.name}${d.image ? ' (kèm ảnh)' : ''}:\n\n${d.text || '(chưa có chữ)'}\n\n↩️ Muốn sửa chữ: trả lời (reply) tin này bằng nội dung mới.`;
     const r = await say(c, body, { reply_markup: kb([[B('🚀 Đăng ngay', 'pn|' + id), B('🕒 Lên lịch (giờ trống)', 'ps|' + id)], [B('✨ AI viết lại', 'pr|' + id), B('🗑 Bỏ', 'pdel|' + id)]]) });
-    if (r?.ok) RC.map[r.result.message_id] = 'post:' + id;
+    if (r?.ok) RC.map[r.result.message_id] = 'post:' + id; trimMap();
   }
   const pagesKb = (prefix, extra = '') => kb(App.pages.map(p => [B(p.name, prefix + '|' + p.id + (extra ? '|' + extra : ''))]));
   async function tgMassAsk(c, group) {
@@ -429,20 +433,20 @@
       const key = RC.ref?.[k]; if (!key) return say(c, 'Tin báo này đã cũ, gõ /cho để xem lại khách đang chờ.');
       const x = convOf(key); if (!x) return say(c, '✗ Không tìm thấy khách.');
       if (act === 'mute') { RC.mute[key] = Date.now() + 864e5; return say(c, `🔕 Tắt báo ${nm(x)} trong 24 giờ.`); }
-      if (act === 'quo') { RC.wait = { kind: 'quote', key }; return say(c, `🧾 Gửi link + số lượng cho ${nm(x)}, vd: "1k like https://facebook.com/…"`); }
+      if (act === 'quo') { RC.wait = { kind: 'quote', key, at: Date.now() }; return say(c, `🧾 Gửi link + số lượng cho ${nm(x)}, vd: "1k like https://facebook.com/…"`); }
       if (act === 'war') return confirmAsk(c, `🛡 Bảo hành (refill Baostar) các link còn hạn của ${nm(x)} và báo khách?`, async () => {
         const msgs = await App.inbox.auto.messagesOf(x), r = await App.services.autoWarranty({ key: x.key, name: x.other.name, page: x.page, messages: msgs });
         if (!r) return 'Khách không có tin báo tụt hoặc không có đơn nào để bảo hành.'; if (r.skipped) return '⚠️ ' + r.skipped; if (r.error) return '✗ ' + r.error;
         await App.inbox.auto.sendKey(x.key, r.text, r.image || ''); return `🛡 Đã refill ${r.n} link và báo khách.`; });
       if (act === 'his') { const m = (await App.inbox.auto.texts(x)).filter(m => m.text).slice(-5);
-        const r = await say(c, `📋 ${nm(x)}\n` + (m.map(m => (m.isCustomer ? '👤 ' : '🏪 ') + String(m.text).slice(0, 300)).join('\n') || '(chưa có tin đã lưu)'), { reply_markup: custBtns(k) }); if (r?.ok) RC.map[r.result.message_id] = key; return; }
+        const r = await say(c, `📋 ${nm(x)}\n` + (m.map(m => (m.isCustomer ? '👤 ' : '🏪 ') + String(m.text).slice(0, 300)).join('\n') || '(chưa có tin đã lưu)'), { reply_markup: custBtns(k) }); if (r?.ok) RC.map[r.result.message_id] = key; trimMap(); return; }
       if (act === 'ai') {
         say(c, `✨ AI đang soạn cho ${nm(x)}…`);
         try { const msgs = await App.inbox.auto.messagesOf(x), r = await App.inbox.auto.aiReply(x, msgs), id = rid();
           RC.drafts[id] = { key, text: r.text, image: r.image || '' };
           const m = await say(c, `✨ Nháp cho ${nm(x)}:\n\n${r.text}${r.pt ? '\n\n📎 kèm ' + (r.pt.t.title || 'bảng giá') : ''}\n\n↩️ Muốn sửa: trả lời (reply) tin này bằng nội dung mới.`,
             { reply_markup: kb([[B('✅ Gửi', 'send|' + id), B('🗑 Bỏ', 'drop|' + id)]]) });
-          if (m?.ok) RC.map[m.result.message_id] = key; }
+          if (m?.ok) RC.map[m.result.message_id] = key; trimMap(); }
         catch (e) { say(c, '✗ AI chưa soạn được: ' + e.message); }
         return;
       }
@@ -463,8 +467,9 @@
     if (to && String(to).startsWith('post:')) { const d = RC.posts[String(to).slice(5)]; if (!d) return say(c, 'Bài nháp đã hết hạn.'); d.text = text; return showPost(c, d); }
     if (to && /^\/?(báo giá|bao gia|baogia)\b/i.test(text)) return tgQuoteFrom(c, text, to);
     if (to) return tgSendToCustomer(c, to, text);
-    if (RC.wait?.kind === 'quote') { const w = RC.wait; RC.wait = null; return tgQuoteFrom(c, text, w.key); }
     const cmd = text.split(/\s|@/)[0].toLowerCase();
+    if (RC.wait?.kind === 'quote' && !cmd.startsWith('/') && Date.now() - RC.wait.at < 10 * 60e3) { const w = RC.wait; RC.wait = null; return tgQuoteFrom(c, text, w.key); }
+    RC.wait = null;
     if (cmd === '/start' || cmd === '/help' || cmd === '/trogiup') return say(c, HELP, { reply_markup: MENU });
     if (cmd === '/menu' || /^menu$/i.test(text)) return say(c, '📱 Bảng điều khiển Get Helps', { reply_markup: MENU });
     const short = { '/cho': 'cho', '/baogia': 'q', '/don': 'od', '/solieu': 'st', '/bai': 'pd', '/vietbai': 'pa', '/nhan': 'mb', '/lich': 'rl', '/trangthai': 'ts' };
@@ -485,7 +490,9 @@
         const off = Number(local.get('tgOffset')) || 0;
         const r = await tgApi('getUpdates', { offset: off, timeout: 25, allowed_updates: ['message', 'callback_query'] }, c);
         if (!r?.ok) { if (/terminated by other|Conflict/i.test(r?.description || '')) await wait(30e3); else await wait(15e3); continue; }
-        for (const u of r.result || []) { local.set('tgOffset', String(u.update_id + 1)); await tgHandle(u, c).catch(e => log('sys', 'err', 'Telegram: ' + e.message)); }
+        // Không chờ từng lệnh xong (AI soạn / gửi hàng loạt có thể mất vài phút): bấm nút khác vẫn được trả lời ngay.
+        for (const u of r.result || []) { local.set('tgOffset', String(u.update_id + 1));
+          tgHandle(u, c).catch(e => { log('sys', 'err', 'Telegram: ' + e.message); say(c, '✗ Lỗi: ' + e.message).catch(() => {}); }); }
       }
     } finally { tgLoop = false; }
   }

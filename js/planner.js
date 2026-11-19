@@ -407,7 +407,7 @@
       list = queue.filter(i => i.status === 'approved' && inSel(i));
       if (!list.length) return refresh();
     }
-    $('plGo').disabled = true;
+    if ($('plGo')) $('plGo').disabled = true;
     let ok = 0, dup = 0;
     App.batchProgress?.start(list.map(i => ({ id: i.id, label: `${(pageOf(i)?.name || i.pageName || 'Page').slice(0, 40)} · ${i.at ? fmtTime(i.at) : 'chưa có giờ'}` })));
     for (const i of list) {
@@ -417,7 +417,7 @@
       App.batchProgress?.set(i.id, done === true ? 'ok' : 'fail', done === true ? '' : (after?.error || 'Lỗi').slice(0, 140));
     }
     App.batchProgress?.end();
-    $('plGo').disabled = false;
+    if ($('plGo')) $('plGo').disabled = false;
     log(ok + dup === list.length ? 'ok' : 'err', `Đã hẹn ${ok}/${list.length} bài trên Facebook.${dup ? ` Bỏ qua ${dup} bài trùng nội dung (đã có trên Meta hoặc trong danh sách).` : ''}${ok + dup < list.length ? ' Bài lỗi ghi rõ lý do bên dưới.' : ''}`);
     if (ok) logLinks(list.map(i => pageOf(i)).filter(Boolean));
     refresh();
