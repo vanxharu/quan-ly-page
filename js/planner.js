@@ -374,10 +374,14 @@
     finally { App.plannerRunning?.delete(i.id); }
   }
   // Kế hoạch tự động gọi được khi tab Lịch đăng chưa mở (chưa có ô nhật ký #plLog).
-  App.planner.scheduleAll = async () => { if (!$('plLog')) document.body.append(h('div', { id: 'plLog', hidden: true })); await scheduleAll(); return [...$('plLog').children].map(e => e.textContent).join(' · '); };
-  async function scheduleAll() {
+  // pageIds: chỉ lên lịch bài của các Page này (Kế hoạch tự động chọn Page riêng, không theo Page đang chọn trên giao diện).
+  // Thêm bài vào hàng chờ Lịch đăng (Kế hoạch tự động: AI viết bài mới mỗi ngày). Chưa có giờ → lúc lên lịch tự xếp vào giờ trống của Page.
+  App.planner.addItems = async items => { const q = await DB.get(QUEUE, []); for (const it of items) q.push({ id: uid('fs'), at: 0, createdAt: Date.now(), ...it }); await DB.set(QUEUE, q); if (App.current() === 'planner') App.tabs.planner?.refresh?.(); };
+  App.planner.scheduleAll = async pageIds => { if (!$('plLog')) document.body.append(h('div', { id: 'plLog', hidden: true })); await scheduleAll(pageIds); return [...$('plLog').children].map(e => e.textContent).join(' · '); };
+  async function scheduleAll(pageIds) {
     $('plLog').replaceChildren();
-    let list = (await DB.get(QUEUE, [])).filter(i => i.status === 'approved' && inSel(i));
+    const only = Array.isArray(pageIds) && pageIds.length ? new Set(pageIds.map(String)) : null;
+    let list = (await DB.get(QUEUE, [])).filter(i => i.status === 'approved' && (only ? only.has(String(pageOf(i)?.id)) : inSel(i)));
     if (!list.length) return log('err', 'Không có bài đã duyệt.');
     // Bài chưa có giờ, giờ đã qua / sắp tới dưới 10 phút, hoặc ngày đó Page đã đủ số bài/ngày (tính cả bài hẹn trên Meta
     // và bài đã đăng hôm nay): tự xếp sang giờ/ngày trống tiếp theo thay vì báo lỗi hay đăng dồn.

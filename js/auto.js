@@ -22,7 +22,7 @@
     reply: { on: true, from: '08:00', to: '22:00', away: true, awayMin: 10, waitMin: 3, perHour: 30 },
     remarket: { gapDays: 7, pageLimit: 50, rules: [] },
     orders: { nudges: true, kinds: NUDGE_KINDS.map(([k]) => k), warranty: true },
-    post: { schedule: false, scheduleAt: '07:30', scan: false, scanAt: '21:00', scanDays: 3 },
+    post: { schedule: false, scheduleAt: '07:30', pages: [], ai: false, aiAt: '06:30', aiPages: [], aiPer: 1, aiTopic: '', aiApprove: true, scan: false, scanAt: '21:00', scanDays: 3, scanPages: [] },
     tg: { token: '', chat: '', errors: true, daily: true, dailyAt: '21:30', notify: true, control: true }
   });
   const merge = (a, b) => { for (const k of Object.keys(b || {})) a[k] = b[k] && typeof b[k] === 'object' && !Array.isArray(b[k]) && a[k] && typeof a[k] === 'object' ? merge({ ...a[k] }, b[k]) : b[k]; return a; };
@@ -160,18 +160,50 @@
   async function taskPost(c, st) {
     if (c.post.schedule && nowMin() >= hm(c.post.scheduleAt) && !st.ran.post && App.planner?.scheduleAll) {
       st.ran.post = 1; await DB.set(STATE, st);
-      try { const r = await App.planner.scheduleAll(); await log('post', /lỗi|không/i.test(r) && !/Đã|đã hẹn/.test(r) ? 'info' : 'ok', r || 'Đã chạy lên lịch bài đã duyệt.'); }
+      try { const r = await App.planner.scheduleAll(c.post.pages?.length ? c.post.pages : App.pages.map(p => p.id)); await log('post', /lỗi|không/i.test(r) && !/Đã|đã hẹn/.test(r) ? 'info' : 'ok', r || 'Đã chạy lên lịch bài đã duyệt.'); }
       catch (e) { await log('post', 'err', e.message); }
+    }
+    if (c.post.ai && nowMin() >= hm(c.post.aiAt) && !st.ran.aipost) {
+      st.ran.aipost = 1; await DB.set(STATE, st);
+      try { await aiPosts(c); } catch (e) { await log('post', 'err', 'AI viết bài: ' + e.message); }
     }
     if (c.post.scan && nowMin() >= hm(c.post.scanAt) && !st.ran.scan) {
       st.ran.scan = 1; await DB.set(STATE, st);
       try { await scanComments(c); } catch (e) { await log('scan', 'err', e.message); }
     }
   }
+  // AI viết bài mới cho từng Page đã chọn → hàng chờ Lịch đăng; "tự duyệt" thì lên lịch luôn (Facebook đăng vào giờ trống của Page).
+  async function aiPosts(c) {
+    if (!D.gptAsk) throw Error('Cần app Get Helps trên Windows (ChatGPT trong app).');
+    const pages = App.pages.filter(p => !c.post.aiPages?.length || c.post.aiPages.includes(String(p.id))), per = Math.max(1, Math.min(5, Number(c.post.aiPer) || 1));
+    const shop = { ...(await DB.get('aiShopV1', {})) }, made = [];
+    for (const p of pages) {
+      let recent = []; try { recent = (await apiPaged(`/${p.id}/posts`, { fields: 'message,created_time', limit: 8 }, p.access_token, 1)).map(x => String(x.message || '').replace(/\s+/g, ' ').slice(0, 220)).filter(Boolean); } catch {}
+      const prompt = [`Bạn là người viết nội dung cho Fanpage "${p.name}"${shop.name ? ' của shop ' + shop.name : ''} (dịch vụ tăng tương tác mạng xã hội: like, follow, view…).`,
+        `Viết ${per} bài đăng Facebook MỚI, khác nhau, tiếng Việt tự nhiên, hấp dẫn, có lời kêu gọi nhắn tin cho Page, 3–8 câu, emoji vừa phải, 2–4 hashtag cuối bài.`,
+        c.post.aiTopic ? 'Chủ đề / ý chính muốn đăng: ' + c.post.aiTopic : 'Chủ đề: chọn góc nhìn hữu ích cho người bán hàng online / người làm nội dung (mẹo tăng tương tác, lợi ích dịch vụ, ưu đãi, cảm nhận khách…).',
+        shop.policy ? 'Chính sách shop (được nhắc khi hợp): ' + shop.policy : '', shop.notes ? 'Lưu ý: ' + shop.notes : '',
+        'Không bịa giá cụ thể, không hứa điều shop không có. Không lặp lại ý các bài gần đây:', ...recent.map(t => '- ' + t),
+        `Chỉ trả về MỘT khối JSON: {"posts":["bài 1"${per > 1 ? ',"bài 2"' : ''}]}`].filter(Boolean).join('\n');
+      let posts = [];
+      for (let k = 0; k < 3 && !posts.length; k++) {
+        const r = await D.gptAsk({ prompt, fresh: k > 0 }); if (r?.error === 'login') throw Error('Chưa đăng nhập ChatGPT trong app');
+        try { const t = String(r?.text || '').replace(/```(?:json)?/gi, ''), j = JSON.parse(t.slice(t.indexOf('{'), t.lastIndexOf('}') + 1)); posts = (j.posts || []).map(x => String(x).trim()).filter(x => x.length > 20).slice(0, per); } catch {}
+      }
+      if (!posts.length) { await log('post', 'err', `${p.name}: AI chưa viết được bài.`); continue; }
+      await App.planner.addItems(posts.map(text => ({ pageKey: p.id, pageName: p.name, status: c.post.aiApprove ? 'approved' : 'draft', text, source: 'auto-ai' })));
+      made.push(`${p.name}: ${posts.length}`);
+      await log('post', 'ok', `✨ AI viết ${posts.length} bài cho ${p.name}${c.post.aiApprove ? '' : ' (chờ bạn duyệt trong Lịch đăng)'}: ${posts[0].slice(0, 100)}…`);
+    }
+    if (c.post.aiApprove && made.length) {
+      const r = await App.planner.scheduleAll(pages.map(p => p.id)); await log('post', 'ok', 'Lên lịch bài AI vừa viết: ' + (r || 'xong'));
+      tg(`📝 AI đã viết và lên lịch bài mới: ${made.join(' · ')}`, c).catch(() => {});
+    } else if (made.length) tg(`📝 AI đã viết bài mới (chờ duyệt trong Lịch đăng): ${made.join(' · ')}`, c).catch(() => {});
+  }
   const PHONE = /(?:\+?84|0)(?:[\s.-]?\d){9}\b/g;
   async function scanComments(c) {
     const since = Math.floor((Date.now() - (Number(c.post.scanDays) || 3) * 864e5) / 1000), found = [], old = await DB.get(LEADS, []), seen = new Set(old.map(l => l.id));
-    for (const p of App.pages) {
+    for (const p of App.pages.filter(p => !c.post.scanPages?.length || c.post.scanPages.includes(String(p.id)))) {
       let posts = []; try { posts = await apiPaged(`/${p.id}/posts`, { since, limit: 50, fields: 'id,permalink_url,message,comments.summary(true).limit(0)' }, p.access_token, 2); } catch (e) { await log('scan', 'err', `${p.name}: ${e.message}`); continue; }
       for (const post of posts.filter(x => x.comments?.summary?.total_count)) {
         let cm = []; try { cm = await apiPaged(`/${post.id}/comments`, { filter: 'toplevel', limit: 100, fields: 'id,from{id,name},message,created_time,permalink_url,comments.limit(25){from{id}}' }, p.access_token, 5); } catch { continue; }
@@ -326,6 +358,9 @@
   const inp = (obj, key, type = 'text', w) => h('input', { type, value: obj[key] ?? '', style: w ? `width:${w}px` : '', onchange: e => { obj[key] = type === 'number' ? Number(e.target.value) : e.target.value; save(); } });
   const chk = (obj, key, label, title = '') => h('label', { className: 'ap-chk', title }, h('input', { type: 'checkbox', checked: !!obj[key], onchange: e => { obj[key] = e.target.checked; save(); if (key === 'on') draw(); } }), ' ', label);
   const sel = (obj, key, opts) => h('select', { onchange: e => { obj[key] = e.target.value; save(); } }, ...opts.map(([v, t]) => h('option', { value: v, textContent: t, selected: String(obj[key] ?? '') === v })));
+  // Chọn Page (không chọn Page nào = mọi Page).
+  const pagePick = (obj, key) => h('span', { className: 'ap-pages' }, ...App.pages.map(p => h('button', { type: 'button', className: 'chip', 'aria-pressed': String((obj[key] || []).includes(String(p.id))), textContent: p.name, title: 'Bấm để chọn / bỏ Page này (không chọn Page nào = mọi Page)',
+    onclick: e => { const s = new Set(obj[key] || []), id = String(p.id); s.has(id) ? s.delete(id) : s.add(id); obj[key] = [...s]; e.target.setAttribute('aria-pressed', String(s.has(id))); e.target.parentNode.dataset.all = String(!s.size); save(); } })));
   const card = (title, ...kids) => h('section', { className: 'card ap-card' }, h('h3', { className: 'card-title', textContent: title }), ...kids);
   const row = (...kids) => h('div', { className: 'ap-row' }, ...kids);
   function drawStatus() {
@@ -386,8 +421,11 @@
         row(chk(C.orders, 'warranty', 'Khách báo tụt → tự refill Baostar link còn bảo hành + báo khách (kèm ảnh số hiện tại)')),
         h('div', { className: 'hint', textContent: 'Link hết hạn / không refill được sẽ không tự tạo đơn bù (tốn tiền): app ghi vào nhật ký và báo Telegram để bạn xử lý.' })),
       card('📝 Đăng bài & quét bài',
-        row(chk(C.post, 'schedule', 'Mỗi ngày lúc'), inp(C.post, 'scheduleAt', 'time'), h('span', {}, 'tự lên lịch các bài đã duyệt trong Lịch đăng (Facebook tự đăng đúng giờ)')),
-        row(chk(C.post, 'scan', 'Mỗi ngày lúc'), inp(C.post, 'scanAt', 'time'), h('span', {}, 'quét bình luận bài '), inp(C.post, 'scanDays', 'number', 52), h('span', {}, ' ngày gần đây: bình luận chưa trả lời + SĐT khách để lại (báo Telegram)'))),
+        row(chk(C.post, 'ai', 'Mỗi ngày lúc'), inp(C.post, 'aiAt', 'time'), h('span', {}, '✨ AI viết'), inp(C.post, 'aiPer', 'number', 52), h('span', {}, 'bài mới cho mỗi Page:'), pagePick(C.post, 'aiPages')),
+        row(h('span', { className: 'hint' }, 'Chủ đề / ý chính:'), h('textarea', { rows: 2, value: C.post.aiTopic || '', placeholder: 'Để trống = AI tự chọn chủ đề hữu ích. VD: ưu đãi tăng like cuối tuần, mẹo làm video TikTok lên xu hướng…', style: 'flex:1;min-width:260px', onchange: e => { C.post.aiTopic = e.target.value; save(); } }),
+          chk(C.post, 'aiApprove', 'Tự duyệt & lên lịch luôn', 'Bỏ tích: bài nằm ở Lịch đăng chờ bạn duyệt')),
+        row(chk(C.post, 'schedule', 'Mỗi ngày lúc'), inp(C.post, 'scheduleAt', 'time'), h('span', {}, 'tự lên lịch các bài đã duyệt trong Lịch đăng (Facebook tự đăng đúng giờ):'), pagePick(C.post, 'pages')),
+        row(chk(C.post, 'scan', 'Mỗi ngày lúc'), inp(C.post, 'scanAt', 'time'), h('span', {}, 'quét bình luận bài '), inp(C.post, 'scanDays', 'number', 52), h('span', {}, ' ngày gần đây: bình luận chưa trả lời + SĐT khách để lại (báo Telegram):'), pagePick(C.post, 'scanPages'))),
       card('🔔 Báo cáo Telegram',
         row(h('label', {}, 'Bot token ', inp(C.tg, 'token', 'password', 260)), h('label', {}, 'Chat ID ', inp(C.tg, 'chat', 'text', 140)),
           h('button', { type: 'button', className: 'btn btn-soft btn-sm', textContent: 'Gửi thử', onclick: async () => { const r = await tg('✅ Get Helps: kết nối Telegram thành công.', C); toast(r?.ok ? 'Đã gửi tin thử về Telegram.' : 'Chưa gửi được: ' + (r?.error || ''), 6000); } })),
