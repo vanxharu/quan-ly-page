@@ -940,7 +940,7 @@
     const people = async why => {
       st.textContent = (why ? why + ' ' : '') + `Đang tìm "${c.other.name || ''}" trên Facebook, so ảnh đại diện… (10–30 giây)`; body.replaceChildren(); btn.disabled = true;
       const p = await findPeople(c); btn.disabled = false;
-      if (p?.error) { st.textContent = '✗ ' + p.error + ' Dán link trang khách vào ô trên rồi bấm 🔎 Tìm.'; return; }
+      if (p?.error) { st.textContent = [why, '✗ ' + p.error, 'Cách nhanh: ở cột Hộp thư Meta bấm vào tên khách → "Xem trang cá nhân" → chép link → dán vào ô trên → 🔎 Tìm. (App đã lưu chẩn đoán vào Downloads/GetHelps-debug/tim-bai.json, gửi file này để được chỉnh.)'].filter(Boolean).join('\n'); urlIn.value = ''; urlIn.focus(); return; }
       st.textContent = p.best >= 0 ? '✓ Tìm thấy người có ảnh đại diện giống khách: bấm "Đúng người này" để xem bài.' : `Có ${p.people.length} người trùng tên: chọn đúng khách (so ảnh đại diện bên cạnh).`;
       const mine = S.pics.get(pictureKey(c));
       body.replaceChildren(...p.people.map((x, i) => h('div', { className: 'ib-fp-i ib-fp-person' + (i === p.best ? ' on' : '') },

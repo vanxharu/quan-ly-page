@@ -3,7 +3,14 @@
 // nếu khách có gửi ảnh: so ảnh khách gửi với ảnh của từng bài (img-match.js) và chọn sẵn bài giống nhất.
 const { gray, bestDistance, wholeDistance } = require('./img-match');
 
-module.exports = function createFbPosts({ BrowserWindow, partition, asChrome, ses, nativeImage }) {
+module.exports = function createFbPosts({ BrowserWindow, partition, asChrome, ses, nativeImage, saveDebug }) {
+  // Chẩn đoán: cấu trúc trang lúc đọc (Downloads/GetHelps-debug/tim-bai.json) để chỉnh khi Facebook đổi giao diện.
+  const DIAG = `(() => ({ url: location.href, title: document.title, h: [...document.querySelectorAll('h1,h2,h3')].slice(0, 6).map(e => e.innerText.slice(0, 80)),
+    articles: document.querySelectorAll('[role="article"]').length, posinset: document.querySelectorAll('div[aria-posinset]').length, feed: document.querySelectorAll('[role="feed"]').length,
+    main: !!document.querySelector('[role="main"]'), login: !!document.querySelector('input[name="email"],input[name="pass"]'),
+    text: (document.body?.innerText || '').slice(0, 600), links: [...document.querySelectorAll('[role="main"] a[href]')].slice(0, 60).map(a => a.href.slice(0, 140) + ' | ' + (a.innerText || a.getAttribute('aria-label') || '').slice(0, 40)) }))()`;
+  const diag = async (w, step, extra) => { try { saveDebug?.(step, { ...(await w.webContents.executeJavaScript(DIAG)), ...extra }); } catch {} };
+  const UNAVAIL = /không xem được nội dung này|this content isn't available|content isn.t available|trang này không khả dụng|page isn't available/i;
   const wait = ms => new Promise(r => setTimeout(r, ms));
   let chain = Promise.resolve();
   const one = fn => { const p = chain.then(fn, fn); chain = p.catch(() => {}); return p; };
@@ -34,9 +41,12 @@ module.exports = function createFbPosts({ BrowserWindow, partition, asChrome, se
       await wait(4000 + Math.random() * 1500);
       const at = w.webContents.getURL();
       if (/\/(login|checkpoint)/.test(new URL(at).pathname)) return { error: 'Phiên Facebook trong app cần đăng nhập lại (mở cột Meta).' };
+      const txt = await w.webContents.executeJavaScript(`document.body?.innerText.slice(0, 1500) || ''`).catch(() => '');
+      if (UNAVAIL.test(txt)) { await diag(w, 'trang-khach', { name }); return { error: 'Facebook báo không xem được trang này (mã khách từ Business Suite không phải trang cá nhân thật, hoặc khách giới hạn người xem).', unavailable: true }; }
       // Đúng người không: tên khách có trên tiêu đề / đầu trang.
       const head = await w.webContents.executeJavaScript(`(document.title + ' ' + ([...document.querySelectorAll('h1,h2')].slice(0, 3).map(e => e.innerText).join(' ')))`).catch(() => '');
-      const nameMatch = !name || plain(head).includes(plain(name)) || plain(name).split(' ').filter(x => x.length > 1).every(x => plain(head).includes(x));
+      // Đầu trang chỉ có chữ chung ("Facebook") thì chưa kết luận được → null.
+      const nameMatch = !name || plain(head).replace(/facebook|\(\d+\)/g, '').trim().length < 3 ? null : plain(head).includes(plain(name)) || plain(name).split(' ').filter(x => x.length > 1).every(x => plain(head).includes(x));
       const seen = new Map();
       for (let i = 0; i < 6 && seen.size < max; i++) {
         const list = await w.webContents.executeJavaScript(READ).catch(() => []);
@@ -44,6 +54,7 @@ module.exports = function createFbPosts({ BrowserWindow, partition, asChrome, se
         await w.webContents.executeJavaScript('scrollBy(0, 1300)').catch(() => {}); await wait(1600 + Math.random() * 900);
       }
       const posts = [...seen.values()].sort((a, b) => a.top - b.top).slice(0, max);
+      if (!posts.length) await diag(w, 'trang-khach', { name, nameMatch });
       if (!posts.length) return { error: 'Không đọc được bài nào trên trang khách (trang riêng tư, chỉ bạn bè xem, hoặc Facebook đổi giao diện).', url: at, nameMatch };
       // Ảnh thu nhỏ từng bài để bạn nhìn chọn.
       for (const p of posts) {
@@ -90,8 +101,9 @@ module.exports = function createFbPosts({ BrowserWindow, partition, asChrome, se
       await wait(4500 + Math.random() * 1500);
       if (/\/(login|checkpoint)/.test(new URL(w.webContents.getURL()).pathname)) return { error: 'Phiên Facebook trong app cần đăng nhập lại (mở cột Meta).' };
       let people = await w.webContents.executeJavaScript(PEOPLE).catch(() => []);
+      if (!people.length) { await w.webContents.executeJavaScript('scrollBy(0, 900)').catch(() => {}); await wait(3000); people = await w.webContents.executeJavaScript(PEOPLE).catch(() => []); }
       const want = plain(name); people = people.filter(p => plain(p.name).includes(want) || want.split(' ').filter(x => x.length > 1).every(x => plain(p.name).includes(x))).slice(0, max);
-      if (!people.length) return { error: 'Không thấy ai tên "' + name + '" trong kết quả tìm kiếm Facebook.' };
+      if (!people.length) { await diag(w, 'tim-nguoi', { name, raw: (await w.webContents.executeJavaScript(PEOPLE).catch(() => [])).slice(0, 15) }); return { error: 'Không thấy ai tên "' + name + '" trong kết quả tìm kiếm Facebook.' }; }
       const me = avatar ? await grab(avatar, 64) : null;
       for (const p of people) { const g = me && p.pic ? await grab(p.pic, 64) : null; p.dist = g ? wholeDistance(me, g) : null; }
       let best = -1; if (me) { const ds = people.map(p => p.dist ?? 64), m = Math.min(...ds); const second = ds.filter((_, i) => i !== ds.indexOf(m)).reduce((a, b) => Math.min(a, b), 64); if (m <= 10 && second - m >= 4) best = ds.indexOf(m); }

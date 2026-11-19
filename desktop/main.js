@@ -584,7 +584,9 @@ app.whenReady().then(async () => {
   pageView.webContents.on('responsive', () => clearTimeout(hangT));
   setInterval(() => { if (autoSys.watchdog && lastBeat && Date.now() - lastBeat > 4 * 60e3) { lastBeat = Date.now(); try { pageView.webContents.reload(); } catch {} } }, 60e3);
   // Khách không gửi link: tìm bài trên trang khách, so ảnh khách gửi.
-  const fbPosts = createFbPosts({ BrowserWindow, partition: META, asChrome, ses: metaSes, nativeImage });
+  const fbPosts = createFbPosts({ BrowserWindow, partition: META, asChrome, ses: metaSes, nativeImage,
+    saveDebug: (step, d) => { try { const dir = path.join(app.getPath('downloads'), 'GetHelps-debug'), f = path.join(dir, 'tim-bai.json'); require('fs').mkdirSync(dir, { recursive: true });
+      let all = {}; try { all = JSON.parse(require('fs').readFileSync(f, 'utf8')); } catch {} all[step] = { app: app.getVersion(), at: new Date().toISOString(), ...d }; require('fs').writeFileSync(f, JSON.stringify(all, null, 1)); } catch {} } });
   ipcMain.handle('fb-find-posts', (e, args) => !fromPage(e) ? { error: 'denied' } : fbPosts.findPosts(args || {}));
   ipcMain.handle('fb-find-people', (e, args) => !fromPage(e) ? { error: 'denied' } : fbPosts.findPeople(args || {}));
   ipcMain.handle('fb-profile-counts', (e, args) => !fromPage(e) ? { error: 'denied' } : fbPeople.profileCounts(args || {}));
