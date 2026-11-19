@@ -71,22 +71,25 @@ module.exports = function createFbPosts({ BrowserWindow, partition, asChrome, se
       let best = -1;
       if (shots.length) { const ds = posts.map(p => p.dist ?? 64), m = Math.min(...ds), second = ds.filter((_, i) => i !== ds.indexOf(m)).reduce((a, b) => Math.min(a, b), 64);
         if (m <= 12 && second - m >= 3) best = ds.indexOf(m); }
-      return { posts: posts.map(({ top, h, imgs, ...p }) => ({ ...p, hasImg: imgs.length > 0 })), best, compared: shots.length, nameMatch, url: at };
+      if (nameMatch === false) await diag(w, 'trang-khach', { name, nameMatch, head });
+      return { posts: posts.map(({ top, h, imgs, ...p }) => ({ ...p, hasImg: imgs.length > 0 })), best, compared: shots.length, nameMatch, url: at, head: String(head).replace(/\s*\|\s*Facebook.*$/, '').replace(/^\(\d+\)\s*/, '').slice(0, 80) };
     } catch (e) { return { error: e.message }; } finally { if (!w.isDestroyed()) w.destroy(); }
   });
   // Tìm trang khách theo tên trên Facebook, so ảnh đại diện với ảnh khách trong hộp thư → danh sách người, chọn sẵn người giống nhất.
   const PEOPLE = `(() => {
-    const seen = new Map(), skip = /\/(groups|pages|events|watch|marketplace|gaming|search|hashtag|stories|reel|photo|help|policies|settings)(\/|$)/;
+    const seen = new Map(), skip = /\\/(groups|pages|events|watch|marketplace|gaming|search|hashtag|stories|reel|photo|help|policies|settings)(\\/|$)/;
     for (const a of document.querySelectorAll('[role="main"] a[href], [role="feed"] a[href]')) {
       let u; try { u = new URL(a.href); } catch { continue; }
-      if (!/facebook\.com$/.test(u.hostname) || skip.test(u.pathname)) continue;
+      if (!/facebook\\.com$/.test(u.hostname) || skip.test(u.pathname)) continue;
       const id = u.pathname === '/profile.php' ? u.searchParams.get('id') : u.pathname.split('/').filter(Boolean)[0];
-      if (!id || /^(l\.php|login|home\.php)$/.test(id)) continue;
+      if (!id || /^(l\\.php|login|home\\.php)$/.test(id)) continue;
       const link = u.pathname === '/profile.php' ? 'https://www.facebook.com/profile.php?id=' + id : 'https://www.facebook.com/' + id;
-      const name = (a.innerText || a.getAttribute('aria-label') || '').trim().split('\\n')[0];
-      let box = a, pic = ''; for (let i = 0; i < 6 && box && !pic; i++, box = box.parentElement) { const im = box.querySelector('image, img'); if (im) pic = im.getAttribute('xlink:href') || im.getAttribute('href') || im.currentSrc || im.src || ''; }
-      const x = seen.get(link) || { link, name: '', pic: '', info: '' }; if (name && name.length > x.name.length && name.length < 80) x.name = name; if (!x.pic && /fbcdn|scontent/.test(pic)) x.pic = pic;
-      if (!x.info && box) x.info = (box.innerText || '').split('\\n').slice(1, 3).join(' · ').slice(0, 120);
+      const text = (a.innerText || '').trim().split('\\n')[0], label = (a.getAttribute('aria-label') || '').replace(/^(ảnh đại diện của|profile picture of)\\s*/i, '').trim();
+      let box = a, holder = null, pic = ''; for (let i = 0; i < 6 && box && !pic; i++, box = box.parentElement) { const im = box.querySelector('image, img'); if (im) { pic = im.getAttribute('xlink:href') || im.getAttribute('href') || im.currentSrc || im.src || ''; holder = box; } }
+      const x = seen.get(link) || { link, name: '', pic: '', info: '' };
+      if (text && text.length < 80) x.name = text; else if (!x.name && label && label.length < 80) x.name = label;
+      if (!x.pic && /fbcdn|scontent/.test(pic)) x.pic = pic;
+      const card = holder?.parentElement; if (!x.info && card) x.info = (card.innerText || '').split('\\n').map(t => t.trim()).filter(t => t && t !== x.name && t !== text).slice(0, 2).join(' · ').slice(0, 120);
       seen.set(link, x);
     }
     return [...seen.values()].filter(x => x.name);

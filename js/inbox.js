@@ -955,17 +955,17 @@
       const url = urlIn.value.trim(); if (!url) return people('Chưa có link trang của khách.');
       st.textContent = `Đang mở trang khách và đọc bài mới nhất${nl.pics.length ? ', so với ảnh khách gửi' : ''}… (15–40 giây)`; body.replaceChildren(); btn.disabled = true;
       const r = await window.metaDesktop.fbFindPosts({ url, pics: nl.pics, name: c.other.name || '' }).catch(e => ({ error: e.message })); btn.disabled = false;
-      if (r?.nameMatch === false && confirmed !== true) return people('Trang này có vẻ không phải của ' + (c.other.name || 'khách') + '.');
       if (r?.error) { if (confirmed !== true) return people('✗ ' + r.error); st.textContent = '✗ ' + r.error; return; }
-      if (url !== savedProfile(c)) saveProfile(c, url).catch(() => {});
+      const odd = r.nameMatch === false; if (url !== savedProfile(c) && !odd) saveProfile(c, url).catch(() => {});
       const pick = r.best >= 0 ? r.best : nl.first ? 0 : -1;
       st.textContent = `${r.posts.length} bài mới nhất trên trang khách.` + (r.compared ? (r.best >= 0 ? ' ✓ Đã tìm thấy bài giống ảnh khách gửi.' : ' Chưa thấy bài nào giống hẳn ảnh khách gửi: bạn tự nhìn chọn.') : '') + (nl.first && r.best < 0 ? ' Khách nói "bài đầu": chọn sẵn bài đầu tiên.' : '');
-      body.replaceChildren(...r.posts.map((p, i) => h('div', { className: 'ib-fp-i' + (i === pick ? ' on' : '') },
+      if (odd) st.textContent = `⚠ Trang này mang tên "${r.head || '?'}", có thể không phải ${c.other.name || 'khách'}. ` + st.textContent;
+      body.replaceChildren(odd ? h('button', { type: 'button', className: 'btn btn-soft btn-sm', textContent: '🔎 Không phải khách → tìm theo tên + ảnh đại diện', onclick: () => people('') }) : null, ...r.posts.map((p, i) => h('div', { className: 'ib-fp-i' + (i === pick ? ' on' : '') },
         p.thumb ? h('img', { src: p.thumb, alt: '' }) : h('div', { className: 'hint', textContent: '(không có ảnh xem trước)' }),
         h('div', { className: 'ib-fp-meta' }, i === pick ? h('strong', { textContent: r.best === i ? '✓ Giống ảnh khách gửi nhất' : '★ Bài đầu tiên' }) : null,
           h('div', { className: 'hint', textContent: p.text || '(không có chữ)' }), p.dist != null ? h('div', { className: 'hint', textContent: `Độ khác ảnh: ${p.dist}/64` }) : null,
           h('div', { className: 'row', style: 'gap:6px' },
-            h('button', { type: 'button', className: 'btn btn-primary btn-sm', textContent: 'Chọn bài này → tạo đơn', onclick: () => { dlg.close(); App.services.bulkDialog({ page: c.page, key: c.key, name: c.other.name || '', messages: S.messages }, [p.link]); } }),
+            h('button', { type: 'button', className: 'btn btn-primary btn-sm', textContent: 'Chọn bài này → tạo đơn', onclick: () => { dlg.close(); if (odd) saveProfile(c, url).catch(() => {}); App.services.bulkDialog({ page: c.page, key: c.key, name: c.other.name || '', messages: S.messages }, [p.link]); } }),
             h('button', { type: 'button', className: 'btn btn-ghost btn-sm', textContent: 'Hỏi khách bài này', title: 'Đưa tin "có phải bài này không" + link vào ô nhập', onclick: () => { dlg.close(); App.inbox.compose({ key: c.key, text: `Dạ có phải bài này không ạ?\n${p.link}`, autoSend: false }); } }),
             h('a', { href: p.link, target: '_blank', rel: 'noopener', className: 'btn btn-ghost btn-sm', textContent: 'Mở' }))))));
     };
