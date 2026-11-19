@@ -19,12 +19,16 @@ module.exports = function createFbPosts({ BrowserWindow, partition, asChrome, se
     const POST = /\\/posts\\/|story_fbid=|\\/permalink\\/|\\/photo(\\.php|\\/)|\\/videos\\/|\\/reel\\/|\\/share\\/p\\//;
     return top.map(a => { const r = a.getBoundingClientRect();
       const links = [...a.querySelectorAll('a[href]')].map(x => x.href).filter(h => POST.test(h) && !/comment_id=/.test(h));
+      // Bài nhiều ảnh: link ảnh có set=pcb.<mã bài> → mã của cả bài (không phải 1 ảnh).
+      const pcb = (links.map(h => (h.match(/[?&]set=pcb\\.(\\d+)/) || [])[1]).find(Boolean)) || '';
       const best = links.find(h => /\\/posts\\/|story_fbid=|\\/permalink\\//.test(h)) || links[0] || '';
       const imgs = [...a.querySelectorAll('img')].filter(i => Math.max(i.naturalWidth, i.width) >= 120).map(i => i.currentSrc || i.src).filter(u => /scontent|fbcdn/.test(u)).slice(0, 4);
       const msg = a.querySelector('[data-ad-preview="message"],[data-ad-comet-preview="message"],div[dir="auto"]');
-      return { link: best, imgs, text: (msg?.innerText || '').trim().slice(0, 220), top: r.top + scrollY, h: r.height };
+      return { link: best, pcb, imgs, text: (msg?.innerText || '').trim().slice(0, 220), top: r.top + scrollY, h: r.height };
     }).filter(p => p.link);
   })()`;
+  // Link giờ đăng của bài chỉ có địa chỉ thật khi rê chuột: giả lập rê chuột lên các link chưa có địa chỉ trong bài.
+  const HOVER = `(() => { for (const a of document.querySelectorAll('[role="article"] a[role="link"], div[aria-posinset] a[role="link"]')) { const h = a.getAttribute('href') || ''; if (!h || h === '#' || /__cft__/.test(h) && !/\\/posts\\/|story_fbid|permalink/.test(h)) { for (const t of ['mouseover', 'mouseenter', 'focus', 'focusin']) a.dispatchEvent(new (t.startsWith('focus') ? FocusEvent : MouseEvent)(t, { bubbles: true })); } } })()`;
   const clean = href => { try { const u = new URL(href); const keep = ['story_fbid', 'id', 'fbid', 'set', 'v']; [...u.searchParams.keys()].forEach(k => { if (!keep.includes(k)) u.searchParams.delete(k); }); u.hash = ''; return u.href; } catch { return href; } };
   const grab = async (url, width) => { // ảnh xám thu nhỏ
     try { const r = await ses.fetch(url); if (!r.ok) return null; const img = nativeImage.createFromBuffer(Buffer.from(await r.arrayBuffer())); if (img.isEmpty()) return null;
@@ -49,10 +53,17 @@ module.exports = function createFbPosts({ BrowserWindow, partition, asChrome, se
       const nameMatch = !name || plain(head).replace(/facebook|\(\d+\)/g, '').trim().length < 3 ? null : plain(head).includes(plain(name)) || plain(name).split(' ').filter(x => x.length > 1).every(x => plain(head).includes(x));
       const seen = new Map();
       for (let i = 0; i < 6 && seen.size < max; i++) {
+        await w.webContents.executeJavaScript(HOVER).catch(() => {}); await wait(900);
         const list = await w.webContents.executeJavaScript(READ).catch(() => []);
-        for (const p of list) { const k = clean(p.link); if (!seen.has(k)) seen.set(k, { ...p, link: k }); }
+        for (const p of list) { const k = p.pcb ? 'pcb:' + p.pcb : clean(p.link); const old = seen.get(k);
+          if (!old) seen.set(k, { ...p, link: clean(p.link) }); else if (!/\/posts\/|story_fbid=|\/permalink\//.test(old.link) && /\/posts\/|story_fbid=|\/permalink\//.test(p.link)) old.link = clean(p.link); }
         await w.webContents.executeJavaScript('scrollBy(0, 1300)').catch(() => {}); await wait(1600 + Math.random() * 900);
       }
+      // Link của cả bài: ưu tiên link bài thật; chỉ có link ảnh thì đổi mã pcb thành link bài theo trang khách.
+      const owner = (() => { try { const x = new URL(at); if (x.pathname === '/profile.php') return { id: x.searchParams.get('id') }; const v = x.pathname.split('/').filter(Boolean)[0]; return v ? { vanity: v } : null; } catch { return null; } })();
+      const postLink = p => { if (/\/posts\/|story_fbid=|\/permalink\//.test(p.link) || !p.pcb || !owner) return p.link;
+        return owner.id ? `https://www.facebook.com/permalink.php?story_fbid=${p.pcb}&id=${owner.id}` : `https://www.facebook.com/${owner.vanity}/posts/${p.pcb}`; };
+      for (const p of seen.values()) p.link = postLink(p);
       const posts = [...seen.values()].sort((a, b) => a.top - b.top).slice(0, max);
       if (!posts.length) await diag(w, 'trang-khach', { name, nameMatch });
       if (!posts.length) return { error: 'Không đọc được bài nào trên trang khách (trang riêng tư, chỉ bạn bè xem, hoặc Facebook đổi giao diện).', url: at, nameMatch };
