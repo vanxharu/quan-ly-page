@@ -559,7 +559,7 @@
   }
   async function bulkDialog(ctx = {}, preset = []) {
     const s = await settings();
-    let list = []; try { list = await services(); } catch (e) { return toast(e.message, 7000); }
+    let list = []; try { list = await services(); } catch (e) { return ctx.headless ? { error: e.message } : toast(e.message, 7000); }
     const pkgs = s.packages || [], ok = svc => svc && stateOf(svc)[1] !== 'err';
     if (!pkgs.length && !Object.keys(s.prices || {}).length) toast('Chưa có gói bán: mỗi dòng phải chọn máy chủ trực tiếp. Tạo gói ở Dịch vụ › Cài đặt › Gói bán của tôi.', 7000);
     const svcOfPkg = pk => list.find(x => x.id === String(pk?.serviceId));

@@ -1,4 +1,5 @@
-/* Lưu theo tài khoản Facebook: tin mẫu (+ nhóm, thẻ, biến mặc định), gói bán / bảng giá / API key dịch vụ, tài khoản ngân hàng hoá đơn.
+/* Lưu theo tài khoản Facebook: tin mẫu (+ nhóm, thẻ, biến mặc định), gói bán / bảng giá / API key dịch vụ, tài khoản ngân hàng hoá đơn,
+ * kế hoạch tự động + Telegram, thông tin shop cho AI, cài đặt hộp thư, cài đặt lịch đăng.
  * Đăng nhập Facebook ở máy nào (hoặc sau khi xoá dữ liệu, cài lại app) cũng tự khôi phục, không phải làm lại từ đầu.
  * Hai nơi lưu: file trên máy (app Windows, mã hoá bằng khoá Windows) + máy chủ (bảng user_vault, hàm fb-admin xác minh token Facebook).
  * Mỗi phần có mốc giờ sửa; khi đăng nhập lấy bản mới nhất trong 3 nơi (trên app, file, máy chủ); sửa trên app → lưu lại sau 3 giây. */
@@ -16,7 +17,14 @@
     svc: { name: 'gói bán, bảng giá, API key, tài khoản ngân hàng', keys: ['svcSettingsV1'],
       get: async () => DB.get('svcSettingsV1', {}),
       set: async v => DB.set('svcSettingsV1', v || {}),
-      empty: v => !v?.apiKey && !v?.packages?.length && !v?.invoice?.acc && !Object.keys(v?.prices || {}).length }
+      empty: v => !v?.apiKey && !v?.packages?.length && !v?.invoice?.acc && !Object.keys(v?.prices || {}).length },
+    // Kế hoạch tự động + Telegram (bot token, Chat ID, báo cáo…). Bật/tắt kế hoạch và mở cùng Windows giữ riêng từng máy: 2 máy không cùng chạy.
+    auto: { name: 'kế hoạch tự động & Telegram', keys: ['autoPlanV1'],
+      get: async () => { const { on, sys, ...v } = await DB.get('autoPlanV1', {}); return v; },
+      set: async v => { const { on, sys } = await DB.get('autoPlanV1', {}); await DB.set('autoPlanV1', { ...(v || {}), on: !!on, ...(sys ? { sys } : {}) }); },
+      empty: v => !Object.keys(v || {}).length },
+    ...Object.fromEntries([['shop', 'aiShopV1', 'thông tin shop cho AI'], ['inbox', 'inboxSettingsV1', 'cài đặt hộp thư'], ['plan', 'fbScheduleSettingsV1', 'cài đặt lịch đăng']]
+      .map(([k, key, name]) => [k, { name, keys: [key], get: async () => DB.get(key, {}), set: async v => DB.set(key, v || {}), empty: v => !Object.keys(v || {}).length }]))
   };
   const V = App.vault = { user: '', name: '', state: '', error: '', cloud: '', at: 0 };
   let applying = false, pushTimer = 0, last = {};
@@ -92,7 +100,7 @@
   // Thẻ trạng thái (tab Cài đặt).
   V.card = () => h('div', { className: 'card', style: 'margin-top:12px' },
     h('h3', { className: 'card-title', textContent: '☁ Lưu theo tài khoản Facebook' }),
-    h('p', { className: 'hint', textContent: 'Tin mẫu, gói bán, bảng giá, API key dịch vụ và tài khoản ngân hàng tự lưu theo tài khoản Facebook đang đăng nhập. Đăng nhập ở máy khác hoặc sau khi cài lại app sẽ tự khôi phục.' }),
+    h('p', { className: 'hint', textContent: 'Tin mẫu, gói bán, bảng giá, API key dịch vụ, tài khoản ngân hàng, Telegram & kế hoạch tự động, thông tin shop cho AI, cài đặt hộp thư và lịch đăng tự lưu theo tài khoản Facebook đang đăng nhập. Đăng nhập ở máy khác hoặc sau khi cài lại app sẽ tự khôi phục.' }),
     h('div', { className: 'row', style: 'gap:8px;align-items:center;flex-wrap:wrap' },
       h('span', { className: 'status ' + (V.state === 'err' ? 'err' : V.cloud === 'ok' ? 'ok' : 'pending'), textContent:
         !V.user ? 'Chưa đăng nhập Facebook' : V.state === 'loading' ? 'Đang đồng bộ…' : V.state === 'err' ? 'Lỗi: ' + V.error

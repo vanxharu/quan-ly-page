@@ -366,7 +366,7 @@
     if (!links.length) return say(c, 'Gửi kèm link bài / trang cần chạy, vd: "1k like https://facebook.com/…".');
     const x = key ? convOf(key) : null, ctx = x ? { page: x.page, key: x.key, name: x.other.name || '' } : {};
     const p = await S_().preview({ ...ctx, messages: [{ isCustomer: true, text }] }, links);
-    if (p?.error) return say(c, '✗ ' + p.error + (p.summary ? '\n' + p.summary.join('\n') : '') + '\n\nGhi rõ số lượng + loại, vd "500 follow", "1k like", "2k view".');
+    if (p?.error) return say(c, '✗ ' + p.error + (p.summary ? '\n' + p.summary.join('\n') + '\n\nGhi rõ số lượng + loại, vd "500 follow", "1k like", "2k view".' : ''));
     const id = rid(); RC.q[id] = { make: p.make, key: x?.key };
     return say(c, [`🧾 Báo giá${x ? ' cho ' + nm(x) : ''}:`, ...p.summary, `Tổng: ${money(p.total)}`, ...p.warns.map(w => '⚠️ ' + w)].join('\n'),
       { reply_markup: kb([[B('✅ Tạo báo giá', 'qn|' + id), ...(x ? [B('📨 Tạo & gửi khách', 'qg|' + id)] : [])], [B('✖ Bỏ', 'qx|' + id)]]) });
