@@ -26,7 +26,7 @@
     refresh();return write;
   }
   function drawDraftImage(){
-    $('poPreview').replaceChildren(...(draftImage?[h('img',{className:'thumb',src:draftImage,alt:'Ảnh bài viết'}),h('button',{type:'button',className:'btn btn-ghost btn-sm',textContent:'Bỏ ảnh',disabled:active(),onclick:()=>{
+    $('poPreview').replaceChildren(...(draftImage?[draftImage.startsWith('data:video/')?h('video',{className:'thumb',src:draftImage,controls:true,muted:true,style:'max-width:240px;height:auto'}):h('img',{className:'thumb',src:draftImage,alt:'Ảnh bài viết'}),h('button',{type:'button',className:'btn btn-ghost btn-sm',textContent:'Bỏ ảnh',disabled:active(),onclick:()=>{
       edited=true;$('poImage').value='';draftImage='';imageRead=Promise.resolve('');drawDraftImage();savePostDraft();
     }})]:[]));
   }
@@ -46,7 +46,7 @@
         h('label',{className:'field'},'Nội dung',h('textarea',{id:'poText',rows:6,placeholder:'Viết nội dung bài đăng…'})),
         h('p',{id:'poDraftState',className:'hint',role:'status',textContent:'Nội dung, ảnh và giờ hẹn được tự lưu nháp trên trình duyệt này.'}),
         h('div',{className:'form-grid'},
-          h('label',{className:'field'},'Ảnh (tuỳ chọn)',h('input',{type:'file',id:'poImage',accept:'image/*'})),
+          h('label',{className:'field'},'Ảnh hoặc video (tuỳ chọn)',h('input',{type:'file',id:'poImage',accept:'image/*,video/*'})),
           h('label',{className:'field'},'Hẹn giờ (tuỳ chọn)',h('input',{type:'datetime-local',id:'poAt'}))),
         h('label',{className:'row',style:'gap:8px;margin:6px 0'},h('input',{type:'checkbox',id:'poMsgBtn'}),h('span',{},'Thêm nút ',h('strong',{textContent:'Gửi tin nhắn'})),
           h('span',{className:'hint',textContent:'· Bài có ảnh: tạo qua tài khoản quảng cáo (không tốn tiền) để giữ ảnh + nút; bài hẹn giờ do máy chủ bot đăng.'})),

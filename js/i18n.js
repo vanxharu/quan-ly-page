@@ -188,6 +188,7 @@
     'Đã thanh toán': 'Paid',
     'Đã vận chuyển': 'Shipped',
     'Đã đặt lịch': 'Booked',
+    'Ảnh hoặc video (tuỳ chọn)': 'Image or video (optional)',
     'Chọn Page': 'Choose Pages', 'Tất cả Page': 'All Pages', 'Ảnh ·': 'Image ·', 'Chữ ·': 'Text ·', 'Hôm nay ·': 'Today ·', 'Ngày mai ·': 'Tomorrow ·'
   };
   const P = [ // [mẫu tiếng Việt (cả câu), thay bằng]

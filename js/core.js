@@ -525,6 +525,14 @@ App.publishWithMessengerButton = async (page, text, imageData, when = 0) => {
 // Đăng (hoặc hẹn) một bài lên Page. when: giây Unix, 0 = đăng ngay. options.messageButton: thêm nút/link Gửi tin nhắn.
 App.publish = async (page, text, imageData, when = 0, options = {}) => {
   const sched = when ? { published: false, scheduled_publish_time: when, unpublished_content_type:'SCHEDULED' } : {};
+  // Video: đăng / hẹn qua /{page}/videos (nút Gửi tin nhắn không áp cho video).
+  if (typeof imageData === 'string' ? imageData.startsWith('data:video/') : imageData?.type?.startsWith('video/')) {
+    const video = imageData instanceof Blob ? imageData : await (await fetch(imageData)).blob();
+    const form = new FormData(); form.append('source', video, 'video.' + (video.type.split('/')[1] || 'mp4'));
+    if (text) form.append('description', text);
+    if (when) { form.append('published', 'false'); form.append('scheduled_publish_time', String(when)); }
+    return api(`/${page.id}/videos`, form, 'POST', page.access_token);
+  }
   if (options.messageButton && imageData && globalThis.metaDesktop?.composePost) return App.composeInBusinessSuite(page, text, imageData, when);
   if (options.messageButton && imageData) return App.publishWithMessengerButton(page, text, imageData, when);
   if (options.messageButton && !imageData) {
