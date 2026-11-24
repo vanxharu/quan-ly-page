@@ -1822,7 +1822,9 @@
     $('ibText').value = text; S.image = image; S.tpl = null; drawAttach(); await saveDraft(); updateSendState();
     if (!autoSend) return true;
     S.sendError = '';
-    await send();
+    // Tin tự động (AI tự trả lời, remarketing, nhắn hàng loạt, Telegram): không gắn thẻ HUMAN_AGENT (Meta chỉ cho tin người gõ tay).
+    S.autoSending = true;
+    try { await send(); } finally { S.autoSending = false; }
     // send() tự bắt lỗi và chỉ xoá ô nhập khi gửi thành công → còn chữ/ảnh nghĩa là chưa gửi được.
     // Ô nhập giờ trống ngay khi bấm gửi → xét lỗi gửi trước, ô nhập trống chỉ là dấu hiệu phụ.
     if (!S.sendError && S.conv === c && !$('ibText').value.trim() && !S.image) return true;
@@ -1836,7 +1838,7 @@
     const image = S.image, tpl = S.tpl;
     S.sending = true; updateSendState();
     try {
-      const sent = await App.sendMessage(c.page, c.other.id, text, image, { humanAgent: true, lastCustomerAt: c.lastCustomerAt });
+      const sent = await App.sendMessage(c.page, c.other.id, text, image, { humanAgent: !S.autoSending, lastCustomerAt: c.lastCustomerAt });
       if (sent?.humanAgent) toast('Đã gửi kèm thẻ Nhân viên trả lời (khách nhắn đã quá 24 giờ).', 5000);
       // Chỉ xoá đúng bản nháp vừa gửi, không xoá nội dung mới hoặc hội thoại khác.
       const current = S.conv && draftKey(S.conv) === draftKey(c);
