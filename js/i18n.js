@@ -189,6 +189,9 @@
     'Đã vận chuyển': 'Shipped',
     'Đã đặt lịch': 'Booked',
     'Ảnh hoặc video (tuỳ chọn)': 'Image or video (optional)',
+    'Đã gửi kèm thẻ Nhân viên trả lời (khách nhắn đã quá 24 giờ).': "Sent with the Human Agent tag (the customer's last message is older than 24 hours).",
+    'Mở trong Business Suite ↗': 'Open in Business Suite ↗',
+    'Thử lại': 'Retry',
     'Chọn Page': 'Choose Pages', 'Tất cả Page': 'All Pages', 'Ảnh ·': 'Image ·', 'Chữ ·': 'Text ·', 'Hôm nay ·': 'Today ·', 'Ngày mai ·': 'Tomorrow ·'
   };
   const P = [ // [mẫu tiếng Việt (cả câu), thay bằng]
@@ -203,7 +206,9 @@
     [/^(T\d|CN) (\d+\/\d+)$/, (m, d, x) => `${EN[d] || d} ${x}`], [/^Tắt thông báo cho Page \((\d+) đang tắt\)$/, 'Mute notifications for Pages ($1 muted)'],
     [/^Đã lưu theo (.+) \(máy này \+ máy chủ\) · (.+)$/, 'Saved for $1 (this device + server) · $2'], [/^Đã đăng nhập: (.+)$/, 'Logged in: $1'],
     [/^Kết nối (\d+) Page đang chọn với máy chủ$/, 'Connect the $1 selected Pages to the server'], [/^Đã kết nối (\d+)\/(\d+) Page\.$/, 'Connected $1/$2 Pages.'],
-    [/^Lỗi: (.+)$/, 'Error: $1'], [/^Đã nhắn riêng cho (.+)\.$/, 'Private reply sent to $1.'], [/^Dùng cho (\d+) Page đang chọn$/, 'For the $1 selected Pages'],
+    [/^Lỗi: (.+)$/, 'Error: $1'],
+    [/^Khách nhắn đã quá 24 giờ\. Tin bạn gõ sẽ gửi kèm thẻ Nhân viên trả lời \(còn (\d+) ngày\)\. Chỉ dùng để hỗ trợ khách, không gửi quảng cáo\/khuyến mãi\.$/, 'The customer\'s last message is older than 24 hours. Your reply will be sent with the Human Agent tag ($1 days left). Use it only to support the customer, never for promotions.'],
+    [/^Quá 24 giờ \(còn (\d+) ngày để nhân viên trả lời\)\. Ứng dụng chưa có quyền Human Agent nên Meta từ chối; trả lời trong Business Suite\.$/, 'Older than 24 hours ($1 days left for a human reply). The app does not have Human Agent yet, so Meta refused; reply in Business Suite.'], [/^Đã nhắn riêng cho (.+)\.$/, 'Private reply sent to $1.'], [/^Dùng cho (\d+) Page đang chọn$/, 'For the $1 selected Pages'],
     [/^✓ (.+): đã hẹn (.+) \((.+)\)$/, '✓ $1: scheduled $2 ($3)'], [/^✓ (.+): đã đăng \((.+)\)$/, '✓ $1: published ($2)'], [/^Đã lưu (\d+) bài nháp vào danh sách duyệt\.$/, 'Saved $1 drafts for approval.'],
     [/^còn (\d+) phút$/, 'in $1 min'], [/^còn (\d+) giờ$/, 'in $1 h'], [/^còn (\d+) ngày$/, 'in $1 days'], [/^Hôm nay · (.+)$/, 'Today · $1'], [/^Ngày mai · (.+)$/, 'Tomorrow · $1'],
     [/^Meta Assistant (.+) · bấm để kiểm tra cập nhật$/, 'Meta Assistant $1 · click to check for updates'], [/^Phiên bản (.+)$/, 'Version $1']
