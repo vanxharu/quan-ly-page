@@ -24,7 +24,7 @@
         } },
           p.full_picture ? h('img', { className: 'thumb', src: p.full_picture, alt: '' }) : null,
           h('div', { className: 'body' },
-            h('div', { className: 'top' }, App.selected().length > 1 ? App.pageTag(p.page) : null, h('span', { className: 'time', textContent: fmtTime(p.created_time) }),
+            h('div', { className: 'top' }, App.pageTag(p.page), h('span', { className: 'time', textContent: fmtTime(p.created_time) }),
               h('span', { style: 'margin-left:auto' }, h('span', { className: 'badge', textContent: p.comments?.summary?.total_count ?? 0 }), ' bình luận')),
             h('div', { className: 'snippet', style: 'margin-top:3px', textContent: p.message || '(không có chữ)' })))) : [empty('Chưa có bài.')]));
         // Page lỗi (thiếu quyền, Meta giới hạn…) phải báo rõ, không lặng lẽ hiện "Chưa có bài".
@@ -45,7 +45,10 @@
       if (seq !== loadSeq) return;
       const onlyOpen = $('cmUnanswered').checked;
       const list = data.filter(c => !onlyOpen || !(c.comments?.data || []).some(r => r.from?.id === page.id));
-      $('cmList').replaceChildren(...(list.length ? list.map(c => {
+      const post = $('cmPosts').querySelector('.item.active .snippet')?.textContent || '';
+      const head = h('div', { className: 'row cm-head', style: 'gap:8px;margin-bottom:10px;flex-wrap:wrap' }, App.pageTag(page), h('span', { className: 'hint', textContent: 'Bình luận trên bài của Page' }),
+        post ? h('span', { className: 'hint', textContent: '“' + (post.length > 80 ? post.slice(0, 78) + '…' : post) + '”', dataset: { noI18n: '' } }) : null);
+      $('cmList').replaceChildren(head, ...(list.length ? list.map(c => {
         const input = h('input', { type: 'text', placeholder: 'Trả lời bình luận…', className: 'grow' });
         const send = h('button', { className: 'btn btn-primary btn-sm', textContent: 'Gửi', onclick: async () => {
           if (!input.value.trim()) return toast('Nhập nội dung trả lời.'); send.disabled = true;
@@ -79,7 +82,7 @@
               act(c.user_likes ? '👍 Bỏ thích' : '👍 Thích', () => api(`/${c.id}/likes`, {}, c.user_likes ? 'DELETE' : 'POST', tk)),
               c.can_hide !== false ? act(c.is_hidden ? 'Hiện' : 'Ẩn', () => api(`/${c.id}`, { is_hidden: !c.is_hidden }, 'POST', tk)) : null,
               act('Xoá', async () => { if (!confirm('Xoá bình luận này?')) throw new Error('Đã huỷ.'); await api(`/${c.id}`, {}, 'DELETE', tk); }, 'btn-danger'))),
-          h('div', { style: 'margin:6px 0 0 36px;white-space:pre-wrap;word-break:break-word', textContent: c.message || '' }),
+          h('div', { style: 'margin:6px 0 0 36px;white-space:pre-wrap;word-break:break-word', textContent: c.message || '', dataset: { noI18n: '' } }),
           c.attachment?.media?.image?.src ? h('img', { src: c.attachment.media.image.src, alt: '', style: 'margin:6px 0 0 36px;max-width:160px;border-radius:8px' }) : null,
           ...(c.comments?.data || []).map(r => h('div', { className: 'reply-line', style: 'margin-left:36px', textContent: `↳ ${r.from?.name || ''}: ${r.message || ''}` })),
           h('div', { className: 'row', style: 'margin:8px 0 0 36px' }, input,

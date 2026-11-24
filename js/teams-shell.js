@@ -118,6 +118,7 @@
       tag?.textContent?.trim() ? item('↻', 'Kiểm tra cập nhật', () => tag.click(), 'Phiên bản ' + tag.textContent.trim()) : null,
       fr?.canToggle ? item('▭', fr.frameless ? 'Dùng thanh tiêu đề Windows' : 'Dùng thanh trên kiểu Teams', () => {
         if (confirm(fr.frameless ? 'Dùng lại thanh tiêu đề của Windows (nếu không kéo được cửa sổ)? App sẽ mở lại.' : 'Dùng thanh trên kiểu Teams? App sẽ mở lại.')) window.metaDesktop.uiFrame(fr.frameless); }) : null,
+      item('🌐', window.I18N?.lang === 'en' ? 'Tiếng Việt' : 'English', () => window.I18N.set(window.I18N.lang === 'en' ? 'vi' : 'en'), 'Language / Ngôn ngữ'),
       h('div', { className: 'tm-menu-sep' }),
       item('⎋', 'Đăng xuất khỏi trang', () => $('btnLogout').click()));
     menu.hidden = false; };
