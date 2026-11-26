@@ -21,4 +21,18 @@ async function run(fixture) {
   console.log('OK', fixture, steps.join(' → '));
   await browser.close();
 }
-(async () => { await run('chatgpt.html'); await run('chatgpt-2026.html'); await run('chatgpt-unknown.html'); })().catch(e => { console.error('FAIL', e.message); process.exit(1); });
+async function loggedOut() { // chưa đăng nhập ChatGPT: báo 'login', không dán lời nhắc vào ô soạn (tránh thành bản nháp ở Studio AI)
+  const browser = await chromium.launch({ executablePath: process.env.CHROME || '/usr/bin/google-chrome', args: ['--no-sandbox'] });
+  const ctx = await browser.newContext();
+  await ctx.route('https://chatgpt.com/**', r => r.fulfill({ contentType: 'text/html', body: fs.readFileSync(path.join(__dirname, 'fixtures', 'chatgpt-loggedout.html'), 'utf8') }));
+  class FakeWin { constructor() { this.p = ctx.newPage(); const self = this;
+    this.webContents = { setAudioMuted() {}, setWindowOpenHandler() {}, loadURL: async u => (await self.p).goto(u), executeJavaScript: async c => (await self.p).evaluate(c) }; }
+    isDestroyed() { return false; } destroy() {} }
+  const g = createGpt({ BrowserWindow: FakeWin });
+  await assert.rejects(g.ask('Nhắn lại khách chưa chốt đơn'), /^Error: login$/);
+  const typed = await ctx.pages()[0].evaluate(() => [...document.querySelectorAll('textarea,[contenteditable]')].map(e => e.value ?? e.innerText).join('').trim());
+  assert.strictEqual(typed, '', 'không dán lời nhắc khi chưa đăng nhập');
+  console.log('OK logged out → login, nothing typed');
+  await browser.close();
+}
+(async () => { await loggedOut(); await run('chatgpt.html'); await run('chatgpt-2026.html'); await run('chatgpt-unknown.html'); })().catch(e => { console.error('FAIL', e.message); process.exit(1); });

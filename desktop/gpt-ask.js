@@ -40,6 +40,17 @@ module.exports = function createGpt({ BrowserWindow, session, url = 'https://cha
       const login = await js(w, `!!document.querySelector('[data-testid="login-button"],a[href*="/auth/login"]') || /log in|sign up|đăng nhập/i.test((document.body?.innerText || '').slice(0, 3000))`).catch(() => false);
       throw Error(login ? 'login' : 'ChatGPT chưa mở được (mạng chậm hoặc ChatGPT đang bắt xác minh). Mở Studio AI kiểm tra rồi thử lại.');
     }
+    // Chưa đăng nhập ChatGPT (có nút "Log in"): dừng luôn, không dán gì. Dán rồi mà không gửi được thì ChatGPT giữ lời nhắc
+    // làm bản nháp (chung phiên với Studio AI) → lời nhắc hiện sẵn trong ô soạn của Studio AI.
+    const loggedOut = await js(w, `!!document.querySelector('[data-testid="login-button"],[data-testid="mobile-login-button"]') ||
+      [...document.querySelectorAll('header a,header button,nav a,nav button')].some(b => /^(log in|đăng nhập)$/i.test((b.innerText || '').trim()) && b.getBoundingClientRect().width > 0)`).catch(() => false);
+    if (loggedOut) throw Error('login');
+    try { return await send(w, prompt, A, B, timeout, step); }
+    finally { await js(w, `(() => { const e = ${EDITOR}; if (!e || !(e.value ?? e.innerText ?? '').trim()) return;
+      if (e.tagName === 'TEXTAREA') { Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(e, ''); e.dispatchEvent(new Event('input', { bubbles: true })); }
+      else { e.focus(); document.execCommand('selectAll', false); document.execCommand('delete', false); } })()`).catch(() => {}); } // không để lại bản nháp
+  }
+  async function send(w, prompt, A, B, timeout, step) {
     const before = await js(w, `${ASSIST}.length`).catch(() => 0);
     const USERS = `document.querySelectorAll('[data-message-author-role="user"],li[data-message-role="user"]').length`;
     const users0 = await js(w, USERS).catch(() => 0);
