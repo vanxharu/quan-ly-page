@@ -608,6 +608,9 @@
       if (rows.some(r => linkKey(r.link) === linkKey(link))) return false;
       rows.push({ id: uid('bl'), link, on, svcId: '', sell: null, ...pickFor(link) }); return true; };
     for (const l of preset) addLink(l);
+    // Thêm 1 dịch vụ nữa cho cùng link: dòng mới ngay dưới các dòng của link đó (mỗi dòng 1 đơn Baostar, giá riêng).
+    const addService = (link, at) => { let i = at ?? rows.map(r => linkKey(r.link)).lastIndexOf(linkKey(link)); const r = { id: uid('bl'), link, on: true, svcId: '', pkgId: '', qty: 0, sell: null, why: '', extra: true };
+      rows.splice(i + 1, 0, r); return r; };
     // Dòng → số liệu: gói cố định (số lượng + giá theo gói), gói theo đơn vị, hoặc máy chủ trực tiếp (giá của tôi / gốc + % lãi).
     const calc = r => {
       const pk = pkgs.find(p => p.id === r.pkgId), svc = pk ? svcOfPkg(pk) : list.find(x => x.id === r.svcId);
@@ -627,10 +630,11 @@
       const lowRx = parts?.find(([x, k]) => k < x.min);
       const listPrice = pk ? autoSell : svc && s.prices[svc.id] != null ? Math.round(s.prices[svc.id] * qty) : 0;
       const lp = LINK_PLAT[platformOf(r.link)] || '', sp = svc?.platform || (pk ? platOfPkg(pk) : '');
-      const error = !/^https?:\/\/\S+\.\S+/i.test(r.link) ? 'Link không hợp lệ' : !svc ? (pk ? 'Máy chủ gốc của gói không còn' : 'Chọn gói') : stateOf(svc)[1] === 'err' ? 'Máy chủ đang bảo trì'
+      const error = !/^https?:\/\/\S+\.\S+/i.test(r.link) ? 'Link không hợp lệ' : !svc ? (pk ? 'Máy chủ gốc của gói không còn' : 'Chọn gói / server') : stateOf(svc)[1] === 'err' ? 'Máy chủ đang bảo trì'
         : needsComments(svc) ? 'Máy chủ cần nội dung bình luận: tạo riêng bằng nút Tạo đơn' : lowRx ? `${lowRx[0].child}: ${lowRx[1]} dưới mức tối thiểu ${lowRx[0].min}`
         : !parts && (qty < svc.min || qty > svc.max) ? `Số lượng ${Number(svc.min).toLocaleString('vi-VN')}–${Number(svc.max).toLocaleString('vi-VN')}` : !(sell > 0) ? 'Nhập tiền khách trả' : '';
-      const warns = [lp && sp && norm(lp) !== norm(sp) ? `Link ${lp}, dịch vụ ${sp}` : '', ordered.get(linkKey(r.link)) ? 'Đã có ' + ordered.get(linkKey(r.link)) : ''].filter(Boolean);
+      const dup = svc && rows.some(o => o !== r && o.on && rows.indexOf(o) < rows.indexOf(r) && linkKey(o.link) === linkKey(r.link) && (o.pkgId ? o.pkgId === r.pkgId : o.svcId && o.svcId === r.svcId));
+      const warns = [lp && sp && norm(lp) !== norm(sp) ? `Link ${lp}, dịch vụ ${sp}` : '', ordered.get(linkKey(r.link)) ? 'Đã có ' + ordered.get(linkKey(r.link)) : '', dup ? 'Trùng dịch vụ với dòng trên của cùng link' : ''].filter(Boolean);
       return { pk, svc, qty, sell, cost, listPrice, error, warns, fixed: pk?.kind === 'fixed', fam, parts };
     };
     const toLines = on => on.flatMap(([r, c]) => { const label = c.pk?.name || c.svc.category || 'Dịch vụ', base = { link: r.link, costManual: false, packageId: c.pk?.id || '', termMonths: termOf(c.svc, c.pk), comments: '' };
@@ -672,8 +676,12 @@
         if (!r.pkgId && r.svcId) { sel.querySelector('option[value=""]').selected = false; sel.prepend(h('option', { value: r.svcId ? '__keep' : '', selected: true, textContent: `⚙ Server ${r.svcId} · ${c.svc?.name || ''}`.slice(0, 70) })); }
         return h('tr', { className: (r.on ? '' : 'off') + (r.on && c.error ? ' bad' : '') },
           h('td', {}, h('input', { type: 'checkbox', checked: r.on, title: 'Tạo đơn cho link này', onchange: e => { r.on = e.target.checked; draw(); } })),
-          h('td', { className: 'svc-bulk-link' }, plat ? platBadge(plat, 18) : h('span', { className: 'plat-badge any', textContent: '?' }),
-            h('input', { type: 'text', value: r.link, title: r.link, onchange: e => { r.link = e.target.value.trim(); draw(); } })),
+          h('td', { className: 'svc-bulk-link' }, ...(i > 0 && linkKey(rows[i - 1].link) === linkKey(r.link)
+            ? [h('span', { className: 'hint svc-bulk-same', title: r.link, textContent: '↳ cùng link trên' })]
+            : [plat ? platBadge(plat, 18) : h('span', { className: 'plat-badge any', textContent: '?' }),
+              h('input', { type: 'text', value: r.link, title: r.link, onchange: e => { const old = linkKey(r.link); r.link = e.target.value.trim(); for (const o of rows) if (o !== r && linkKey(o.link) === old) o.link = r.link; draw(); } })]),
+            rows[i + 1] && linkKey(rows[i + 1].link) === linkKey(r.link) ? null
+              : h('button', { type: 'button', className: 'btn btn-ghost btn-sm svc-bulk-addsvc', title: 'Thêm 1 dịch vụ nữa cho link này (thêm 1 dòng, 1 đơn riêng)', textContent: '＋ Dịch vụ', onclick: () => { addService(r.link, i); draw(); } })),
           h('td', {}, sel, c.fam.length ? rxChips(c.fam.map(x => [x.id, x.child]), r.reacts, r.rmode, (set, mode) => { r.reacts = set; r.rmode = mode; draw(); }, c.parts) : null,
             r.why && r.pkgId ? h('div', { className: 'hint', textContent: 'Tự chọn ' + r.why }) : null),
           h('td', {}, h('input', { type: 'number', min: 1, step: 1, value: c.qty || '', readOnly: c.fixed, title: c.fixed ? 'Số lượng theo gói' : '', style: 'width:96px',
@@ -689,29 +697,50 @@
       const on = rows.filter(r => r.on).map(r => [r, calc(r)]), good = on.filter(([, c]) => !c.error);
       const sell = good.reduce((t, [, c]) => t + c.sell, 0), cost = good.reduce((t, [, c]) => t + c.cost, 0);
       if (document.activeElement !== totalIn) totalIn.value = sell || '';
-      sum.replaceChildren(h('span', {}, h('strong', { textContent: `${good.length}/${rows.length}` }), ' link sẽ lên đơn'),
+      sum.replaceChildren(h('span', {}, h('strong', { textContent: `${good.length}/${rows.length}` }), ' dòng sẽ lên đơn'),
         h('label', { className: 'svc-bulk-total' }, 'Tổng khách trả ', totalIn, 'đ'), h('span', {}, 'Gốc ≈ ', h('strong', { textContent: money(cost) })),
         h('span', {}, 'Lãi ', h('strong', { className: sell - cost < 0 ? 'neg' : '', textContent: money(sell - cost) + pct(sell, cost) })),
         on.length > good.length ? h('span', { className: 'neg', textContent: `${on.length - good.length} dòng cần sửa` }) : null);
-      go.disabled = !good.length; go.textContent = good.length ? `Tạo 1 báo giá chung (${good.length} link) & gửi →` : 'Tạo báo giá & gửi →';
-      allBox.hidden = rows.length < 2; empty0.hidden = rows.length > 0;
+      const nl = new Set(good.map(([r]) => linkKey(r.link))).size;
+      go.disabled = !good.length; go.textContent = good.length ? `Tạo 1 báo giá chung (${nl} link${good.length > nl ? `, ${good.length} đơn` : ''}) & gửi →` : 'Tạo báo giá & gửi →';
+      allBox.hidden = !rows.length; empty0.hidden = rows.length > 0;
     };
     // Áp dụng cho tất cả dòng đang chọn: gói + số lượng.
-    let allPkg = '', allSvc = '', allRx = new Set(), allMode = 'deu';
-    const allQty = h('input', { type: 'number', min: 1, step: 1, placeholder: 'Số lượng', style: 'width:100px' });
-    const allSell = h('input', { type: 'number', min: 0, step: 'any', placeholder: 'Khách trả / link', style: 'width:130px', title: 'Số tiền khách trả cho MỖI link' });
+    let allRx = new Set(), allMode = 'deu';
+    // Mỗi mục = 1 dịch vụ áp cho mọi link đã tích: gói hoặc server + số lượng. 2 mục trở lên → mỗi link thành 2+ dòng.
+    const entries = [], entryBox = h('div', { className: 'svc-bulk-entries' });
+    const addEntry = () => { const en = { pkg: '', svc: '' };
+      en.qty = h('input', { type: 'number', min: 1, step: 1, placeholder: 'Số lượng', style: 'width:100px' });
+      en.sel = pkgSelect('', '', async e => { const sel = e.target, v = sel.value; if (v === '__chosen') return;
+        if (v !== '__svc') { en.pkg = v; en.svc = ''; sel.querySelector('[value="__chosen"]')?.remove(); return; }
+        const id = await pickServerDialog(list.filter(ok), en.svc); sel.querySelector('[value="__chosen"]')?.remove();
+        if (!id) { sel.value = en.pkg; return; }
+        const x = list.find(y => y.id === id); en.svc = id; en.pkg = '';
+        sel.prepend(h('option', { value: '__chosen', selected: true, textContent: `⚙ Server ${id} · ${x?.name || ''}`.slice(0, 70) })); sel.value = '__chosen'; }, true);
+      en.el = h('div', { className: 'row svc-bulk-entry', style: 'gap:8px;flex-wrap:wrap;align-items:center' }, en.sel, en.qty,
+        entries.length ? h('button', { type: 'button', className: 'icon-btn', title: 'Bỏ dịch vụ này', textContent: '×', onclick: () => { entries.splice(entries.indexOf(en), 1); en.el.remove(); } }) : null);
+      entries.push(en); entryBox.append(en.el); };
+    addEntry();
+    const allQty = { get value() { return entries[0].qty.value; } };
+    const allSell = h('input', { type: 'number', min: 0, step: 'any', placeholder: 'Khách trả / dòng', style: 'width:130px', title: 'Số tiền khách trả cho MỖI dòng (mỗi dịch vụ của mỗi link); để trống = tự tính theo gói / bảng giá' });
     const allRxBox = h('span', { className: 'svc-bulk-allrx' });
     const drawAllRx = () => allRxBox.replaceChildren(rxChips(RX_ALL.map(k => [k, RX_NAME[k]]), allRx, allMode, (set, mode) => { allRx = set; allMode = mode; drawAllRx(); }, null, true));
     drawAllRx();
     const allBox = h('div', { className: 'svc-bulk-all' }, h('strong', { textContent: 'Áp dụng cho tất cả' }),
-      pkgSelect('', '', async e => { const sel = e.target, v = sel.value; if (v === '__chosen') return;
-        if (v !== '__svc') { allPkg = v; allSvc = ''; sel.querySelector('[value="__chosen"]')?.remove(); return; }
-        const id = await pickServerDialog(list.filter(ok), allSvc); sel.querySelector('[value="__chosen"]')?.remove();
-        if (!id) { sel.value = allPkg; return; }
-        const x = list.find(y => y.id === id); allSvc = id; allPkg = '';
-        sel.prepend(h('option', { value: '__chosen', selected: true, textContent: `⚙ Server ${id} · ${x?.name || ''}`.slice(0, 70) })); sel.value = '__chosen'; }, true), allQty, allSell, allRxBox,
+      entryBox, h('button', { type: 'button', className: 'btn btn-ghost btn-sm', textContent: '＋ Thêm dịch vụ', title: 'Mỗi link làm thêm 1 dịch vụ nữa (vd like + view): mỗi link thành nhiều dòng, mỗi dòng 1 đơn, giá riêng', onclick: () => addEntry() }),
+      allSell, allRxBox,
       h('button', { type: 'button', className: 'btn btn-soft btn-sm', textContent: 'Áp dụng cho các dòng đã tích', onclick: () => {
         const n = Number(allQty.value) || 0, money1 = allSell.value === '' ? null : Number(allSell.value);
+        const allPkg = entries[0].pkg, allSvc = entries[0].svc, multi = entries.filter(en => en.pkg || en.svc);
+        if (multi.length > 1) { // nhiều dịch vụ: mỗi link đã tích có đúng các dòng theo thứ tự mục (dùng lại dòng có sẵn, thiếu thì thêm)
+          const links = [...new Set(rows.filter(r => r.on).map(r => linkKey(r.link)))];
+          for (const k of links) {
+            const mine = rows.filter(r => linkKey(r.link) === k);
+            multi.forEach((en, j) => { const r = mine[j] || addService(mine[0].link);
+              r.on = true; r.pkgId = en.pkg; r.svcId = en.svc; r.why = ''; r.reacts = null; r.qty = Number(en.qty.value) || 0; r.sell = money1; });
+          }
+          draw(); return toast(`Đã áp ${multi.length} dịch vụ cho ${links.length} link (${multi.length * links.length} dòng).`, 3500);
+        }
         if (!allPkg && !allSvc && !n && money1 == null && !allRx.size) return toast('Chọn gói / server, số lượng, tiền khách trả hoặc cảm xúc để áp dụng.', 3500);
         let rxMiss = 0;
         for (const r of rows) if (r.on) {
@@ -750,7 +779,7 @@
     } },
       h('div', { className: 'card-head' }, h('h3', { className: 'card-title', textContent: '🧾 Tạo đơn hàng loạt' + (ctx.name ? ' · ' + ctx.name : '') }),
         h('button', { type: 'button', className: 'icon-btn', 'aria-label': 'Đóng', textContent: '×', onclick: () => dlg.close() })),
-      h('p', { className: 'hint', style: 'margin:0', textContent: 'Mỗi link là 1 đơn Baostar. Tất cả gộp vào 1 báo giá chung (1 mã QR, tổng tiền); khách trả đủ thì bấm "Đã nhận tiền" để tạo lần lượt các đơn, đơn nào lỗi được giữ lại để thử lại.' }),
+      h('p', { className: 'hint', style: 'margin:0', textContent: 'Mỗi dòng là 1 đơn Baostar (một link làm nhiều dịch vụ: bấm ＋ Dịch vụ ở link đó, hoặc ＋ Thêm dịch vụ ở Áp dụng cho tất cả). Tất cả gộp vào 1 báo giá chung (1 mã QR, tổng tiền); khách trả đủ thì bấm "Đã nhận tiền" để tạo lần lượt các đơn, đơn nào lỗi được giữ lại để thử lại.' }),
       guess ? h('div', { className: 'svc-hintline' }, '✨ Theo tin khách ', h('strong', { textContent: `“${guess.said}”` }), ` → ${guess.kind} · ${guess.qty.toLocaleString('vi-VN')} cho mỗi link. Kiểm tra lại từng dòng.`) : null,
       h('div', { className: 'row', style: 'gap:8px;align-items:flex-end' }, h('label', { className: 'field', style: 'flex:1' }, 'Thêm link', paste),
         h('button', { type: 'button', className: 'btn btn-ghost', textContent: 'Thêm link', onclick: addPaste })),
