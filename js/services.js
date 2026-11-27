@@ -2037,6 +2037,24 @@
           h('td', {}, h('span', { className: 'status svc-pill ' + cls, textContent: st }), q.lastError ? h('div', { className: 'neg hint', textContent: q.lastError }) : null, q.payNote ? h('div', { className: 'hint', textContent: q.payNote }) : null),
           h('td', {}, quoteActions(q))); })))) : h('p', { className: 'hint', textContent: 'Chưa có báo giá nào đang chờ.' }));
   }
+  // Thẻ "📉 Đơn bị tụt" (app tự phát hiện): mỗi khách 1 dòng, bấm 1 nút bảo hành (refill miễn phí) + nhắn khách.
+  async function drawDrops() {
+    const box = $('svDrops'); if (!box) return;
+    const gs = (await dropGroups()).filter(g => g.drop), by = new Map();
+    for (const g of gs) { const k = g.orders[0].customerKey || g.orders[0].id; if (!by.has(k)) by.set(k, []); by.get(k).push(g); }
+    box.replaceChildren(...(by.size || window.metaDesktop?.svcSnap ? [h('div', { className: 'card svc-drops' },
+      h('div', { className: 'toolbar' }, h('h3', { className: 'card-title grow', textContent: by.size ? `📉 Phát hiện tụt · ${by.size} khách` : '📉 Theo dõi tụt' }),
+        h('span', { className: 'hint', textContent: 'App tự đo số thật các đơn còn bảo hành (12 giờ/lần)' }),
+        h('button', { type: 'button', className: 'btn btn-ghost btn-sm', textContent: '↻ Quét ngay', onclick: async e => { e.target.disabled = true; e.target.textContent = 'Đang quét…';
+          const f = await dropScan({ max: 20, force: true }).catch(() => []); toast(f.length ? `Phát hiện ${f.length} link bị tụt.` : 'Không thấy link nào bị tụt.', 4000); drawDrops(); } })),
+      ...[...by.entries()].map(([k, list]) => { const o0 = list[0].orders[0];
+        return h('div', { className: 'svc-drop-row' },
+          h('div', { className: 'grow' }, h('strong', { textContent: o0.customer?.name || 'Khách' }), h('span', { className: 'hint', textContent: ' · ' + (App.pageById?.(o0.pageKey)?.name || o0.pageName || '') }),
+            ...list.map(g => h('div', { className: 'hint', textContent: `${shortLink(g.link)} · đang ${g.drop.now.toLocaleString('vi-VN')}/${g.drop.expected.toLocaleString('vi-VN')} ${LABEL[g.metric] || ''} · thiếu ${g.drop.lost.toLocaleString('vi-VN')} · ${g.ok ? 'còn bảo hành' : 'hết bảo hành'}` }))),
+          list.some(g => g.ok) ? h('button', { type: 'button', className: 'btn btn-primary btn-sm', textContent: '🛡 Bảo hành + nhắn khách', title: 'Gửi refill Baostar (miễn phí) cho các link tụt còn bảo hành, rồi nhắn khách', onclick: async e => { e.target.disabled = true; await quickWarranty(o0.customerKey, { groups: list }); drawDrops(); } }) : null,
+          h('button', { type: 'button', className: 'btn btn-ghost btn-sm', textContent: '🔎 Kiểm tra', onclick: () => checkDialog({ key: o0.customerKey, name: o0.customer?.name || '' }) })); }),
+      !by.size ? h('p', { className: 'hint', textContent: 'Chưa thấy đơn nào bị tụt.' }) : null)] : []));
+  }
   App.tab('services', {
     mount(el) {
       el.append(
@@ -2052,6 +2070,7 @@
           h('button', { className: 'btn btn-primary', textContent: '＋ Báo giá', onclick: () => createDialog() })),
         h('div', { id: 'svApiAlert', className: 'svc-api-alert', hidden: true }),
         h('div', { id: 'svPriceAlerts' }),
+        h('div', { id: 'svDrops' }),
         h('div', { className: 'kpis', id: 'svKpis' }),
         h('div', { className: 'card', id: 'svVip', hidden: true }),
         h('div', { className: 'card', id: 'svQuotes' }),
@@ -2065,6 +2084,7 @@
       if (!$('svOrders')) return;
       const s = await settings(), from = since();
       { const pa = priceAlertCard(await DB.get(ALERTS, []), s); $('svPriceAlerts').replaceChildren(...(pa ? [pa] : [])); }
+      drawDrops().catch(() => {});
       $('svPeriod').replaceChildren(...PERIODS.map(([k, t]) => h('button', { type: 'button', className: 'chip', 'aria-pressed': String(period === k), textContent: t, onclick: () => { period = k; this.refresh(); } })));
       const all = (await DB.get(ORDERS, [])).filter(o => o.source === 'service' && o.at >= from);
       refillOk = new Set(); if (s.apiKey) try { for (const x of await services()) if (x.refill || warrantyName(x.name)) refillOk.add(x.id); } catch {}
@@ -2607,6 +2627,120 @@
 
   // ── Dùng cho Kế hoạch tự động (js/auto.js): bảo hành tự động + gửi gợi ý đơn tự động, không mở hộp thoại ──
   // Bảo hành tự động: chỉ REFILL Baostar (không tốn tiền) cho link khách nhắc trong tin báo tụt và còn bảo hành; đơn bù (tốn tiền) để bạn tự làm.
+  // Gửi refill Baostar (miễn phí) cho các đơn còn bảo hành của 1 link; lưu mã refill vào đơn. Trả về { item, fails }.
+  async function refillGroup(g, list, batchId) {
+    const item = { link: g.link, name: g.orders[0].displayName || g.orders[0].serviceName || '', mode: 'refill', refill: [], bu: [], qty: 0 }, fails = [];
+    for (const o of g.orders.filter(o => o.status !== 'cancelled' && warrState(o, list.find(x => x.id === String(o.serviceId))).ok)) {
+      try { const res = await call('refill', { order: Number(o.providerOrderId) }); const id = String(res?.refill ?? res?.id ?? res?.refill_id ?? '');
+        if (!id || id === '0' || res?.error) throw Error(res?.error || 'Baostar không nhận bảo hành');
+        const all = await DB.get(ORDERS, []), x = all.find(y => y.id === o.id); if (x) { x.refills = [...(x.refills || []), { id, at: Date.now(), status: 'Pending', batch: batchId }]; x.updatedAt = Date.now(); x.drop = null; await DB.set(ORDERS, all); }
+        item.refill.push(o.id); } catch (e) { fails.push(`#${o.providerOrderId}: ${e.message}`); }
+    }
+    return { item, fails };
+  }
+  async function saveBatch(batch) { await DB.set(WARR, [...(await warrBatches()).filter(b => Date.now() - b.at < 60 * 864e5), batch]); App.tabs.services?.refresh?.(); App.inbox?.orderChanged?.(); }
+
+  // ── Tự phát hiện tụt ── Đơn đã xong, còn bảo hành: app tự chụp trang của link (12 giờ / lần), so số thật với số bắt đầu + số đã mua.
+  // Thiếu ≥ 10% (tối thiểu 10) → đánh dấu tụt, báo bạn; bấm 1 nút là gửi refill Baostar (miễn phí) + nhắn khách.
+  const DROP_EVERY = 12 * 36e5;
+  async function dropGroups(key) {
+    let list = []; try { list = await services(); } catch { return []; }
+    const by = new Map();
+    for (const o of (await DB.get(ORDERS, [])).filter(o => o.source === 'service' && !o.warrantyFor && o.status === 'done' && o.link && (!key || o.customerKey === key))) {
+      const m = metricOf(o.displayName || o.serviceName || ''), st = o.startCount != null ? num(o.startCount) : o.baseCount; if (!m || !Number.isFinite(st)) continue;
+      const k = linkKey(o.link) + '|' + m; if (!by.has(k)) by.set(k, { link: o.link, metric: m, orders: [] }); by.get(k).orders.push(o); }
+    return [...by.values()].map(g => { const sts = g.orders.map(o => warrState(o, list.find(x => x.id === String(o.serviceId))));
+      const expected = Math.min(...g.orders.map(o => o.startCount != null ? num(o.startCount) : o.baseCount)) + g.orders.reduce((t, o) => t + qtyOf(o), 0);
+      return { ...g, ok: sts.some(x => x.ok), st: sts, expected, drop: g.orders.find(o => o.drop)?.drop || null, checkedAt: Math.max(0, ...g.orders.map(o => o.dropAt || 0)) }; })
+      .filter(g => g.ok || g.drop);
+  }
+  let dropRunning = false;
+  async function dropScan({ max = 6, key = '', force = false } = {}) {
+    if (!window.metaDesktop?.svcSnap || dropRunning || !(await settings()).apiKey) return [];
+    dropRunning = true; const found = [];
+    try {
+      const todo = (await dropGroups(key)).filter(g => g.ok && (force || Date.now() - g.checkedAt > DROP_EVERY)).sort((a, b) => a.checkedAt - b.checkedAt).slice(0, max);
+      for (const g of todo) {
+        const r = await window.metaDesktop.svcSnap({ url: g.link }).catch(() => null), v = r?.metrics?.[g.metric];
+        const qty = g.orders.reduce((t, o) => t + qtyOf(o), 0), lost = Number.isFinite(v) ? g.expected - v : 0;
+        const drop = Number.isFinite(v) && lost >= Math.max(10, qty * 0.1) ? { at: Date.now(), now: v, expected: g.expected, lost, metric: g.metric } : null;
+        const all = await DB.get(ORDERS, []), ids = new Set(g.orders.map(o => o.id));
+        for (const o of all) if (ids.has(o.id)) { o.dropAt = Date.now(); if (Number.isFinite(v)) o.drop = drop; o.updatedAt = Date.now(); }
+        await DB.set(ORDERS, all);
+        if (drop && !g.drop) { found.push({ ...g, drop }); const c = g.orders[0].customer?.name || 'Khách';
+          App.notify?.(`📉 Phát hiện tụt: ${c}`, `${shortLink(g.link)} đang ${v.toLocaleString('vi-VN')}/${g.expected.toLocaleString('vi-VN')} ${LABEL[g.metric] || ''} (thiếu ${lost.toLocaleString('vi-VN')}) · còn bảo hành`); }
+      }
+    } finally { dropRunning = false; }
+    if (found.length) { App.tabs.services?.refresh?.(); App.inbox?.orderChanged?.(); }
+    return found;
+  }
+  setTimeout(() => { dropScan().catch(() => {}); setInterval(() => dropScan().catch(() => {}), 2 * 36e5); }, 90e3);
+  // Bấm 1 nút: refill Baostar (miễn phí, chỉ đơn còn bảo hành) cho các link bị tụt của khách, rồi nhắn khách ngay.
+  async function quickWarranty(key, { notify = true, groups = null } = {}) {
+    let list = []; try { list = await services(); } catch (e) { return toast(e.message, 6000); }
+    const gs = (groups || (await dropGroups(key)).filter(g => g.drop)).filter(g => g.ok);
+    if (!gs.length) return toast('Không còn link nào bị tụt mà còn bảo hành.', 5000);
+    const name = gs[0].orders[0].customer?.name || '';
+    const batch = { id: uid('wb'), at: Date.now(), key: key || '', name, pageKey: gs[0].orders[0].pageKey || '', items: [], done: false }, fails = [];
+    for (const g of gs) { const r = await refillGroup(g, list, batch.id); fails.push(...r.fails); if (r.item.refill.length) batch.items.push({ ...r.item, drop: g.drop }); }
+    if (!batch.items.length) return toast('Baostar chưa nhận bảo hành: ' + (fails.join(' · ') || 'không rõ lý do') + '. Dùng nút Kiểm tra / gửi hỗ trợ.', 9000);
+    await saveBatch(batch);
+    const text = ['🛡 BẢO HÀNH ĐƠN HÀNG', `Dạ shop kiểm tra thấy ${batch.items.length > 1 ? `${batch.items.length} link` : 'link'} của mình bị tụt nên đã gửi bảo hành bù miễn phí ạ:`,
+      ...batch.items.map((it, i) => `   ${i + 1}. ${shortLink(it.link)}${it.drop ? ` · đang ${it.drop.now.toLocaleString('vi-VN')}/${it.drop.expected.toLocaleString('vi-VN')} ${LABEL[it.drop.metric] || ''}, bù ${it.drop.lost.toLocaleString('vi-VN')}` : ''}`),
+      '', '⏳ Hệ thống bù trong 24–72 giờ, xong em báo mình ngay ạ 🙏'].join('\n');
+    toast(`🛡 Đã gửi bảo hành ${batch.items.length} link${fails.length ? ` (lỗi: ${fails.join(' · ')})` : ''}.`, 6000);
+    if (!notify || !key) return batch;
+    try { await App.inbox.auto.sendKey(key, text); toast('Đã nhắn khách: shop đã bảo hành.', 4000); }
+    catch { sendDialog({ title: '🛡 Báo khách đã bảo hành', key, text }); } // không gửi thẳng được (khách không có trong danh sách…) → mở khung gửi
+    return batch;
+  }
+  // Kiểm tra đơn của khách + gửi hỗ trợ Baostar (ngay tại hội thoại khách khiếu nại).
+  const PROBLEMS = ['Tụt sau khi hoàn thành', 'Chạy chậm / đứng lâu', 'Chưa chạy', 'Báo hoàn thành nhưng thiếu số lượng', 'Khác'];
+  async function checkDialog(ctx = {}) {
+    let list = []; try { list = await services(); } catch (e) { return toast(e.message, 6000); }
+    const groups = await warrGroups(ctx.key); if (!groups.length) return toast('Khách này chưa có đơn dịch vụ nào trong 90 ngày.', 5000);
+    const said = (ctx.messages || []).filter(m => m.isCustomer || m.mine === false).slice(-5).map(m => m.text || '').filter(t => COMPLAIN.test(t) || /chưa|chậm|lâu|lỗi|không lên|ko lên/i.test(t)).pop() || '';
+    const dlg = h('dialog', { className: 'svc-dialog svc-bulk', onclose: () => dlg.remove() }), body = h('div', { className: 'svc-check' });
+    dlg.append(h('div', { className: 'card-head' }, h('h3', { className: 'card-title', textContent: '🔎 Kiểm tra đơn · ' + (ctx.name || 'Khách') }), h('button', { type: 'button', className: 'icon-btn', 'aria-label': 'Đóng', textContent: '×', onclick: () => dlg.close() })),
+      said ? h('div', { className: 'svc-hintline' }, 'Khách nhắn: ', h('strong', { textContent: `“${said.slice(0, 160)}”` })) : null, body);
+    document.body.append(dlg); dlg.showModal();
+    body.replaceChildren(h('p', { className: 'hint', textContent: 'Đang hỏi Baostar trạng thái đơn…' }));
+    const ids = groups.flatMap(g => g.orders.map(o => o.providerOrderId)).filter(Boolean).slice(0, 100);
+    let live = {}; try { live = ids.length === 1 ? { [ids[0]]: await call('status', { order: Number(ids[0]) }) } : await call('status', { orders: ids.join(',') }); } catch (e) { body.prepend(h('p', { className: 'status err', textContent: 'Không hỏi được Baostar: ' + e.message })); }
+    const card = g => { const o0 = g.orders[0], m = metricOf(o0.displayName || o0.serviceName || ''), real = h('span', { className: 'hint' });
+      const rows = g.orders.map(o => { const st = live?.[o.providerOrderId] || {}, ws = warrState(o, list.find(x => x.id === String(o.serviceId))), last = o.refills?.[o.refills.length - 1];
+        return h('div', { className: 'svc-check-row' },
+          h('div', {}, h('strong', { textContent: `#${o.providerOrderId}` }), ` · ${o.displayName || o.serviceName || ''} · SL ${qtyOf(o).toLocaleString('vi-VN')}`),
+          h('div', { className: 'hint', textContent: [st.error ? 'Baostar: ' + st.error : `Baostar: ${statusVi(st.status || o.svcStatus)}`, st.start_count != null ? `bắt đầu ${num(st.start_count).toLocaleString('vi-VN')}` : '',
+            st.remains != null ? `còn thiếu ${num(st.remains).toLocaleString('vi-VN')}` : '', ws.text, last ? `bảo hành: ${refillVi(last.status)}` : '', o.drop ? `📉 tụt ${o.drop.lost.toLocaleString('vi-VN')} (${fmtTime(o.drop.at)})` : ''].filter(Boolean).join(' · ') })); });
+      const problem = h('select', {}, ...PROBLEMS.map(t => h('option', { textContent: t, selected: g.orders.some(o => o.drop) ? t === PROBLEMS[0] : /chưa/i.test(said) ? t === PROBLEMS[2] : false })));
+      const note = h('input', { type: 'text', placeholder: 'Ghi thêm cho Baostar (không bắt buộc)' });
+      const ticket = () => [`Đơn ${g.orders.map(o => '#' + o.providerOrderId).join(', ')} – ${o0.displayName || o0.serviceName || ''}`, `Link: ${g.link}`, `Vấn đề: ${problem.value}`,
+        ...g.orders.map(o => { const st = live?.[o.providerOrderId] || {}; return `#${o.providerOrderId}: SL ${qtyOf(o)}, trạng thái ${st.status || o.svcStatus || '?'}${st.start_count != null ? `, start ${st.start_count}` : ''}${st.remains != null ? `, remains ${st.remains}` : ''}`; }),
+        real.dataset.v ? `Hiện tại trên trang: ${real.dataset.v} ${LABEL[m] || ''} (kiểm tra lúc ${new Date().toLocaleString('vi-VN')})` : '', note.value.trim(), 'Nhờ shop kiểm tra và xử lý giúp. Cảm ơn!'].filter(Boolean).join('\n');
+      return h('div', { className: 'svc-check-card' },
+        h('div', { className: 'row', style: 'gap:8px;align-items:center;flex-wrap:wrap' }, h('a', { href: g.link, target: '_blank', rel: 'noopener', textContent: shortLink(g.link) }), real,
+          m && window.metaDesktop?.svcSnap ? h('button', { type: 'button', className: 'btn btn-ghost btn-sm', textContent: '📏 Đo số thật', onclick: async e => { e.target.disabled = true; real.textContent = 'Đang mở trang…';
+            const r = await window.metaDesktop.svcSnap({ url: g.link }).catch(() => null), v = r?.metrics?.[m];
+            const st0 = g.orders.map(o => live?.[o.providerOrderId]?.start_count ?? o.startCount ?? o.baseCount).filter(x => x != null).map(num), exp = st0.length ? Math.min(...st0) + g.orders.reduce((t, o) => t + qtyOf(o), 0) : null;
+            if (Number.isFinite(v)) { real.dataset.v = v; real.textContent = `Hiện ${v.toLocaleString('vi-VN')} ${LABEL[m] || ''}${exp ? ` / cần ${exp.toLocaleString('vi-VN')}${exp - v > 0 ? ` · thiếu ${(exp - v).toLocaleString('vi-VN')}` : ' · đủ'}` : ''}`; }
+            else real.textContent = r?.error || 'Không đọc được số trên trang'; e.target.disabled = false; } }) : null),
+        ...rows,
+        h('div', { className: 'row', style: 'gap:6px;flex-wrap:wrap;margin-top:6px' },
+          g.ok ? h('button', { type: 'button', className: 'btn btn-primary btn-sm', textContent: '🛡 Bảo hành (refill, miễn phí)', onclick: async e => { e.target.disabled = true; await quickWarranty(ctx.key, { groups: [g] }); dlg.close(); } }) : null,
+          problem, note,
+          h('button', { type: 'button', className: 'btn btn-soft btn-sm', textContent: '📨 Gửi hỗ trợ Baostar', title: 'Chép nội dung hỗ trợ (mã đơn, link, số liệu) rồi mở trang Hỗ trợ của Baostar để dán và gửi', onclick: () => supportBaostar(ticket()) }))); };
+    body.replaceChildren(...groups.map(card));
+  }
+  // Trang Hỗ trợ của web: tìm link "Hỗ trợ" trong menu trang (phiên đăng nhập cột Dịch vụ); không thấy thì mở trang chủ.
+  async function supportBaostar(text) {
+    await navigator.clipboard.writeText(text).catch(() => {});
+    const s = await settings(), origin = webOrigin(s); let url = origin;
+    try { const r = await window.metaDesktop?.svcTopup?.({ origin }); const doc = new DOMParser().parseFromString(r?.html || '', 'text/html');
+      const a = [...doc.querySelectorAll('a[href]')].find(x => /^\s*(hỗ trợ|ticket|support)\s*$/i.test(x.textContent)); if (a) url = new URL(a.getAttribute('href'), origin).href; } catch {}
+    if (window.metaDesktop?.openService) window.metaDesktop.openService(url); else window.open(url, '_blank', 'noopener');
+    toast('Đã chép nội dung hỗ trợ (mã đơn, link, số liệu). Dán vào ô nội dung ở trang Hỗ trợ của Baostar rồi gửi.', 9000);
+  }
   async function autoWarranty(ctx = {}) {
     const info = await complaintInfo(ctx.key, ctx.messages); if (!info) return null;
     let list = []; try { list = await services(); } catch (e) { return { error: e.message }; }
@@ -2614,18 +2748,9 @@
     const pick = info.groups.filter(g => g.ok && (!said.size || said.has(linkKey(g.link))));
     if (!pick.length) return { skipped: info.ok ? 'link khách nhắc không còn bảo hành' : 'không link nào còn bảo hành (cần bạn xem: đơn bù / hết hạn)' };
     const batch = { id: uid('wb'), at: Date.now(), key: ctx.key || '', name: ctx.name || '', pageKey: ctx.page?.id || '', items: [], done: false, auto: true }, fails = [];
-    for (const g of pick) {
-      const item = { link: g.link, name: g.orders[0].displayName || g.orders[0].serviceName || '', mode: 'refill', refill: [], bu: [], qty: 0 };
-      for (const o of g.orders.filter(o => o.status !== 'cancelled' && warrState(o, list.find(x => x.id === String(o.serviceId))).ok)) {
-        try { const res = await call('refill', { order: Number(o.providerOrderId) }); const id = String(res?.refill ?? res?.id ?? res?.refill_id ?? '');
-          if (!id || id === '0' || res?.error) throw Error(res?.error || 'Baostar không nhận bảo hành');
-          const all = await DB.get(ORDERS, []), x = all.find(y => y.id === o.id); if (x) { x.refills = [...(x.refills || []), { id, at: Date.now(), status: 'Pending', batch: batch.id }]; await DB.set(ORDERS, all); }
-          item.refill.push(o.id); } catch (e) { fails.push(`#${o.providerOrderId}: ${e.message}`); }
-      }
-      if (item.refill.length) batch.items.push(item);
-    }
+    for (const g of pick) { const r = await refillGroup(g, list, batch.id); fails.push(...r.fails); if (r.item.refill.length) batch.items.push(r.item); }
     if (!batch.items.length) return { error: fails.join(' · ') || 'Baostar không nhận refill' };
-    await DB.set(WARR, [...(await warrBatches()).filter(b => Date.now() - b.at < 60 * 864e5), batch]); App.tabs.services?.refresh?.(); App.inbox?.orderChanged?.();
+    await saveBatch(batch);
     const text = ['🛡 BẢO HÀNH ĐƠN HÀNG', `Dạ shop đã nhận bảo hành ${batch.items.length} link cho mình ạ:`, ...batch.items.map((it, i) => `   ${i + 1}. ${shortLink(it.link)} · đã gửi bảo hành`),
       '', '⏳ Hệ thống bù trong 24–72 giờ, xong em báo mình ngay ạ 🙏'].join('\n');
     const img = await snapGrid(batch.items.map(it => ({ link: it.link, name: it.name })), '🛡 Ghi nhận lúc nhận bảo hành').catch(() => null);
@@ -2662,5 +2787,5 @@
     guess: text => guessOrder([{ isCustomer: true, text }]), linksIn: t => splitLinks(t), money
   };
 
-  App.services = { topupDialog, parseTopup, remote, autoWarranty, autoNudgeList, autoNudgeFull, autoNudgeDone, aiContext, hesitation, salesInfo, dukTexts, dukFill, dukBonus, DUK, STAGE_NAME, warrantyDialog, complaintInfo, checkWarranty, splitLinks, bulkDialog, orderedLinks, linkKey, nudgeCard, askCheck, platBadge, linkPlatform: l => LINK_PLAT[platformOf(l)] || '', createDialog, closeDock, orderStates, orderBar, inboxBox, refreshStatus, linksIn, call, openWeb, mapStatus, catalogProgress, noteLines, speedOf, invoiceDialog, invoiceText, paymentDialog, confirmCreate, quotes, renewQuote, vipTick, termOf, requestRefill, refreshRefills };
+  App.services = { dropScan, dropGroups, quickWarranty, checkDialog, topupDialog, parseTopup, remote, autoWarranty, autoNudgeList, autoNudgeFull, autoNudgeDone, aiContext, hesitation, salesInfo, dukTexts, dukFill, dukBonus, DUK, STAGE_NAME, warrantyDialog, complaintInfo, checkWarranty, splitLinks, bulkDialog, orderedLinks, linkKey, nudgeCard, askCheck, platBadge, linkPlatform: l => LINK_PLAT[platformOf(l)] || '', createDialog, closeDock, orderStates, orderBar, inboxBox, refreshStatus, linksIn, call, openWeb, mapStatus, catalogProgress, noteLines, speedOf, invoiceDialog, invoiceText, paymentDialog, confirmCreate, quotes, renewQuote, vipTick, termOf, requestRefill, refreshRefills };
 })();

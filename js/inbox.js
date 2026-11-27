@@ -1037,13 +1037,19 @@
   async function drawWarr() {
     const box = $('ibWarr'); if (!box) return;
     const c = S.conv; if (!c || !App.services?.complaintInfo) { box.hidden = true; return; }
-    const info = await App.services.complaintInfo(c.key, S.messages).catch(() => null); if (S.conv !== c) return;
-    const sig = c.id + '|' + (info?.said || '');
-    if (!info || S.warrHide.has(sig)) { box.hidden = true; return box.replaceChildren(); }
+    const info = await App.services.complaintInfo(c.key, S.messages).catch(() => null);
+    const drops = (await App.services.dropGroups?.(c.key).catch(() => []) || []).filter(g => g.drop); if (S.conv !== c) return;
+    const sig = c.id + '|' + (info?.said || '') + '|' + drops.map(g => g.drop.at).join(',');
+    if ((!info && !drops.length) || S.warrHide.has(sig)) { box.hidden = true; return box.replaceChildren(); }
     box.hidden = false;
-    box.replaceChildren(h('span', { className: 'ib-bulk-ico', textContent: '🛡' }),
-      h('span', { className: 'ib-bulk-txt', title: info.said, textContent: `Khách báo tụt · ${info.ok}/${info.groups.length} link còn bảo hành` }),
-      h('button', { type: 'button', className: 'btn btn-primary btn-sm', textContent: 'Bảo hành', onclick: () => App.services.warrantyDialog({ page: c.page, key: c.key, name: c.other.name || '', messages: S.messages }) }),
+    const ctx = { page: c.page, key: c.key, name: c.other.name || '', messages: S.messages }, okDrops = drops.filter(g => g.ok);
+    box.replaceChildren(h('span', { className: 'ib-bulk-ico', textContent: drops.length ? '📉' : '🛡' }),
+      h('span', { className: 'ib-bulk-txt', title: info?.said || '', textContent: drops.length
+        ? `App phát hiện tụt ${drops.length} link (${drops.map(g => `thiếu ${g.drop.lost.toLocaleString('vi-VN')}`).join(', ')}) · ${okDrops.length} còn bảo hành`
+        : `Khách báo tụt · ${info.ok}/${info.groups.length} link còn bảo hành` }),
+      okDrops.length ? h('button', { type: 'button', className: 'btn btn-primary btn-sm', textContent: '🛡 Bảo hành + nhắn khách', title: 'Gửi refill Baostar (miễn phí) cho link tụt còn bảo hành, rồi nhắn khách', onclick: async e => { e.target.disabled = true; await App.services.quickWarranty(c.key, { groups: okDrops }); drawWarr().catch(() => {}); } })
+        : h('button', { type: 'button', className: 'btn btn-primary btn-sm', textContent: 'Bảo hành', onclick: () => App.services.warrantyDialog(ctx) }),
+      h('button', { type: 'button', className: 'btn btn-ghost btn-sm', textContent: '🔎 Kiểm tra / hỗ trợ', title: 'Xem trạng thái đơn trên Baostar, đo số thật, gửi hỗ trợ cho Baostar', onclick: () => App.services.checkDialog(ctx) }),
       h('button', { type: 'button', className: 'btn btn-ghost btn-sm', textContent: 'Ẩn', title: 'Ẩn thanh này (khách nhắn báo tụt lần sau sẽ hiện lại)', onclick: () => { S.warrHide.add(sig); box.hidden = true; } }));
   }
   async function drawBulk() {
