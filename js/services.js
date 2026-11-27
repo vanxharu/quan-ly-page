@@ -73,7 +73,7 @@
   async function webCatalog(force = false) {
     const s = await settings(), origin = webOrigin(s);
     const c = await DB.get(WEBCAT, null);
-    if (!force && c?.origin === origin && c.list?.length && Date.now() - c.at < 864e5) return c;
+    if (!force && c?.origin === origin && c.list?.length) { if (Date.now() - c.at > 864e5) refreshServicesBg(); return c; } // cũ thì đọc lại web ngầm
     if (!window.metaDesktop?.svcCatalog || !origin) return c?.origin === origin ? c : null;
     const r = await window.metaDesktop.svcCatalog({ origin });
     if (r?.error) throw Error(r.error);
@@ -122,16 +122,23 @@
   const stateOf = svc => !svc.web ? (svc.webChecked ? ['Không thấy trên web', 'pending'] : ['Chưa đọc web', 'pending'])
     : STATE[String(svc.status).toLowerCase()] || (/active|on|1/i.test(svc.status) ? STATE.active : ['Bảo trì (' + (svc.status || '?') + ')', 'err']);
 
+  // Danh sách máy chủ: dùng bản đã lưu ngay (mở hộp tạo đơn không phải chờ); quá 1 ngày thì tải lại ngầm, lần mở sau có bản mới.
+  let svcMemo = null, svcRefresh = null;
+  async function fetchServices() {
+    const raw = asList(await call('services'));
+    if (!raw.length) throw Error('Web dịch vụ không trả về dịch vụ nào. Kiểm tra lại API key và URL API.');
+    const list = raw.map(x => ({ id: String(x.service ?? x.id ?? x.service_id), name: String(x.name || ''), category: String(x.category || ''),
+      rate: Number(x.rate ?? x.price) || 0, min: Number(x.min) || 1, max: Number(x.max) || 1e9, refill: !!x.refill, type: String(x.type || '') }));
+    await DB.set(CACHE, { at: Date.now(), list }); svcMemo = null;
+    return list;
+  }
+  const refreshServicesBg = () => svcRefresh ||= (async () => { try { await fetchServices(); await webCatalog(true); } catch {} finally { svcMemo = null; svcRefresh = null; } })();
   async function services(force = false) {
+    if (!force && svcMemo && Date.now() - svcMemo.at < 60e3) return svcMemo.list;
     const c = await DB.get(CACHE, null);
     let list = c?.list;
-    if (force || !list?.length || Date.now() - c.at > 864e5) {
-      const raw = asList(await call('services'));
-      if (!raw.length) throw Error('Web dịch vụ không trả về dịch vụ nào. Kiểm tra lại API key và URL API.');
-      list = raw.map(x => ({ id: String(x.service ?? x.id ?? x.service_id), name: String(x.name || ''), category: String(x.category || ''),
-        rate: Number(x.rate ?? x.price) || 0, min: Number(x.min) || 1, max: Number(x.max) || 1e9, refill: !!x.refill, type: String(x.type || '') }));
-      await DB.set(CACHE, { at: Date.now(), list });
-    }
+    if (force || !list?.length) list = await fetchServices();
+    else if (Date.now() - c.at > 864e5) refreshServicesBg();
     // Gộp thông tin web theo mã dịch vụ. Giá gốc = giá web (đ/1 đơn vị, đúng cấp tài khoản đang đăng nhập);
     // không có web thì lấy giá API (giá cho 1000 đơn vị) chia 1000.
     let cat = null; try { cat = await webCatalog(force); } catch (e) { catalogMsg = e.message; }
@@ -147,6 +154,7 @@
       notes: w.notes, status: w.status, avgTime: w.avgTime, startTime: w.startTime, refill: w.refill, min: w.min || 1, max: w.max || 1e9, rate: 0, unitCost: w.rate, costFromWeb: true,
       groupIndex: w.groupIndex ?? 999, pos: w.pos ?? 0, parent: w.parent || '', child: w.child || '', labels: w.labels || '', type: w.type || '' });
     checkPrices(merged).catch(() => {});
+    svcMemo = { at: Date.now(), list: merged };
     return merged;
   }
   // ── Báo giá gốc thay đổi: máy chủ đang dùng trong gói bán / bảng giá của bạn đổi giá (hoặc bị gỡ) → báo + ghi lại để kiểm tra giá bán ──
@@ -557,7 +565,13 @@
       (set.size > 1 || empty) ? h('button', { type: 'button', className: 'svc-rx-mode', title: mode === 'tn' ? 'Tự nhiên: Like nhiều nhất, rồi Love, Care… như bài thật. Bấm để chia đều.' : 'Chia đều cho các cảm xúc đã chọn. Bấm để chia tự nhiên.',
         textContent: mode === 'tn' ? 'Tự nhiên' : 'Chia đều', onclick: () => onChange(set, mode === 'tn' ? 'deu' : 'tn') }) : null);
   }
+  let bulkOpening = false;
   async function bulkDialog(ctx = {}, preset = []) {
+    if (!ctx.headless) { if (bulkOpening) return; bulkOpening = true; } // bấm nhiều lần khi đang mở: không mở chồng nhiều hộp
+    const slow = ctx.headless ? 0 : setTimeout(() => toast('Đang mở bảng tạo đơn…', 2500), 400);
+    try { return await bulkDialogInner(ctx, preset); } finally { clearTimeout(slow); if (!ctx.headless) bulkOpening = false; }
+  }
+  async function bulkDialogInner(ctx = {}, preset = []) {
     const s = await settings();
     let list = []; try { list = await services(); } catch (e) { return ctx.headless ? { error: e.message } : toast(e.message, 7000); }
     const pkgs = s.packages || [], ok = svc => svc && stateOf(svc)[1] !== 'err';
