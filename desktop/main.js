@@ -5,6 +5,7 @@ const path = require('path'), crypto = require('crypto');
 const { ElectronChromeExtensions } = require('electron-chrome-extensions');
 const { createMetaAuto } = require('./meta-auto');
 const { createZaloAuto } = require('./zalo-auto');
+const { createZaloApi } = require('./zalo-api');
 const { setupLock } = require('./app-lock');
 const { readCatalog } = require('./svc-catalog');
 const createFbPeople = require('./fb-people');
@@ -216,6 +217,37 @@ app.whenReady().then(async () => {
       await d.sendCommand('Page.setWebLifecycleState', { state: 'active' }).catch(() => {}); } catch {} };
   ZW().on('did-start-loading', () => { if (ZW().getURL() !== 'about:blank') zaloAwake(); });
   zaloAwake();
+  // Zalo qua API không chính thức (zalo-api.js): đăng nhập bằng phiên Zalo Web đã quét QR; chạy được thì khung Zalo Web ngầm để trống
+  // (Zalo chỉ cho 1 kết nối web). Không vào được → quay về khung ngầm như cũ. Lưu imei + tin đã nhận vào file mã hoá trong thư mục app.
+  const zFile = path.join(app.getPath('userData'), 'zalo-api.bin');
+  let zCfg = (() => { try { const b = require('fs').readFileSync(zFile); return JSON.parse(b[0] === 0x7b ? b.toString('utf8') : safeStorage.decryptString(b)); } catch { return {}; } })();
+  let zSaveT = 0;
+  const saveZCfg = () => { clearTimeout(zSaveT); zSaveT = setTimeout(() => { try { const fs = require('fs'), t = JSON.stringify(zCfg);
+    fs.writeFileSync(zFile + '.tmp', safeStorage.isEncryptionAvailable() ? safeStorage.encryptString(t) : Buffer.from(t, 'utf8')); fs.renameSync(zFile + '.tmp', zFile); } catch {} }, 500); };
+  let zMode = 'web', zCreds = null, zApiFailAt = 0; // zMode 'api': đọc / gửi Zalo qua API
+  const zapi = createZaloApi({ Zalo: require('zca-js').Zalo, getCreds: async () => zCreds, load: () => zCfg.db, save: db => { zCfg.db = db; saveZCfg(); },
+    imageSize: buf => { try { return nativeImage.createFromBuffer(buf).getSize(); } catch { return {}; } },
+    onList: rows => pageView.webContents.executeJavaScript(`window.App?.inbox?.zaloList?.(${JSON.stringify(rows)})`).catch(() => {}),
+    onThread: id => pageView.webContents.executeJavaScript(`window.App?.inbox?.bsChanged?.(${JSON.stringify('zalo:' + id)}, null)`).catch(() => {}) });
+  const zaloCreds = async () => {
+    let imei = zCfg.imei || '';
+    if (!imei && ZW().getURL().startsWith('https://chat.zalo.me')) imei = await ZW().executeJavaScript(`localStorage.getItem('z_uuid') || localStorage.getItem('sh_z_uuid') || ''`).catch(() => '');
+    const cookie = (await zaloSes.cookies.get({})).filter(c => /(^|\.)(zalo\.me|zalo\.vn|zaloapp\.com)$/.test(c.domain.replace(/^\./, '')))
+      .map(c => ({ name: c.name, value: c.value, domain: c.domain, path: c.path, secure: c.secure, httpOnly: c.httpOnly }));
+    return imei && cookie.length ? { imei: String(imei).replace(/^"|"$/g, ''), cookie, userAgent: zaloSes.getUserAgent() } : null;
+  };
+  const startApi = async () => {
+    if (zMode === 'api') return true;
+    if (zCfg.off || Date.now() - zApiFailAt < 6 * 36e5) return false; // lỗi rồi: 6 giờ sau mới thử lại (tránh khung ngầm tải đi tải lại)
+    zCreds = await zaloCreds().catch(() => null); if (!zCreds) return false;
+    const hadWorker = ZW().getURL().startsWith('https://chat.zalo.me');
+    if (hadWorker) { zaloBoot++; ZW().loadURL('about:blank').catch(() => {}); } // nhường kết nối Zalo cho API
+    if (await zapi.start()) { zMode = 'api'; zCfg.imei = zCreds.imei; saveZCfg(); return true; }
+    zApiFailAt = Date.now(); zCreds = null;
+    if (hadWorker && !zaloColOpen) ZW().loadURL('https://chat.zalo.me/').catch(() => {});
+    return false;
+  };
+  const Z = () => zMode === 'api' ? zapi : zalo;
   // Web dịch vụ (vd dichvu.baostar.net): cột riêng, phiên đăng nhập riêng.
   const svcSes = session.fromPartition('persist:svc');
   svcSes.setUserAgent(app.userAgentFallback);
@@ -238,7 +270,7 @@ app.whenReady().then(async () => {
   let zaloColOpen = false;
   const zaloSide = open => { if (open === zaloColOpen) return; zaloColOpen = open;
     if (open) { try { ZW().loadURL('about:blank'); } catch {} if (!/zalo\.me/.test(zaloView.webContents.getURL())) zaloView.webContents.loadURL('https://chat.zalo.me/').catch(() => {}); }
-    else { setTimeout(() => { if (zaloColOpen) return; zaloView.webContents.loadURL('about:blank').catch(() => {}); ZW().loadURL('https://chat.zalo.me/').catch(() => {}); }, 400); } };
+    else { setTimeout(() => { if (zaloColOpen) return; zaloView.webContents.loadURL('about:blank').catch(() => {}); if (zMode === 'api') zapi.resume(); else ZW().loadURL('https://chat.zalo.me/').catch(() => {}); }, 400); } };
   let padNow = null;
   const padTitle = pad => { if (!FRAMELESS || padNow === pad) return; padNow = pad;
     pageView.webContents.executeJavaScript(`document.documentElement.classList.add('frameless');document.documentElement.classList.toggle('tb-pad',${pad})`).catch(() => { padNow = null; }); };
@@ -321,6 +353,7 @@ app.whenReady().then(async () => {
   // Zalo Web treo "Đang đăng nhập…": lần 1 xoá bộ nhớ đệm + service worker rồi tải lại (giữ đăng nhập); lần 2 xoá hẳn phiên → hiện mã QR quét lại.
   let zaloFix = 0, zaloWatch = 0;
   const resetZalo = async full => {
+    if (zMode === 'api') { if (!full) return zapi.resume(); zapi.stop(); zMode = 'web'; zCfg.imei = ''; zCfg.db = {}; saveZCfg(); } // xoá phiên: API cũng phải đăng nhập lại
     try { await zaloSes.clearStorageData(full ? {} : { storages: ['serviceworkers', 'cachestorage', 'shadercache'] }); await zaloSes.clearCache(); } catch {}
     (zaloColOpen ? zaloView.webContents : ZW()).loadURL('https://chat.zalo.me/').catch(() => {});
   };
@@ -640,14 +673,15 @@ app.whenReady().then(async () => {
   const bootZalo = async () => { const run = ++zaloBoot;
     for (let i = 0; i < 60 && run === zaloBoot; i++) { await new Promise(r => setTimeout(r, i ? 3000 : 1500));
       const r = await zalo.list({ deep: true }).catch(() => null);
-      if (r?.rows) { pageView.webContents.executeJavaScript(`window.App?.inbox?.zaloList?.(${JSON.stringify(r.rows)})`).catch(() => {}); return; } } };
+      if (r?.rows) { pageView.webContents.executeJavaScript(`window.App?.inbox?.zaloList?.(${JSON.stringify(r.rows)})`).catch(() => {}); startApi(); return; } } };
   ZW().on('did-finish-load', () => { if (ZW().getURL().startsWith('https://chat.zalo.me')) { bootZalo(); watchZalo(); } });
   // Đã đăng nhập Zalo lần trước → mở sẵn Zalo Web (ẩn) khi bật app để Hộp thư có tin Zalo ngay.
   // Zalo luôn mở (ẩn dưới trang chính) từ lúc bật app; chỉ mở MỘT lần, đọc / gửi tin không bao giờ tải lại trang.
-  if (!ZW().getURL()) ZW().loadURL('https://chat.zalo.me/').catch(() => {});
-  ZW().on('render-process-gone', () => setTimeout(() => { if (!zaloColOpen) ZW().loadURL('https://chat.zalo.me/').catch(() => {}); }, 3000)); // khung ngầm bị đóng bất thường: mở lại
-  ipcMain.handle('thread-react', (e, args) => !fromPage(e) ? { error: 'denied' } : args?.pageId === 'zalo' ? zalo.react(args) : auto.react(args || {}));
+  if (!ZW().getURL()) (zCfg.imei ? startApi() : Promise.resolve(false)).then(ok => { if (!ok && !ZW().getURL()) ZW().loadURL('https://chat.zalo.me/').catch(() => {}); });
+  ZW().on('render-process-gone', () => setTimeout(() => { if (!zaloColOpen && zMode !== 'api') ZW().loadURL('https://chat.zalo.me/').catch(() => {}); }, 3000)); // khung ngầm bị đóng bất thường: mở lại
+  ipcMain.handle('thread-react', (e, args) => !fromPage(e) ? { error: 'denied' } : args?.pageId === 'zalo' ? Z().react(args) : auto.react(args || {}));
   ipcMain.handle('zalo-list', async (e, args) => { if (!fromPage(e)) return { error: 'denied' };
+    if (zMode === 'api') return zapi.list();
     // Chưa mở Zalo Web: mở ẩn rồi báo Hộp thư chờ. Đang tải thì KHÔNG tải lại (tải lại liên tục làm Zalo không bao giờ mở xong).
     if (zaloColOpen) return { error: 'Đang mở cột Zalo (đóng cột để Hộp thư đọc Zalo ngầm).' };
     const w = ZW(), url = w.getURL();
@@ -656,9 +690,9 @@ app.whenReady().then(async () => {
     if (!url.startsWith('https://chat.zalo.me')) return { error: w.isLoading() ? 'loading' : 'login' };
     const r = await zalo.list(args || {});
     return r.error && /đang tải/i.test(r.error) && zalo.status().state === 'login' ? { error: 'login' } : r; });
-  ipcMain.handle('meta-thread-read', (e, args) => !fromPage(e) ? { error: 'denied' } : args?.pageId === 'zalo' ? zalo.read(args) : auto.readThread(args || {}));
+  ipcMain.handle('meta-thread-read', (e, args) => !fromPage(e) ? { error: 'denied' } : args?.pageId === 'zalo' ? Z().read(args) : auto.readThread(args || {}));
   ipcMain.handle('meta-thread-prime', (e, args) => !fromPage(e) || args?.pageId === 'zalo' ? { ok: false } : auto.primeImage(args || {}));
-  ipcMain.handle('meta-thread-send', (e, args) => !fromPage(e) ? { error: 'denied' } : args?.pageId === 'zalo' ? zalo.send(args) : auto.sendThread(args || {}));
+  ipcMain.handle('meta-thread-send', (e, args) => !fromPage(e) ? { error: 'denied' } : args?.pageId === 'zalo' ? Z().send(args) : auto.sendThread(args || {}));
   ipcMain.handle('meta-threads', (e, args) => fromPage(e) ? auto.listThreads(args || {}) : { error: 'denied' });
   // ── Cửa sổ chat nhỏ nổi trên cùng: phản chiếu hội thoại đang mở trong Hộp thư (5 tin gần nhất), gửi tin, đổi nhanh giữa khách đang chờ ──
   let mini = null, miniBounds = null;
@@ -688,13 +722,14 @@ app.whenReady().then(async () => {
   ipcMain.handle('meta-hidden-status', e => fromPage(e) ? auto.hiddenStatus() : []);
   // Zalo: trạng thái cho thanh trên cùng + ghi Downloads/GetHelps-debug/zalo.json (30 giây/lần) để chẩn đoán.
   ipcMain.handle('zalo-status', async e => { if (!fromPage(e)) return null;
+    if (zMode === 'api') return zapi.status();
     if (zaloColOpen) return { ...zalo.status(), state: 'loading', err: 'đang mở cột Zalo' };
     const url = ZW().getURL(); if (!url.startsWith('https://chat.zalo.me')) return { state: 'closed', ...zalo.status(), url };
     await zalo.ready().catch(() => {}); return zalo.status(); });
   setInterval(() => { try { const dir = path.join(app.getPath('downloads'), 'GetHelps-debug'); require('fs').mkdirSync(dir, { recursive: true });
-    require('fs').writeFileSync(path.join(dir, 'zalo.json'), JSON.stringify({ at: new Date().toISOString(), url: ZW().getURL().slice(0, 80), colOpen: zaloColOpen, ...zalo.status(), listAgo: zalo.status().listAt ? Math.round((Date.now() - zalo.status().listAt) / 1000) : null }, null, 1));
+    require('fs').writeFileSync(path.join(dir, 'zalo.json'), JSON.stringify({ at: new Date().toISOString(), url: ZW().getURL().slice(0, 80), colOpen: zaloColOpen, mode: zMode, ...Z().status(), listAgo: Z().status().listAt ? Math.round((Date.now() - Z().status().listAt) / 1000) : null }, null, 1));
     // Zalo ngầm chưa vào được: chụp màn hình khung ngầm (zalo-man-hinh.png) để thấy nó đang kẹt ở đâu.
-    if (!zaloColOpen && zalo.status().state !== 'ready' && ZW().getURL().startsWith('https://chat.zalo.me')) ZW().capturePage().then(img => { if (!img.isEmpty()) require('fs').writeFileSync(path.join(dir, 'zalo-man-hinh.png'), img.toPNG()); }).catch(() => {});
+    if (!zaloColOpen && zMode !== 'api' && zalo.status().state !== 'ready' && ZW().getURL().startsWith('https://chat.zalo.me')) ZW().capturePage().then(img => { if (!img.isEmpty()) require('fs').writeFileSync(path.join(dir, 'zalo-man-hinh.png'), img.toPNG()); }).catch(() => {});
   } catch {} }, 30e3);
   // Mở đúng hội thoại trong cột Meta: tải hộp thư của Page rồi bấm vào dòng của khách (UID).
   ipcMain.handle('meta-open-thread', async (e, { pageId, uid } = {}) => {
@@ -827,6 +862,9 @@ app.whenReady().then(async () => {
         shell.openPath(dir);
       } },
       // Lưu trang Zalo Web đang mở (danh sách hội thoại / hội thoại đang xem) để viết phần đọc tin Zalo theo giao diện thật.
+      { label: 'Zalo: đọc / gửi qua API (không chính thức)', type: 'checkbox', checked: !zCfg.off, click: mi => { zCfg.off = !mi.checked; saveZCfg();
+        if (zCfg.off) { if (zMode === 'api') { zapi.stop(); zMode = 'web'; if (!zaloColOpen) ZW().loadURL('https://chat.zalo.me/').catch(() => {}); } }
+        else { zApiFailAt = 0; startApi(); } } },
       { label: 'Đăng nhập lại Zalo (xoá phiên, quét QR)', click: () => { zaloFix = 0; resetZalo(true); show('zalo', true); } },
       { label: 'Lưu chẩn đoán Zalo', click: async () => {
         const dir = app.getPath('desktop'), stamp = new Date().toISOString().replace(/[:.]/g, '-'), wc = zaloColOpen ? zaloView.webContents : ZW();

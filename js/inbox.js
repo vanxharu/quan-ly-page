@@ -1958,7 +1958,7 @@
     rows.filter(zKeep).slice(0, 10).forEach((r, i) => { // tối đa 10 khách Zalo mới nhất
       const id = 'bs:zalo:' + r.id, prev = old.get(id), mine = /^(bạn|you)\s*:/i.test(r.snippet);
       const changed = !prev || prev.snippet !== r.snippet;
-      const at = !changed && prev ? prev.lastAt : zTime(r.time, now) - i; // tin cuối không đổi: giữ mốc cũ (Zalo ghi "4 phút" trôi theo giờ)
+      const at = r.ts || (!changed && prev ? prev.lastAt : zTime(r.time, now) - i); // r.ts: Zalo qua API có giờ thật // tin cuối không đổi: giữ mốc cũ (Zalo ghi "4 phút" trôi theo giờ)
       const c = prev || { id, bs: true, zalo: true, platform: 'zalo', uid: r.id, page: ZPAGE, other: { id: 'zl' + r.id } };
       Object.assign(c, { other: { id: 'zl' + r.id, name: r.name }, snippet: r.snippet, timeText: '', updated_time: new Date(at).toISOString(), lastAt: at,
         // Số chưa đọc: theo huy hiệu của Zalo; Zalo không hiện (vd hội thoại đang mở sẵn trong cột Zalo) thì tự đếm tin mới.

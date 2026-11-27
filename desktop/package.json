@@ -1,6 +1,6 @@
 {
   "name": "meta-assistant",
-  "version": "1.0.189",
+  "version": "1.0.190",
   "description": "Meta Assistant cho Windows: quản lý Page Facebook + Studio AI",
   "main": "main.js",
   "scripts": {
@@ -12,7 +12,8 @@
   "license": "UNLICENSED",
   "dependencies": {
     "electron-chrome-extensions": "4.10.0",
-    "electron-updater": "6.8.11"
+    "electron-updater": "6.8.11",
+    "zca-js": "2.4.0"
   },
   "devDependencies": {
     "electron": "45.3.0",
@@ -35,6 +36,7 @@
       "preload.js",
       "meta-auto.js",
       "zalo-auto.js",
+      "zalo-api.js",
       "svc-catalog.js",
       "fb-people.js",
       "fb-people-page.js",
