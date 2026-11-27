@@ -109,7 +109,7 @@ function createZaloApi({ Zalo, load = () => null, save = () => {}, onList = () =
     if (!group && !x.mine && m.data?.dName && !c.name) c.name = m.data.dName;
     if (x.ts >= c.ts) { c.ts = x.ts; c.snippet = (x.mine ? 'Bạn: ' : x.from ? x.from + ': ' : '') + (x.text || (x.pic ? LABEL.image : x.share || '')); }
     if (fresh && !x.mine) c.unread = (c.unread || 0) + 1;
-    if (x.sticker) stickerUrl(acc, x.sticker).then(u => { if (u) { x.pic = u; persist(); } });
+    if (x.sticker) Object.defineProperty(x, 'wait', { configurable: true, value: stickerUrl(acc, x.sticker).then(u => { if (u) { x.pic = u; persist(); } delete x.wait; }) }); // không lưu ra file
     if (!c.name || !c.pic) lookup(c);
     const keys = Object.keys(db.convs); if (keys.length > MAX_CONV) for (const k of keys.sort((a, b) => db.convs[a].ts - db.convs[b].ts).slice(0, keys.length - MAX_CONV)) { delete db.convs[k]; delete db.msgs[k]; }
     return key;
@@ -143,7 +143,8 @@ function createZaloApi({ Zalo, load = () => null, save = () => {}, onList = () =
 
   const attach = (acc, api) => {
     const s = live.get(acc), Lr = api.listener;
-    Lr.on('message', m => { const k = add(acc, m, true); if (k) { persist(); pushList(); onThread(k); } });
+    // Sticker: chờ có ảnh sticker rồi mới báo Hộp thư / Telegram (không thì chỉ hiện chữ [Sticker]).
+    Lr.on('message', async m => { const k = add(acc, m, true); if (!k) return; await db.msgs[k]?.at(-1)?.wait?.catch(() => {}); persist(); pushList(); onThread(k); });
     Lr.on('reaction', r => { const d = r?.data, key = keyOf(acc, String(r?.threadId || ''), r?.isGroup), list = db.msgs[key]; if (!list || !d) return;
       const t = list.find(x => x.msgId && (d.content?.rMsg || []).some(y => String(y.gMsgID) === x.msgId)); if (!t) return;
       const e = Object.keys(EMO).find(k => EMO[k] === d.content?.rIcon); if (e) { t.re = [...(t.re || []).filter(z => z.mine !== !!r.isSelf), { e, mine: !!r.isSelf }]; persist(); onThread(key); } });
@@ -211,7 +212,7 @@ function createZaloApi({ Zalo, load = () => null, save = () => {}, onList = () =
     persist(); pushList(); };
   const read = async ({ uid } = {}) => {
     const c = db.convs[uid]; if (c?.unread) { c.unread = 0; persist(); }
-    return { messages: (db.msgs[uid] || []).map(({ q, msgId, ...m }) => m.from ? { ...m, text: m.from + ': ' + m.text } : m) };
+    return { messages: (db.msgs[uid] || []).map(({ q, msgId, wait, ...m }) => { if (m.sticker && m.pic) m = { ...m, text: '' }; return m.from ? { ...m, text: m.from + ': ' + m.text } : m; }) };
   };
   // Gửi: chữ, ảnh / video / tệp (dataURL → Buffer, không ghi ra đĩa), trả lời tin.
   const send = async ({ uid, text, image, file, fileName, replyTo } = {}) => {
