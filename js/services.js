@@ -565,6 +565,47 @@
       (set.size > 1 || empty) ? h('button', { type: 'button', className: 'svc-rx-mode', title: mode === 'tn' ? 'Tự nhiên: Like nhiều nhất, rồi Love, Care… như bài thật. Bấm để chia đều.' : 'Chia đều cho các cảm xúc đã chọn. Bấm để chia tự nhiên.',
         textContent: mode === 'tn' ? 'Tự nhiên' : 'Chia đều', onclick: () => onChange(set, mode === 'tn' ? 'deu' : 'tn') }) : null);
   }
+  // Tạo / sửa gói ngay trong bảng tạo đơn: tên, kiểu (theo đơn vị / cố định), giá, số lượng, server gốc. Trả về gói đã lưu (hoặc null).
+  function pkgDialog(list, { pkg = null, serviceId = '', unitPrice = 0, qty = 0, price = 0 } = {}) {
+    return new Promise(done => {
+      const cur = pkg || { id: uid('pkg'), name: '', kind: 'unit', serviceId, unitPrice, qty, price };
+      let sid = String(cur.serviceId || serviceId || '');
+      const svcOf = () => list.find(x => x.id === sid);
+      const guessName = x => x ? [x.platform, String(x.category || x.name).replace(/\s*\(.*?\)\s*/g, ' ').replace(/\s+/g, ' ').trim()].filter(Boolean).join(' · ') : '';
+      const name = h('input', { type: 'text', value: cur.name || guessName(svcOf()), placeholder: 'Tên gói hiện trên báo giá (vd TikTok · Tăng view)', required: true });
+      const kindU = h('input', { type: 'radio', name: 'pkk', checked: cur.kind !== 'fixed' }), kindF = h('input', { type: 'radio', name: 'pkk', checked: cur.kind === 'fixed' });
+      const unit = h('input', { type: 'number', min: 0, step: 'any', value: cur.unitPrice || '', placeholder: 'đ / 1 đơn vị' });
+      const fq = h('input', { type: 'number', min: 1, step: 1, value: cur.qty || qty || 1000, placeholder: 'Số lượng' }), fp = h('input', { type: 'number', min: 0, step: 'any', value: cur.price || price || '', placeholder: 'Giá trọn gói (đ)' });
+      const srvBtn = h('button', { type: 'button', className: 'btn btn-ghost btn-sm', style: 'text-align:left' });
+      const info = h('p', { className: 'hint' });
+      const draw = () => { const x = svcOf(); srvBtn.textContent = x ? `⚙ Server ${x.id} · ${x.name}`.slice(0, 80) + ' ▾' : '⚙ Chọn server gốc ▾';
+        unitBox.hidden = kindF.checked; fixBox.hidden = !kindF.checked;
+        const cost = x ? kindF.checked ? estCost(x, Number(fq.value) || 0) : (x.unitCost || 0) : 0;
+        info.textContent = x ? (kindF.checked ? `Giá gốc ≈ ${money(cost)} cho ${(Number(fq.value) || 0).toLocaleString('vi-VN')}` : `Giá gốc ≈ ${m2(cost)}/đv`) + (stateOf(x)[1] === 'err' ? ' · ⚠ server đang bảo trì' : '') : 'Chưa chọn server gốc.'; };
+      srvBtn.onclick = async () => { const v = await pickServerDialog(list.filter(y => stateOf(y)[1] !== 'err' || y.id === sid), sid); if (v) { const auto = name.value === guessName(svcOf()); sid = v; if (auto || !name.value) name.value = guessName(svcOf()); draw(); } };
+      const unitBox = h('label', { className: 'field' }, 'Giá bán / 1 đơn vị (đ)', unit), fixBox = h('div', { className: 'row', style: 'gap:8px' }, h('label', { className: 'field', style: 'flex:1' }, 'Số lượng', fq), h('label', { className: 'field', style: 'flex:1' }, 'Giá trọn gói (đ)', fp));
+      for (const el of [kindU, kindF, fq, unit, fp]) el.oninput = draw;
+      const dlg = h('dialog', { className: 'svc-dialog', onclose: () => { dlg.remove(); done(null); } });
+      dlg.append(h('form', { method: 'dialog', onsubmit: async e => { e.preventDefault();
+          if (!name.value.trim()) return toast('Nhập tên gói.', 3000); if (!sid) return toast('Chọn server gốc cho gói.', 3000);
+          const next = { ...cur, name: name.value.trim(), serviceId: sid, kind: kindF.checked ? 'fixed' : 'unit', auto: false,
+            ...(kindF.checked ? { qty: Math.round(Number(fq.value) || 0), price: Number(fp.value) || 0 } : { unitPrice: Number(unit.value) || 0 }) };
+          if (next.kind === 'fixed' ? !(next.qty > 0 && next.price > 0) : !(next.unitPrice > 0)) return toast('Nhập giá bán (và số lượng nếu là gói cố định).', 3500);
+          const all = (await settings()).packages || [], i = all.findIndex(p => p.id === next.id);
+          await saveSettings({ packages: i >= 0 ? all.map(p => p.id === next.id ? next : p) : [...all, next] });
+          toast(i >= 0 ? `Đã sửa gói "${next.name}".` : `Đã tạo gói "${next.name}".`, 3500);
+          dlg.onclose = () => dlg.remove(); dlg.close(); done(next); } },
+        h('div', { className: 'card-head' }, h('h3', { className: 'card-title', textContent: pkg ? '✎ Sửa gói' : '💾 Lưu thành gói' }),
+          h('button', { type: 'button', className: 'icon-btn', 'aria-label': 'Đóng', textContent: '×', onclick: () => dlg.close() })),
+        h('label', { className: 'field' }, 'Tên gói', name),
+        h('div', { className: 'row', style: 'gap:14px' }, h('label', { className: 'row', style: 'gap:6px' }, kindU, 'Theo đơn vị'), h('label', { className: 'row', style: 'gap:6px' }, kindF, 'Cố định (vd 1000 like = 50k)')),
+        unitBox, fixBox, h('label', { className: 'field' }, 'Server gốc', srvBtn), info,
+        pkg ? h('p', { className: 'hint', textContent: 'Sửa gói áp cho các báo giá tạo sau; báo giá đã tạo giữ nguyên.' }) : null,
+        h('div', { className: 'row', style: 'gap:8px;justify-content:flex-end' }, h('button', { type: 'button', className: 'btn btn-ghost', textContent: 'Huỷ', onclick: () => dlg.close() }),
+          h('button', { className: 'btn btn-primary', textContent: pkg ? 'Lưu gói' : 'Tạo gói' }))));
+      document.body.append(dlg); draw(); dlg.showModal(); name.focus();
+    });
+  }
   let bulkOpening = false;
   async function bulkDialog(ctx = {}, preset = []) {
     if (!ctx.headless) { if (bulkOpening) return; bulkOpening = true; } // bấm nhiều lần khi đang mở: không mở chồng nhiều hộp
@@ -682,7 +723,13 @@
               h('input', { type: 'text', value: r.link, title: r.link, onchange: e => { const old = linkKey(r.link); r.link = e.target.value.trim(); for (const o of rows) if (o !== r && linkKey(o.link) === old) o.link = r.link; draw(); } })]),
             rows[i + 1] && linkKey(rows[i + 1].link) === linkKey(r.link) ? null
               : h('button', { type: 'button', className: 'btn btn-ghost btn-sm svc-bulk-addsvc', title: 'Thêm 1 dịch vụ nữa cho link này (thêm 1 dòng, 1 đơn riêng)', textContent: '＋ Dịch vụ', onclick: () => { addService(r.link, i); draw(); } })),
-          h('td', {}, sel, c.fam.length ? rxChips(c.fam.map(x => [x.id, x.child]), r.reacts, r.rmode, (set, mode) => { r.reacts = set; r.rmode = mode; draw(); }, c.parts) : null,
+          h('td', {}, h('div', { className: 'row svc-bulk-pick', style: 'gap:6px;flex-wrap:nowrap' }, sel,
+            c.pk ? h('button', { type: 'button', className: 'btn btn-ghost btn-sm', textContent: '✎', title: 'Sửa gói này (tên, giá, kiểu, server gốc)', onclick: async () => {
+                const v = await pkgDialog(list, { pkg: c.pk }); if (v) { pkgs.splice(pkgs.findIndex(p => p.id === v.id), 1, v); for (const o of rows) if (o.pkgId === v.id) o.sell = null; draw(); } } })
+            : c.svc && r.svcId ? h('button', { type: 'button', className: 'btn btn-ghost btn-sm', textContent: '💾 Lưu thành gói', title: 'Lưu server này thành gói để lần sau chọn nhanh', onclick: async () => {
+                const u = c.qty ? Math.round(c.sell / c.qty * 100) / 100 : 0;
+                const v = await pkgDialog(list, { serviceId: c.svc.id, unitPrice: u, qty: c.qty, price: c.sell }); if (v) { pkgs.push(v); for (const o of rows) if (!o.pkgId && o.svcId === v.serviceId) { o.pkgId = v.id; o.svcId = ''; o.sell = null; } draw(); } } }) : null),
+            c.fam.length ? rxChips(c.fam.map(x => [x.id, x.child]), r.reacts, r.rmode, (set, mode) => { r.reacts = set; r.rmode = mode; draw(); }, c.parts) : null,
             r.why && r.pkgId ? h('div', { className: 'hint', textContent: 'Tự chọn ' + r.why }) : null),
           h('td', {}, h('input', { type: 'number', min: 1, step: 1, value: c.qty || '', readOnly: c.fixed, title: c.fixed ? 'Số lượng theo gói' : '', style: 'width:96px',
             onchange: e => { r.qty = Number(e.target.value) || 0; r.sell = null; draw(); } })),
