@@ -386,6 +386,25 @@ app.whenReady().then(async () => {
       fs.writeFileSync(tmp, safeStorage.isEncryptionAvailable() ? safeStorage.encryptString(text) : Buffer.from(text, 'utf8'));
       fs.renameSync(tmp, vaultFile(id)); return { ok: true }; } catch (err) { return { error: err.message }; }
   });
+  // Nạp tiền: đọc trang Nạp tiền của web dịch vụ (phiên đăng nhập cột Dịch vụ) mỗi lần bấm, để QR / số tài khoản luôn là cái web đang dùng.
+  ipcMain.handle('svc-topup', async (e, { origin } = {}) => {
+    if (!fromPage(e)) return { error: 'denied' };
+    let o; try { o = new URL(origin); } catch { return { error: 'Địa chỉ web dịch vụ không hợp lệ.' }; }
+    if (o.protocol !== 'https:') return { error: 'Web dịch vụ phải là https.' };
+    try { const r = await svcSes.fetch(o.origin + '/nap-tien', { headers: { accept: 'text/html' } });
+      return { status: r.status, url: r.url, html: (await r.text()).slice(0, 3e6) }; }
+    catch (err) { return { error: 'Không mở được trang nạp tiền: ' + err.message }; }
+  });
+  ipcMain.handle('svc-img', async (e, { url } = {}) => { // ảnh QR trên trang nạp tiền (có thể cần phiên đăng nhập)
+    if (!fromPage(e)) return { error: 'denied' };
+    let u; try { u = new URL(url); } catch { return { error: 'URL ảnh không hợp lệ.' }; }
+    if (u.protocol !== 'https:') return { error: 'Ảnh phải là https.' };
+    try { const r = await svcSes.fetch(u.href), type = r.headers.get('content-type') || '';
+      if (!r.ok || !/^image\//.test(type)) return { error: 'Không tải được ảnh QR (HTTP ' + r.status + ').' };
+      const buf = Buffer.from(await r.arrayBuffer()); if (buf.length > 3e6) return { error: 'Ảnh quá lớn.' };
+      return { dataUrl: `data:${type.split(';')[0]};base64,${buf.toString('base64')}` }; }
+    catch (err) { return { error: 'Không tải được ảnh QR: ' + err.message }; }
+  });
   // Danh mục dịch vụ từ trang web (ghi chú gốc, giá web, bảo trì, thời gian TB): đọc bằng phiên cột Dịch vụ, chỉ đọc.
   let svcCatalogRun = null;
   ipcMain.handle('svc-catalog', async (e, { origin } = {}) => {

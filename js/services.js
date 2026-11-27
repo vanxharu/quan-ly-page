@@ -1626,60 +1626,69 @@
     const xs = all.filter(y => ids.includes(y.id)); if (!xs.length) return;
     for (const x of xs) x[field] = Date.now(); await DB.set(store, all); App.tabs.services?.refresh?.(); ping();
   }
-  // ── Nạp tiền Baostar bằng QR ── Thông tin chuyển khoản (ngân hàng, STK, nội dung nạp) chép 1 lần từ trang Nạp tiền của web,
-  // lưu trong cài đặt dịch vụ (đồng bộ theo tài khoản Facebook). QR VietQR tự điền số tiền + nội dung; chuyển xong app tự dò số dư tăng.
-  async function topupDialog(edit = false) {
-    const s = await settings(), t = s.topup || {};
-    const dlg = h('dialog', { className: 'svc-dialog svc-topup', onclose: () => { stop = true; dlg.remove(); } });
-    let stop = false;
-    const head = h('div', { className: 'card-head' }, h('h3', { className: 'card-title', textContent: '💳 Nạp tiền Baostar' }),
-      h('button', { type: 'button', className: 'icon-btn', 'aria-label': 'Đóng', textContent: '×', onclick: () => dlg.close() }));
-    const copyBtn = (v, what) => h('button', { type: 'button', className: 'btn btn-ghost btn-sm', textContent: '📋', title: 'Chép ' + what, onclick: () => navigator.clipboard.writeText(v).then(() => toast('Đã chép ' + what + '.')) });
-    if (edit || !t.bin || !t.acc || !t.content) {
-      const bin = h('select', {}, h('option', { value: '', textContent: '— Ngân hàng —' }), ...BANKS.map(([b, n]) => h('option', { value: b, textContent: n, selected: b === t.bin })));
-      const acc = h('input', { type: 'text', value: t.acc || '', placeholder: 'Số tài khoản nhận tiền của Baostar', autocomplete: 'off' });
-      const holder = h('input', { type: 'text', value: t.holder || '', placeholder: 'Tên chủ tài khoản (không bắt buộc)' });
-      const content = h('input', { type: 'text', value: t.content || '', placeholder: 'Nội dung chuyển khoản đúng như web ghi (vd: baostar 12345)' });
-      dlg.append(h('form', { method: 'dialog', onsubmit: async e => { e.preventDefault();
-          if (!bin.value || !acc.value.trim() || !content.value.trim()) return toast('Điền ngân hàng, số tài khoản và nội dung chuyển khoản.', 4000);
-          await saveSettings({ topup: { bin: bin.value, acc: acc.value.replace(/\s+/g, ''), holder: holder.value.trim().toUpperCase(), content: content.value.trim() } });
-          dlg.close(); topupDialog(); } }, head,
-        h('p', { className: 'hint', textContent: 'Lưu 1 lần: mở web dịch vụ › Nạp tiền, chép ngân hàng, số tài khoản và NỘI DUNG chuyển khoản (thường có mã tài khoản của bạn, sai nội dung web không cộng tiền) vào đây.' }),
-        h('button', { type: 'button', className: 'btn btn-ghost btn-sm', textContent: 'Mở web dịch vụ ↗', onclick: () => openWeb() }),
-        h('div', { className: 'form-grid' }, h('label', { className: 'field' }, 'Ngân hàng', bin), h('label', { className: 'field' }, 'Số tài khoản', acc),
-          h('label', { className: 'field' }, 'Chủ tài khoản', holder), h('label', { className: 'field' }, 'Nội dung chuyển khoản', content)),
-        h('div', { className: 'row', style: 'gap:8px;justify-content:flex-end;margin-top:10px' }, h('button', { type: 'button', className: 'btn btn-ghost', textContent: 'Huỷ', onclick: () => dlg.close() }),
-          h('button', { className: 'btn btn-primary', textContent: 'Lưu & tạo QR' }))));
-      document.body.append(dlg); dlg.showModal(); return;
+  // ── Nạp tiền Baostar ── Mỗi lần bấm: đọc lại trang Nạp tiền của web (phiên đăng nhập cột Dịch vụ) và hiện đúng QR / số tài khoản web đang
+  // hiện lúc đó. Không lưu thông tin ngân hàng (web đổi tài khoản thì lần sau tự đúng). Không đọc được → mở trang nạp tiền của web, không đoán.
+  function parseTopup(html, base) {
+    const doc = new DOMParser().parseFromString(html, 'text/html'), out = [];
+    const seen = new Set();
+    for (const el of doc.querySelectorAll('body *')) {
+      if (el.children.length > 3 || !/STK\s*:?/i.test(el.textContent) || el.textContent.length > 60) continue;
+      // Khối tài khoản: đi lên tới khi có cả "Nội dung" (và ảnh QR nếu có), nhưng chưa chứa 2 STK.
+      let card = el; while (card.parentElement && !(/Nội dung/i.test(card.textContent) && card.querySelector('img')) && (card.parentElement.textContent.match(/STK\s*:/gi) || []).length < 2) card = card.parentElement;
+      if (seen.has(card) || (card.textContent.match(/STK\s*:/gi) || []).length > 1) continue; seen.add(card);
+      const lines = (card.innerText || card.textContent).split(/\n|(?=STK\s*:)|(?=Tên\s*:)|(?=Nội dung\s*:)|(?=Lưu ý)/i).map(x => x.replace(/\s+/g, ' ').trim()).filter(Boolean);
+      const get = re => (lines.find(l => re.test(l)) || '').replace(re, '').trim();
+      const acc = get(/^STK\s*:?\s*/i).replace(/[^\d]/g, ''), content = get(/^Nội dung\s*:?\s*/i), holder = get(/^Tên\s*:?\s*/i);
+      const bank = lines.find(l => /ngân hàng|bank|\([A-Z]{2,}\)/i.test(l) && !/STK|Tên|Nội dung/i.test(l)) || lines[0] || '';
+      const img = [...card.querySelectorAll('img')].find(i => /qr|vietqr|data:image/i.test(i.getAttribute('src') + ' ' + i.className + ' ' + i.alt)) || card.querySelector('img');
+      let qr = img?.getAttribute('src') || ''; try { if (qr && !qr.startsWith('data:')) qr = new URL(qr, base).href; } catch { qr = ''; }
+      const note = lines.find(l => /^Lưu ý/i.test(l)) || '';
+      if (acc.length >= 6) out.push({ bank, acc, holder, content, qr, note });
     }
-    const amount = h('input', { type: 'number', min: 10000, step: 1000, value: t.last || 200000, style: 'width:160px' });
-    const img = h('img', { className: 'svc-topup-qr', alt: 'Mã QR nạp tiền' }), info = h('div', { className: 'svc-topup-info' }), st = h('p', { className: 'hint' });
-    const draw = () => { const v = Math.max(0, Math.round(Number(amount.value) || 0));
-      img.src = `https://img.vietqr.io/image/${t.bin}-${encodeURIComponent(t.acc)}-compact2.png?amount=${v}&addInfo=${encodeURIComponent(t.content)}&accountName=${encodeURIComponent(t.holder || '')}`;
-      info.replaceChildren(
-        h('div', {}, 'Ngân hàng: ', h('strong', { textContent: bankName(t.bin) || t.bin })),
-        h('div', {}, 'Số tài khoản: ', h('strong', { textContent: t.acc }), ' ', copyBtn(t.acc, 'số tài khoản')),
-        t.holder ? h('div', {}, 'Chủ tài khoản: ', h('strong', { textContent: t.holder })) : null,
-        h('div', {}, 'Số tiền: ', h('strong', { textContent: money(v) }), ' ', copyBtn(String(v), 'số tiền')),
-        h('div', {}, 'Nội dung: ', h('strong', { textContent: t.content }), ' ', copyBtn(t.content, 'nội dung'))); };
-    amount.oninput = draw;
-    const chips = h('div', { className: 'chips' }, ...[100e3, 200e3, 500e3, 1e6, 2e6].map(v => h('button', { type: 'button', className: 'chip', textContent: money(v), onclick: () => { amount.value = v; draw(); } })));
+    const login = !out.length && /đăng nhập|login|sign in/i.test(doc.title + ' ' + (doc.querySelector('form')?.textContent || '').slice(0, 500)) && !!doc.querySelector('input[type=password]');
+    return { cards: out, login };
+  }
+  async function topupDialog() {
+    const s = await settings(), origin = webOrigin(s), page = origin + '/nap-tien';
+    const openPage = () => window.metaDesktop?.openService ? window.metaDesktop.openService(page) : window.open(page, '_blank', 'noopener');
+    if (!window.metaDesktop?.svcTopup) return openPage();
+    let stop = false;
+    const dlg = h('dialog', { className: 'svc-dialog svc-topup', onclose: () => { stop = true; dlg.remove(); } });
+    const body = h('div', { className: 'svc-topup-cards' }, h('p', { className: 'hint', textContent: 'Đang lấy thông tin nạp tiền mới nhất từ ' + new URL(origin).host + '…' }));
+    const st = h('p', { className: 'hint' });
+    const copyBtn = (v, what) => h('button', { type: 'button', className: 'btn btn-ghost btn-sm', textContent: '📋', title: 'Chép ' + what, onclick: () => navigator.clipboard.writeText(v).then(() => toast('Đã chép ' + what + '.')) });
     // Chuyển xong: dò số dư mỗi 10 giây (tối đa 5 phút), báo khi tăng.
-    const watch = async () => { stop = false; await saveSettings({ topup: { ...t, last: Number(amount.value) || 0 } });
-      let base = null; try { base = (await vndBalance()).v; } catch {}
+    const watch = async () => { let base = null; try { base = (await vndBalance()).v; } catch {}
       st.textContent = '⏳ Đang chờ Baostar cộng tiền…' + (Number.isFinite(base) ? ` (số dư hiện tại ${money(base)})` : '');
       for (let i = 0; i < 30 && !stop; i++) { await new Promise(r => setTimeout(r, 10e3)); if (stop) return;
         let v = null; try { v = (await vndBalance()).v; } catch {}
         if (Number.isFinite(v) && Number.isFinite(base) && v > base) { st.textContent = `✅ Đã cộng ${money(v - base)} · số dư mới ${money(v)}`; toast(`Baostar đã cộng ${money(v - base)}.`, 6000); App.tabs.services?.refresh?.(); return; }
         if (!Number.isFinite(base) && Number.isFinite(v)) base = v; }
-      if (!stop) st.textContent = 'Chưa thấy số dư tăng sau 5 phút. Kiểm tra lại nội dung chuyển khoản, hoặc xem lịch sử nạp trên web.'; };
-    dlg.append(head, h('div', { className: 'svc-topup-body' }, img,
-      h('div', { style: 'display:grid;gap:8px;align-content:start' }, h('label', { className: 'field' }, 'Số tiền nạp (đ)', amount), chips, info,
-        h('p', { className: 'hint', textContent: 'Quét QR bằng app ngân hàng: số tiền và nội dung đã điền sẵn. Giữ đúng nội dung chuyển khoản để web tự cộng tiền.' }))),
-      st, h('div', { className: 'row', style: 'gap:8px;justify-content:flex-end;flex-wrap:wrap' },
-        h('button', { type: 'button', className: 'btn btn-ghost', textContent: 'Sửa thông tin nạp', onclick: () => { dlg.close(); topupDialog(true); } }),
+      if (!stop) st.textContent = 'Chưa thấy số dư tăng sau 5 phút. Kiểm tra lại nội dung chuyển khoản, hoặc xem Lịch sử giao dịch trên web.'; };
+    dlg.append(h('div', { className: 'card-head' }, h('h3', { className: 'card-title', textContent: '💳 Nạp tiền Baostar' }),
+        h('button', { type: 'button', className: 'icon-btn', 'aria-label': 'Đóng', textContent: '×', onclick: () => dlg.close() })),
+      body, st,
+      h('div', { className: 'row', style: 'gap:8px;justify-content:flex-end;flex-wrap:wrap' },
+        h('button', { type: 'button', className: 'btn btn-ghost', textContent: 'Mở trang nạp tiền trên web ↗', onclick: () => { dlg.close(); openPage(); } }),
         h('button', { type: 'button', className: 'btn btn-primary', textContent: 'Tôi đã chuyển khoản', onclick: e => { e.target.disabled = true; watch().finally(() => { e.target.disabled = false; }); } })));
-    draw(); document.body.append(dlg); dlg.showModal();
+    document.body.append(dlg); dlg.showModal();
+    const fail = why => { body.replaceChildren(h('p', { className: 'status err', textContent: why }),
+      h('p', { className: 'hint', textContent: 'Để an toàn, app không dùng thông tin cũ. Đang mở trang Nạp tiền của web ở cột bên phải: quét QR ngay trên đó.' })); openPage(); };
+    const r = await window.metaDesktop.svcTopup({ origin }).catch(e => ({ error: e.message }));
+    if (stop) return;
+    if (r?.error) return fail(r.error);
+    const { cards, login } = parseTopup(r.html || '', r.url || page);
+    if (!cards.length) return fail(login || /login|dang-nhap/i.test(r.url || '') ? 'Chưa đăng nhập web dịch vụ trong app.' : 'Không đọc được thông tin tài khoản nhận tiền trên trang (web có thể đã đổi giao diện).');
+    body.replaceChildren(
+      h('p', { className: 'hint', textContent: `Lấy trực tiếp từ ${new URL(origin).host}/nap-tien lúc ${new Date().toLocaleTimeString('vi-VN')}. Mỗi mã QR chỉ dùng cho 1 lần chuyển khoản: lần nạp sau bấm lại nút Nạp tiền để lấy mã mới.` }),
+      h('div', { className: 'svc-topup-grid' }, ...cards.map(c => { const img = h('img', { className: 'svc-topup-qr', alt: 'QR nạp tiền ' + c.bank });
+        if (c.qr.startsWith('data:')) img.src = c.qr;
+        else if (c.qr) window.metaDesktop.svcImg({ url: c.qr }).then(x => { if (x?.dataUrl) img.src = x.dataUrl; else img.replaceWith(h('p', { className: 'hint', textContent: 'Không tải được ảnh QR: chuyển khoản theo số tài khoản + nội dung bên dưới.' })); });
+        return h('div', { className: 'svc-topup-card' }, h('strong', { textContent: c.bank }), c.qr ? img : null,
+          h('div', { className: 'svc-topup-info' },
+            h('div', {}, 'STK: ', h('strong', { textContent: c.acc }), ' ', copyBtn(c.acc, 'số tài khoản')),
+            c.holder ? h('div', {}, 'Tên: ', h('strong', { textContent: c.holder })) : null,
+            c.content ? h('div', {}, 'Nội dung: ', h('strong', { textContent: c.content }), ' ', copyBtn(c.content, 'nội dung')) : null)); })));
   }
   async function openWeb() {
     const s = await settings();
@@ -2598,5 +2607,5 @@
     guess: text => guessOrder([{ isCustomer: true, text }]), linksIn: t => splitLinks(t), money
   };
 
-  App.services = { topupDialog, remote, autoWarranty, autoNudgeList, autoNudgeFull, autoNudgeDone, aiContext, hesitation, salesInfo, dukTexts, dukFill, dukBonus, DUK, STAGE_NAME, warrantyDialog, complaintInfo, checkWarranty, splitLinks, bulkDialog, orderedLinks, linkKey, nudgeCard, askCheck, platBadge, linkPlatform: l => LINK_PLAT[platformOf(l)] || '', createDialog, closeDock, orderStates, orderBar, inboxBox, refreshStatus, linksIn, call, openWeb, mapStatus, catalogProgress, noteLines, speedOf, invoiceDialog, invoiceText, paymentDialog, confirmCreate, quotes, renewQuote, vipTick, termOf, requestRefill, refreshRefills };
+  App.services = { topupDialog, parseTopup, remote, autoWarranty, autoNudgeList, autoNudgeFull, autoNudgeDone, aiContext, hesitation, salesInfo, dukTexts, dukFill, dukBonus, DUK, STAGE_NAME, warrantyDialog, complaintInfo, checkWarranty, splitLinks, bulkDialog, orderedLinks, linkKey, nudgeCard, askCheck, platBadge, linkPlatform: l => LINK_PLAT[platformOf(l)] || '', createDialog, closeDock, orderStates, orderBar, inboxBox, refreshStatus, linksIn, call, openWeb, mapStatus, catalogProgress, noteLines, speedOf, invoiceDialog, invoiceText, paymentDialog, confirmCreate, quotes, renewQuote, vipTick, termOf, requestRefill, refreshRefills };
 })();
