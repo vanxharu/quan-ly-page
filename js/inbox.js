@@ -1473,10 +1473,11 @@
   }
   // Ảnh khách: logo nền tảng ở góc trái dưới, ảnh Page nhỏ ở góc phải dưới.
   const custAvatar = (c, size = 36) => {
-    const pg = App.avatar(c.page.name, App.pageAvatarUrl(c.page), Math.round(size * .38));
-    pg.classList.add('pg'); pg.title = c.page.name;
+    // Zalo không có ảnh Page: logo Zalo nằm ở chỗ chấm ảnh Page (giao diện Teams ẩn logo nền tảng góc trái).
+    const pg = c.zalo ? platLogo('zalo', Math.round(size * .38)) : App.avatar(c.page.name, App.pageAvatarUrl(c.page), Math.round(size * .38));
+    pg.classList.add('pg'); pg.title = c.zalo ? 'Zalo' : c.page.name;
     const pl = platLogo(platOf(c), Math.round(size * .44)); pl.classList.add('pl');
-    return h('span', { className: 'avwrap' }, App.avatar(c.other.name, S.pics.get(pictureKey(c)), size, () => retryPicture(c, S.pics.get(pictureKey(c)))), c.zalo ? null : pg, pl);
+    return h('span', { className: 'avwrap' }, App.avatar(c.other.name, S.pics.get(pictureKey(c)), size, () => retryPicture(c, S.pics.get(pictureKey(c)))), c.zalo && !document.body.classList.contains('teams') ? null : pg, pl);
   };
   function setCView(v) {
     S.cview = v; const sp = document.querySelector('[data-panel=inbox] .split'); if (sp) sp.dataset.cview = v;
