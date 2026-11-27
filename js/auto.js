@@ -242,18 +242,55 @@
     catch (e) { return { ok: false, description: e.message }; } };
   const RC = { map: {}, drafts: {}, seen: null, mute: {} }; // map: id tin Telegram → khoá khách
   const kb = rows => ({ inline_keyboard: rows });
-  const custBtns = k => kb([[{ text: '✨ AI soạn', callback_data: 'ai|' + k }, { text: '📋 5 tin gần đây', callback_data: 'his|' + k }, { text: '🔕 Tắt báo', callback_data: 'mute|' + k }], [{ text: '🧾 Báo giá', callback_data: 'quo|' + k }, { text: '🛡 Bảo hành', callback_data: 'war|' + k }]]);
+  const custBtns = k => kb([[{ text: '✨ AI soạn', callback_data: 'ai|' + k }, { text: '📋 Tin gần đây', callback_data: 'his|' + k }],
+    [{ text: '📦 Đơn & tiến độ', callback_data: 'od|' + k }, { text: '📨 Báo tiến độ cho khách', callback_data: 'pg|' + k }],
+    [{ text: '🧾 Báo giá', callback_data: 'quo|' + k }, { text: '🛡 Bảo hành', callback_data: 'war|' + k }, { text: '🔕 Tắt báo', callback_data: 'mute|' + k }]]);
   const shortKey = key => { const id = Object.keys(RC.ref || {}).find(k => RC.ref[k] === key); if (id) return id; RC.ref ||= {}; const k = Math.random().toString(36).slice(2, 9); RC.ref[k] = key; return k; };
   const convOf = key => App.inbox?.auto?.convs().find(c => c.key === key);
   const nm = c => `${c.other?.name || 'Khách'}${c.page?.name ? ' · ' + c.page.name : ''}`;
+  // ── Nhóm Telegram có chủ đề (Topics): mỗi khách 1 chủ đề, tin 2 chiều chép sang, gõ trong chủ đề = nhắn thẳng cho khách ──
+  const TOP = 'tgTopicsV1'; RC.top = { byKey: {}, byThread: {}, last: {} };
+  DB.get(TOP, null).then(v => { if (v) RC.top = { byKey: { ...v.byKey, ...RC.top.byKey }, byThread: { ...v.byThread, ...RC.top.byThread }, last: { ...v.last, ...RC.top.last } }; }).catch(() => {});
+  let topT = 0; const topSave = () => { clearTimeout(topT); topT = setTimeout(() => DB.set(TOP, RC.top).catch(() => {}), 1000); };
+  let forum = null;
+  const isForum = async c => { if (forum?.chat === c.tg.chat && Date.now() - forum.at < 600e3) return forum.v;
+    const r = await tgApi('getChat', { chat_id: c.tg.chat }, c); forum = { chat: c.tg.chat, at: Date.now(), v: !!r?.result?.is_forum }; return forum.v; };
+  const inTopic = (c, t) => ({ ...c, thread: t });
+  async function topicOf(c, x, fresh = false) {
+    if (!fresh && RC.top.byKey[x.key]) return RC.top.byKey[x.key];
+    const r = await tgApi('createForumTopic', { chat_id: c.tg.chat, name: `${x.zalo ? '🔵' : '🔷'} ${x.other?.name || 'Khách'}${x.page?.name && !x.zalo ? ' · ' + x.page.name : ''}`.slice(0, 128) }, c);
+    if (!r?.ok) throw Error('Không tạo được chủ đề Telegram: ' + (r?.description || '') + ' (bot cần quyền quản trị "Quản lý chủ đề")');
+    const t = r.result.message_thread_id; RC.top.byKey[x.key] = t; RC.top.byThread[t] = x.key; delete RC.top.last[x.key]; topSave();
+    const card = await say(inTopic(c, t), `👤 ${nm(x)}\n✍️ Gõ tin trong chủ đề này = gửi thẳng cho khách (kèm ảnh được).\n🧾 "báo giá 1k like https://…" = tạo báo giá cho khách · /menu = bảng nút`, { reply_markup: custBtns(shortKey(x.key)) });
+    if (card?.ok) tgApi('pinChatMessage', { chat_id: c.tg.chat, message_id: card.result.message_id, disable_notification: true }, c).catch(() => {});
+    return t;
+  }
+  const sigOf = m => `${m.isCustomer ? 1 : 0}|${String(m.text || '').slice(0, 200)}|${m.pic || ''}`;
+  // Chép tin mới của 1 khách vào chủ đề: tin sau tin đã chép lần trước; chủ đề mới thì 6 tin gần nhất.
+  async function tgMirror(c, x) {
+    let t = await topicOf(c, x);
+    const msgs = (await App.inbox.auto.peek(x).catch(() => [])).filter(m => m.text || m.pic);
+    const last = RC.top.last[x.key], i = last ? msgs.map(sigOf).lastIndexOf(last) : -1;
+    const todo = i >= 0 ? msgs.slice(i + 1) : msgs.slice(-6);
+    for (const m of todo) {
+      const head = m.isCustomer ? '' : '🏪 ', text = head + (m.text || '');
+      let r = m.pic ? await tgApi('sendPhoto', { chat_id: c.tg.chat, message_thread_id: t, photo: m.pic, caption: text.slice(0, 1000) || undefined }, c) : null;
+      if (!r?.ok) r = await say(inTopic(c, t), (text || '🖼 [Ảnh]') + (m.pic && !r?.ok && /^https?:/.test(m.pic) ? '\n' + m.pic : ''));
+      if (!r?.ok && /thread not found|TOPIC_DELETED|TOPIC_CLOSED/i.test(r?.description || '')) { t = await topicOf(c, x, true); r = await say(inTopic(c, t), text || '🖼 [Ảnh]'); }
+      RC.top.last[x.key] = sigOf(m); topSave();
+    }
+  }
   async function tgNotify(c) {
     if (!c.tg.notify || !c.tg.token || !c.tg.chat) return;
     const A = App.inbox?.auto; if (!A) return;
-    const list = A.convs().filter(x => x.fromCustomer);
-    if (!RC.seen) { RC.seen = {}; list.forEach(x => { RC.seen[x.id] = x.updated_time; }); return; } // lần đầu: chỉ ghi mốc, không báo tin cũ
+    const topics = await isForum(c).catch(() => false);
+    // Chế độ chủ đề: chép cả tin bạn gửi từ app (2 chiều) của khách đã có chủ đề; chủ đề mới chỉ mở khi khách nhắn.
+    const list = A.convs().filter(x => x.fromCustomer || (topics && RC.top.byKey[x.key]));
+    if (!RC.seen) { RC.seen = {}; A.convs().forEach(x => { RC.seen[x.id] = x.updated_time; }); return; } // lần đầu: chỉ ghi mốc, không báo tin cũ
     for (const x of list) {
       if (RC.seen[x.id] === x.updated_time) continue; RC.seen[x.id] = x.updated_time;
       if (RC.mute[x.key] && Date.now() < RC.mute[x.key]) continue;
+      if (topics) { await tgMirror(c, x).catch(e => log('sys', 'err', 'Telegram chủ đề: ' + e.message)); continue; }
       const k = shortKey(x.key), snip = String(x.snippet || '').replace(/^Bạn:\s*/, '').slice(0, 300);
       const r = await tgApi('sendMessage', { chat_id: c.tg.chat, text: `💬 ${nm(x)}\n${snip}\n\n↩️ Trả lời (reply) tin này để nhắn lại khách`, reply_markup: custBtns(k) }, c);
       if (r?.ok) { RC.map[r.result.message_id] = x.key; trimMap(); }
@@ -263,10 +300,10 @@
   const RCSAVE = 'tgRefV1'; let rcT = 0; const rcSave = () => { clearTimeout(rcT); rcT = setTimeout(() => DB.set(RCSAVE, { ref: RC.ref || {}, map: RC.map }).catch(() => {}), 1500); };
   DB.get(RCSAVE, null).then(v => { if (v) { RC.ref = { ...(v.ref || {}), ...(RC.ref || {}) }; RC.map = { ...(v.map || {}), ...RC.map }; } }).catch(() => {});
   const trimMap = () => { const ks = Object.keys(RC.map); if (ks.length > 400) ks.slice(0, ks.length - 400).forEach(k => delete RC.map[k]); const rs = Object.keys(RC.ref || {}); if (rs.length > 400) rs.slice(0, rs.length - 400).forEach(k => delete RC.ref[k]); rcSave(); };
-  const say = (c, text, extra = {}) => tgApi('sendMessage', { chat_id: c.tg.chat, text: String(text).slice(0, 4000), ...extra }, c);
+  const say = (c, text, extra = {}) => tgApi('sendMessage', { chat_id: c.tg.chat, text: String(text).slice(0, 4000), ...(c.thread ? { message_thread_id: c.thread } : {}), ...extra }, c);
   async function tgSendToCustomer(c, key, text, image = '') {
     const A = App.inbox.auto, x = convOf(key); if (!x) return say(c, '✗ Không tìm thấy khách trong danh sách hội thoại (có thể đã cũ).');
-    try { await A.send(x, text, image); await log('reply', 'ok', `📱 Từ Telegram → ${x.other.name || 'Khách'}: ${text.slice(0, 120)}`); return say(c, `✓ Đã gửi cho ${nm(x)}`); }
+    try { await A.send(x, text, image); if (c.thread) { RC.top.last[key] = sigOf({ isCustomer: false, text, pic: '' }); topSave(); RC.seen[x.id] = null; } await log('reply', 'ok', `📱 Từ Telegram → ${x.other.name || 'Khách'}: ${text.slice(0, 120)}`); return say(c, `✓ Đã gửi cho ${nm(x)}`); }
     catch (e) { await log('reply', 'err', `📱 Từ Telegram → ${x.other.name || 'Khách'}: ${e.message}`); return say(c, '✗ Chưa gửi được: ' + e.message); }
   }
   async function tgWaiting(c) {
@@ -391,7 +428,12 @@
   }
   async function tgHandle(u, c) {
     const chat = String(u.message?.chat?.id ?? u.callback_query?.message?.chat?.id ?? '');
+    // /id trong nhóm bất kỳ: bot trả ID nhóm để chép vào ô Chat ID (không làm gì khác ở nhóm lạ).
+    if (/^\/id(@\w+)?$/i.test(String(u.message?.text || '').trim())) return tgApi('sendMessage', { chat_id: chat, text: `🆔 Chat ID: ${chat}\nChép số này vào Get Helps › Tự động › Báo cáo Telegram › Chat ID.`, ...(u.message.message_thread_id ? { message_thread_id: u.message.message_thread_id } : {}) }, c);
     if (chat !== String(c.tg.chat).trim()) return; // chỉ nghe đúng Chat ID của bạn
+    // Trong nhóm có chủ đề: trả lời vào đúng chủ đề đang bấm / gõ.
+    const thread = u.message?.message_thread_id ?? u.callback_query?.message?.message_thread_id;
+    if (thread) c = inTopic(c, thread);
     if (u.callback_query) {
       const q = u.callback_query, [act, k, k2] = String(q.data || '').split('|'); tgApi('answerCallbackQuery', { callback_query_id: q.id }, c);
       if (act === 'ok' || act === 'no') { const run = RC.pend[k]; delete RC.pend[k]; if (!run) return say(c, 'Yêu cầu đã hết hạn.'); if (act === 'no') return say(c, '✖ Đã huỷ.');
@@ -433,7 +475,14 @@
       const key = RC.ref?.[k]; if (!key) return say(c, 'Tin báo này đã cũ, gõ /cho để xem lại khách đang chờ.');
       const x = convOf(key); if (!x) return say(c, '✗ Không tìm thấy khách.');
       if (act === 'mute') { RC.mute[key] = Date.now() + 864e5; return say(c, `🔕 Tắt báo ${nm(x)} trong 24 giờ.`); }
-      if (act === 'quo') { RC.wait = { kind: 'quote', key, at: Date.now() }; return say(c, `🧾 Gửi link + số lượng cho ${nm(x)}, vd: "1k like https://facebook.com/…"`); }
+      if (act === 'od') { say(c, '⏳ Đang cập nhật trạng thái đơn…'); const os = await S_().customerOrders(key);
+        return say(c, os.length ? [`📦 Đơn của ${nm(x)} (60 ngày, ${os.length})`, ...os.slice(0, 20).map(o => o.line)].join('\n') : `${nm(x)} chưa có đơn dịch vụ nào trong 60 ngày.`,
+          { reply_markup: kb([[B('📨 Báo tiến độ cho khách', 'pg|' + k), B('🛡 Bảo hành', 'war|' + k)]]) }); }
+      if (act === 'pg') { const ts = await S_().progressTexts(key); if (!ts.length) return say(c, `${nm(x)} chưa có đơn nào để báo tiến độ.`);
+        for (const t of ts) { const id = rid(); RC.drafts[id] = { key, text: t, image: '' };
+          await say(c, `📨 Tiến độ sẽ gửi cho ${nm(x)}:\n\n${t}`, { reply_markup: kb([[B('✅ Gửi cho khách', 'send|' + id), B('🗑 Bỏ', 'drop|' + id)]]) }); }
+        return; }
+      if (act === 'quo') { RC.wait = { kind: 'quote', key, at: Date.now() }; return say(c, `🧾 Gửi link + số lượng cho ${nm(x)}, vd: "1k like https://facebook.com/…" (tin kế tiếp KHÔNG gửi cho khách)`); }
       if (act === 'war') return confirmAsk(c, `🛡 Bảo hành (refill Baostar) các link còn hạn của ${nm(x)} và báo khách?`, async () => {
         const msgs = await App.inbox.auto.messagesOf(x), r = await App.services.autoWarranty({ key: x.key, name: x.other.name, page: x.page, messages: msgs });
         if (!r) return 'Khách không có tin báo tụt hoặc không có đơn nào để bảo hành.'; if (r.skipped) return '⚠️ ' + r.skipped; if (r.error) return '✗ ' + r.error;
@@ -453,7 +502,7 @@
       return;
     }
     const m = u.message, text = String(m?.text || m?.caption || '').trim();
-    const to = m?.reply_to_message && RC.map[m.reply_to_message.message_id];
+    const to = (m?.reply_to_message && RC.map[m.reply_to_message.message_id]) || (c.thread && RC.top.byThread[c.thread]) || null; // chủ đề của khách = gửi cho khách
     // Ảnh từ Telegram
     if (m?.photo?.length) {
       const f = await (D.tgFile ? D.tgFile({ token: c.tg.token.trim(), fileId: m.photo[m.photo.length - 1].file_id }) : Promise.resolve({ error: 'Cần app bản mới nhất' }));
@@ -465,8 +514,9 @@
     }
     if (!text) return;
     if (to && String(to).startsWith('post:')) { const d = RC.posts[String(to).slice(5)]; if (!d) return say(c, 'Bài nháp đã hết hạn.'); d.text = text; return showPost(c, d); }
+    if (to && RC.wait?.kind === 'quote' && RC.wait.key === to && Date.now() - RC.wait.at < 10 * 60e3 && !text.startsWith('/')) { RC.wait = null; return tgQuoteFrom(c, text, to); } // vừa bấm 🧾 Báo giá: tin kế là link, không gửi khách
     if (to && /^\/?(báo giá|bao gia|baogia)\b/i.test(text)) return tgQuoteFrom(c, text, to);
-    if (to) return tgSendToCustomer(c, to, text);
+    if (to && !text.startsWith('/')) return tgSendToCustomer(c, to, text);
     const cmd = text.split(/\s|@/)[0].toLowerCase();
     if (RC.wait?.kind === 'quote' && !cmd.startsWith('/') && Date.now() - RC.wait.at < 10 * 60e3) { const w = RC.wait; RC.wait = null; return tgQuoteFrom(c, text, w.key); }
     RC.wait = null;
@@ -626,6 +676,7 @@
         row(chk(C.tg, 'errors', 'Báo ngay khi có lỗi'), chk(C.tg, 'daily', 'Tóm tắt mỗi ngày lúc'), inp(C.tg, 'dailyAt', 'time')),
         row(chk(C.tg, 'notify', '📱 Báo tin nhắn mới của khách'), chk(C.tg, 'control', '📱 Điều khiển & trả lời khách từ Telegram')),
         h('div', { className: 'hint', textContent: 'Trên Telegram: trả lời (reply) vào tin báo của khách = nhắn lại khách đó; nút ✨ AI soạn → ✅ Gửi. Lệnh: /cho (khách đang chờ), /trangthai, /bat, /tat, /aibat, /aitat, /tomtat, /help. Bot chỉ nghe đúng Chat ID của bạn. Chạy được cả khi kế hoạch đang tắt, miễn là app đang mở.' }),
+        h('div', { className: 'hint', textContent: '💡 Nhắn như trên app: tạo 1 nhóm Telegram (chỉ mình bạn), bật "Chủ đề" (Topics) trong cài đặt nhóm, thêm bot vào nhóm và cho làm Quản trị (quyền Quản lý chủ đề). Gõ /id trong nhóm để lấy Chat ID của nhóm, dán vào ô Chat ID. Từ đó mỗi khách có 1 chủ đề riêng: tin 2 chiều (cả ảnh) hiện đầy đủ, gõ trong chủ đề là gửi thẳng cho khách, thẻ khách ghim đầu chủ đề có nút Đơn & tiến độ, Báo tiến độ, Báo giá, Bảo hành, AI soạn.' }),
         h('div', { className: 'hint', textContent: 'Tạo bot: nhắn @BotFather trên Telegram → /newbot → chép token. Lấy Chat ID: nhắn bot của bạn 1 tin, rồi nhắn @userinfobot để xem ID. (Báo qua Zalo cá nhân chưa hỗ trợ: Zalo không có cách gửi tự động cho tài khoản cá nhân.)' })),
       card('📜 Nhật ký',
         row(h('select', { id: 'apLogF', onchange: drawLog }, h('option', { value: '', textContent: 'Tất cả việc' }), ...Object.entries(TASK).map(([k, t]) => h('option', { value: k, textContent: t }))),

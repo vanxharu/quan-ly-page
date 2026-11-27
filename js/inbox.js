@@ -1004,6 +1004,15 @@
     },
     convs: () => S.convs, stage: c => S.stages?.get(c.id) || {}, labels: c => S.crm?.[c.key]?.labels || [], plat: c => platOf(c), busy: () => !!S.sending,
     texts: convTexts, open: autoOpen,
+    // Đọc tin 1 khách KHÔNG mở hội thoại trên màn hình (Telegram chép tin sang chủ đề của khách).
+    async peek(c) {
+      if ((c.bs || c.zalo) && window.metaDesktop?.readThread && S.conv?.id !== c.id) {
+        const r = await window.metaDesktop.readThread({ pageId: String(c.page.id), uid: c.uid, bg: true }).catch(() => null);
+        if (r?.messages?.length) { const keep = { snippet: c.snippet, messages: r.messages.filter(m => !/^blob:/.test(m.pic || '')).slice(-60) };
+          bsMsgCache.set(c.id, keep); DB.set('bsMsg:' + c.id, keep).catch(() => {}); return bsMsgs(keep.messages); }
+      }
+      return convTexts(c);
+    },
     async send(c, text, image = '') { await autoOpen(c); const ok = await App.inbox.compose({ key: c.key, text, image, autoSend: true }); if (ok !== true) throw Error(ok); },
     async sendKey(key, text, image = '') { const c = S.convs.find(x => x.key === key); if (!c) throw Error('khách không còn trong danh sách hội thoại'); return this.send(c, text, image); },
     messagesOf: async c => { await autoOpen(c); for (let t = 0; t < 32 && !S.messages?.length; t++) await autoWait(250); await autoWait(1500); return S.conv?.id === c.id ? S.messages || [] : []; },

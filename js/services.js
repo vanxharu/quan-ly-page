@@ -2854,7 +2854,22 @@
       return { today: sum(os.filter(o => o.at >= d0.getTime())), month: sum(os.filter(o => o.at >= m0.getTime())), running: os.filter(o => !['done', 'cancelled'].includes(o.status)).length,
         pending: (await quotes()).filter(q => q.state === 'quote').length, balance: bal };
     },
-    guess: text => guessOrder([{ isCustomer: true, text }]), linksIn: t => splitLinks(t), money
+    guess: text => guessOrder([{ isCustomer: true, text }]), linksIn: t => splitLinks(t), money,
+    // Đơn của 1 khách (Telegram: thẻ khách): cập nhật trạng thái Baostar trước, mỗi đơn 1 dòng có tiến độ.
+    async customerOrders(key, days = 60) {
+      const mine = all => all.filter(o => o.source === 'service' && o.customerKey === key && Date.now() - o.at < days * 864e5).sort((a, b) => b.at - a.at);
+      const open = mine(await DB.get(ORDERS, [])).filter(o => !['done', 'cancelled'].includes(o.status));
+      if (open.length) await refreshStatus(open).catch(() => {});
+      return mine(await DB.get(ORDERS, [])).map(o => ({ o, line: `${o.status === 'done' ? '✅' : o.status === 'cancelled' ? '⛔' : /error|lỗi|fail/i.test(o.svcStatus || '') ? '⚠️' : '⏳'} #${o.providerOrderId || payCode(o)} · ${o.displayName || o.serviceName || 'Dịch vụ'} · ${qtyOf(o).toLocaleString('vi-VN')} · ${progressLine(o)}${o.warrantyFor ? ' · 🛡 bảo hành' : ''}` }));
+    },
+    // Tin báo tiến độ cho khách: mỗi lần mua (cùng mã thanh toán) 1 tin, các đơn chưa xong (không có thì lần mua gần nhất).
+    async progressTexts(key) {
+      const list = (await remote.customerOrders(key, 30)).map(x => x.o).filter(o => !o.warrantyFor); if (!list.length) return [];
+      const run = list.filter(o => !['done', 'cancelled'].includes(o.status)), pick = run.length ? run : [list[0]], inv = (await settings()).invoice || {}, seen = new Set(), out = [];
+      for (const o of pick) { const code = o.payCode || o.id; if (seen.has(code)) continue; seen.add(code);
+        const f = (o.payCode && o.groupSize > 1 && await groupOf(o.payCode)) || o; out.push(invoiceText(f, inv, 'progress')); }
+      return out;
+    }
   };
 
   App.services = { dropScan, dropGroups, quickWarranty, checkDialog, topupDialog, parseTopup, remote, autoWarranty, autoNudgeList, autoNudgeFull, autoNudgeDone, aiContext, hesitation, salesInfo, dukTexts, dukFill, dukBonus, DUK, STAGE_NAME, warrantyDialog, complaintInfo, checkWarranty, splitLinks, bulkDialog, orderedLinks, linkKey, nudgeCard, askCheck, platBadge, linkPlatform: l => LINK_PLAT[platformOf(l)] || '', createDialog, closeDock, orderStates, orderBar, inboxBox, refreshStatus, linksIn, call, openWeb, mapStatus, catalogProgress, noteLines, speedOf, invoiceDialog, invoiceText, paymentDialog, confirmCreate, quotes, renewQuote, vipTick, termOf, requestRefill, refreshRefills };
