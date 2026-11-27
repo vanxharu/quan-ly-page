@@ -261,7 +261,7 @@
     const r = await tgApi('createForumTopic', { chat_id: c.tg.chat, name: `${x.zalo ? '🔵' : '🔷'} ${x.other?.name || 'Khách'}${x.page?.name && !x.zalo ? ' · ' + x.page.name : ''}`.slice(0, 128) }, c);
     if (!r?.ok) throw Error('Không tạo được chủ đề Telegram: ' + (r?.description || '') + ' (bot cần quyền quản trị "Quản lý chủ đề")');
     const t = r.result.message_thread_id; RC.top.byKey[x.key] = t; RC.top.byThread[t] = x.key; delete RC.top.last[x.key]; topSave();
-    const card = await say(inTopic(c, t), `👤 ${nm(x)}\n✍️ Gõ tin trong chủ đề này = gửi thẳng cho khách (kèm ảnh được).\n🧾 "báo giá 1k like https://…" = tạo báo giá cho khách · /menu = bảng nút`, { reply_markup: custBtns(shortKey(x.key)) });
+    const card = await say(inTopic(c, t), `👤 ${x.other?.name || 'Khách'}\n${x.zalo ? 'Zalo' : 'Facebook · ' + (x.page?.name || '')}\n\nGõ ở đây là gửi cho khách.`, { reply_markup: custBtns(shortKey(x.key)) });
     if (card?.ok) tgApi('pinChatMessage', { chat_id: c.tg.chat, message_id: card.result.message_id, disable_notification: true }, c).catch(() => {});
     return t;
   }
@@ -273,9 +273,11 @@
     const last = RC.top.last[x.key], i = last ? msgs.map(sigOf).lastIndexOf(last) : -1;
     const todo = i >= 0 ? msgs.slice(i + 1) : msgs.slice(-6);
     for (const m of todo) {
-      const head = m.isCustomer ? '' : '🏪 ', text = head + (m.text || '');
-      let r = m.pic ? await tgApi('sendPhoto', { chat_id: c.tg.chat, message_thread_id: t, photo: m.pic, caption: text.slice(0, 1000) || undefined }, c) : null;
-      if (!r?.ok) r = await say(inTopic(c, t), (text || '🖼 [Ảnh]') + (m.pic && !r?.ok && /^https?:/.test(m.pic) ? '\n' + m.pic : ''));
+      // Ảnh / sticker: chỉ ảnh, bỏ chữ "[Sticker]" / "[Ảnh]"; tin của shop có dấu ↪️ Bạn.
+      const body = m.pic && /^\[(sticker|ảnh|gif|hình ảnh)\]$/i.test(String(m.text || '').trim()) ? '' : String(m.text || '');
+      const text = m.isCustomer ? body : body ? '↪️ Bạn: ' + body : '↪️ Bạn đã gửi:';
+      let r = m.pic ? await tgApi('sendPhoto', { chat_id: c.tg.chat, message_thread_id: t, photo: m.pic, caption: text.slice(0, 1000) || undefined, disable_notification: !m.isCustomer }, c) : null;
+      if (!r?.ok) r = await say(inTopic(c, t), (text || '🖼 Ảnh') + (m.pic && /^https?:/.test(m.pic) ? '\n' + m.pic : ''), { disable_notification: !m.isCustomer });
       if (!r?.ok && /thread not found|TOPIC_DELETED|TOPIC_CLOSED/i.test(r?.description || '')) { t = await topicOf(c, x, true); r = await say(inTopic(c, t), text || '🖼 [Ảnh]'); }
       RC.top.last[x.key] = sigOf(m); topSave();
     }
@@ -546,7 +548,7 @@
       }
     } finally { tgLoop = false; }
   }
-  setInterval(async () => { const c = await getCfg().catch(() => null); if (!c?.tg.token || !c.tg.chat) return; if (c.tg.control) tgPoll(); if (c.tg.notify) { await App.inbox?.auto?.refresh().catch(() => {}); tgNotify(c).catch(() => {}); } }, 20e3);
+  setInterval(async () => { const c = await getCfg().catch(() => null); if (!c?.tg.token || !c.tg.chat) return; if (c.tg.control) tgPoll(); if (c.tg.notify) { await App.inbox?.auto?.refresh().catch(() => {}); tgKick(); } }, 20e3);
 
   // ── Vòng chạy ──
   let running = false, status = '';
@@ -685,5 +687,11 @@
     drawStatus(); drawLog();
   }
   App.tab('autoplan', { async refresh() { C = await getCfg(); draw(); } });
-  App.auto = { tick, log, tg, getCfg, tgHandle, tgNotify, RC };
+  // Hộp thư có tin mới → chép sang Telegram ngay (không chờ vòng 20 giây); chạy nối nhau, không chồng lên nhau (tránh gửi trùng).
+  let kickT = 0, kickBusy = false, kickAgain = false;
+  const tgKick = () => { clearTimeout(kickT); kickT = setTimeout(async () => {
+    if (kickBusy) { kickAgain = true; return; } kickBusy = true;
+    try { const c = await getCfg().catch(() => null); if (c?.tg.notify && c.tg.token && c.tg.chat) await tgNotify(c).catch(() => {}); }
+    finally { kickBusy = false; if (kickAgain) { kickAgain = false; tgKick(); } } }, 600); };
+  App.auto = { tick, log, tg, getCfg, tgHandle, tgNotify, tgKick, RC };
 })();

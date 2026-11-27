@@ -1319,7 +1319,7 @@
     const paint = async () => {
       if (run !== S.loading) return;
       const all = pages.flatMap(p => partial.get(p.id) || S.convs.filter(c => c.page.id === p.id));
-      S.convs = [...new Map([...S.extra.values(), ...all, ...S.zconvs].map(c => [c.id, c])).values()].sort((a, b) => new Date(b.updated_time) - new Date(a.updated_time));
+      S.convs = [...new Map([...S.extra.values(), ...all, ...S.zconvs].map(c => [c.id, c])).values()].sort((a, b) => new Date(b.updated_time) - new Date(a.updated_time)); App.auto?.tgKick?.(); // có tin mới: chép sang Telegram ngay
       await drawList();
     };
     if (viaBs) {
@@ -1345,7 +1345,7 @@
     S.failures = errors.length === pages.length ? (S.failures || 0) + 1 : 0;
     S.retryAt = S.failures ? Date.now() + Math.min(300e3, 30e3 * 2 ** (S.failures - 1)) : 0;
     lists.forEach((list, i) => { if (!S.more.has(pages[i].id) && typeof list.after === 'string') S.more.set(pages[i].id, { page: pages[i], after: list.after }); });
-    S.convs = [...new Map([...S.extra.values(), ...lists.flat(), ...S.zconvs].map(c => [c.id, c])).values()].sort((a, b) => new Date(b.updated_time) - new Date(a.updated_time));
+    S.convs = [...new Map([...S.extra.values(), ...lists.flat(), ...S.zconvs].map(c => [c.id, c])).values()].sort((a, b) => new Date(b.updated_time) - new Date(a.updated_time)); App.auto?.tgKick?.(); // có tin mới: chép sang Telegram ngay
     S.crm = await App.crm.all();
 
     S.errorPages = errorPages; S.errors = errors;
@@ -1998,7 +1998,7 @@
     // Dòng Zalo không còn trong khung đang thấy (danh sách ảo) vẫn giữ lại.
     for (const c of S.zconvs) if (!out.some(x => x.id === c.id) && out.length < zMax && (!c.api || rows.some(r => r.api && 'bs:zalo:' + r.id === c.id))) out.push(c);
     zFirst = false; S.zconvs = out;
-    S.convs = [...new Map([...S.convs.filter(c => !c.zalo), ...out].map(c => [c.id, c])).values()].sort((a, b) => new Date(b.updated_time) - new Date(a.updated_time));
+    S.convs = [...new Map([...S.convs.filter(c => !c.zalo), ...out].map(c => [c.id, c])).values()].sort((a, b) => new Date(b.updated_time) - new Date(a.updated_time)); App.auto?.tgKick?.(); // có tin mới: chép sang Telegram ngay
     if (App.current() === 'inbox') drawList();
   };
   // Mở Hộp thư: lấy danh sách Zalo (cuộn hết một lượt) nếu đã đăng nhập Zalo trong app.
@@ -2023,7 +2023,7 @@
         for (const c of list) { const o = S.convs.find(x => x.id === c.id), held = unreadHold.get(c.id) || 0;
           if (o && o.lastMid) c.lastMid = o.lastMid;
           if (!c.unread_count && held && c.fromCustomer && (appRead.get(c.id) || 0) < (c.lastAt || 0) - 1000 && !(c.readAt >= (c.lastAt || 0) - 1000)) c.unread_count = held; }
-        S.convs = [...new Map([...S.convs.filter(c => c.page.id !== p.id), ...list].map(c => [c.id, c])).values()].sort((a, b) => new Date(b.updated_time) - new Date(a.updated_time));
+        S.convs = [...new Map([...S.convs.filter(c => c.page.id !== p.id), ...list].map(c => [c.id, c])).values()].sort((a, b) => new Date(b.updated_time) - new Date(a.updated_time)); App.auto?.tgKick?.(); // có tin mới: chép sang Telegram ngay
         if (App.current() === 'inbox') await drawList();
         const fresh = S.conv && list.find(c => c.id === S.conv.id);
         if (fresh && fresh.snippet !== S.conv.snippet && !S.sending) { fresh.unread_count = 0; openBs(fresh, { silent: true }).catch(() => {}); }
