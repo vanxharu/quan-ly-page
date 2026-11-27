@@ -312,7 +312,9 @@
     const A = App.inbox.auto; await A.refresh();
     const list = A.convs().filter(x => x.fromCustomer && Date.now() - new Date(x.updated_time) < 3 * 864e5).slice(0, 10);
     if (!list.length) return say(c, '✓ Không có khách nào đang chờ trả lời.');
-    for (const x of list) { const r = await say(c, `⏳ ${nm(x)} · ${Math.round((Date.now() - new Date(x.updated_time)) / 60e3)} phút\n${String(x.snippet || '').slice(0, 200)}`, { reply_markup: custBtns(shortKey(x.key)) }); if (r?.ok) RC.map[r.result.message_id] = x.key; trimMap(); }
+    // Nhóm có chủ đề: mỗi khách kèm link mở thẳng chủ đề của khách đó.
+    const link = x => RC.top.byKey[x.key] && /^-100\d+$/.test(String(c.tg.chat).trim()) ? `\n👉 https://t.me/c/${String(c.tg.chat).trim().slice(4)}/${RC.top.byKey[x.key]}` : '';
+    for (const x of list) { const r = await say(c, `⏳ ${nm(x)} · ${Math.round((Date.now() - new Date(x.updated_time)) / 60e3)} phút\n${String(x.snippet || '').slice(0, 200)}${link(x)}`, { reply_markup: custBtns(shortKey(x.key)) }); if (r?.ok) RC.map[r.result.message_id] = x.key; trimMap(); }
   }
   async function tgStatus(c) {
     const st = await getState(), L = (await DB.get(LOG, [])).filter(l => l.at > Date.now() - 864e5), n = t => L.filter(l => l.task === t && l.kind === 'ok').length;
@@ -520,6 +522,10 @@
     if (to && /^\/?(báo giá|bao gia|baogia)\b/i.test(text)) return tgQuoteFrom(c, text, to);
     if (to && !text.startsWith('/')) return tgSendToCustomer(c, to, text);
     const cmd = text.split(/\s|@/)[0].toLowerCase();
+    // Trong chủ đề của 1 khách: /menu = thẻ khách đó; lệnh chung (/cho, /don…) trả lời ở General cho chủ đề khách gọn.
+    if (to && cmd.startsWith('/')) { const x = convOf(to);
+      if ((cmd === '/menu' || cmd === '/start') && x) return say(c, `👤 ${nm(x)}`, { reply_markup: custBtns(shortKey(to)) });
+      if (cmd !== '/id') { say(c, '👉 Xem ở General').catch(() => {}); c = inTopic(c, undefined); } }
     if (RC.wait?.kind === 'quote' && !cmd.startsWith('/') && Date.now() - RC.wait.at < 10 * 60e3) { const w = RC.wait; RC.wait = null; return tgQuoteFrom(c, text, w.key); }
     RC.wait = null;
     if (cmd === '/start' || cmd === '/help' || cmd === '/trogiup') return say(c, HELP, { reply_markup: MENU });
