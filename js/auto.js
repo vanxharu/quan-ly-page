@@ -276,8 +276,10 @@
     for (const m of todo) {
       // Ảnh / sticker: chỉ ảnh, bỏ chữ "[Sticker]" / "[Ảnh]"; tin của shop có dấu ↪️ Bạn.
       const body = m.pic && /^\[(sticker|ảnh|gif|hình ảnh)\]$/i.test(String(m.text || '').trim()) ? '' : String(m.text || '');
-      const text = m.isCustomer ? body : body ? '↪️ Bạn: ' + body : '↪️ Bạn đã gửi:';
-      let r = m.pic ? await tgApi('sendPhoto', { chat_id: c.tg.chat, message_thread_id: t, photo: m.pic, caption: text.slice(0, 1000) || undefined, disable_notification: !m.isCustomer }, c) : null;
+      const text = m.isCustomer ? body : body ? '↪️ Bạn: ' + body : '↪️ Bạn';
+      // Sticker: gửi dạng sticker Telegram (nền trong, không viền mờ như ảnh); không được thì gửi ảnh.
+      let r = m.pic && m.sticker ? await tgApi('sendSticker', { chat_id: c.tg.chat, message_thread_id: t, sticker: m.pic, disable_notification: !m.isCustomer }, c) : null;
+      if (!r?.ok && m.pic) r = await tgApi('sendPhoto', { chat_id: c.tg.chat, message_thread_id: t, photo: m.pic, caption: (m.sticker && !m.isCustomer ? '' : text).slice(0, 1000) || undefined, disable_notification: !m.isCustomer }, c);
       if (!r?.ok) r = await say(inTopic(c, t), (text || '🖼 Ảnh') + (m.pic && /^https?:/.test(m.pic) ? '\n' + m.pic : ''), { disable_notification: !m.isCustomer });
       if (!r?.ok && /thread not found|TOPIC_DELETED|TOPIC_CLOSED/i.test(r?.description || '')) { t = await topicOf(c, x, true); r = await say(inTopic(c, t), text || '🖼 [Ảnh]'); }
       RC.top.last[x.key] = sigOf(m); topSave();

@@ -424,7 +424,7 @@
   // (giống bạn gõ trong Business Suite), nên không vướng giới hạn của API.
   const bsMsgCache = new Map();
   // Tin Business Suite / Zalo → dạng chung { isCustomer, text, ts } (gợi ý AI, tạo đơn, bảo hành… dùng).
-  const bsMsgs = list => (list || []).filter(m => !m.sep).map(m => ({ isCustomer: !m.mine, text: [m.text, m.share].filter(Boolean).join(' '), ts: m.ts || 0, pic: /^https?:/.test(m.pic || '') ? m.pic : '' }));
+  const bsMsgs = list => (list || []).filter(m => !m.sep).map(m => ({ isCustomer: !m.mine, text: [m.text, m.share].filter(Boolean).join(' '), ts: m.ts || 0, pic: /^https?:/.test(m.pic || '') ? m.pic : '', ...(m.sticker || /^\[sticker\]$/i.test(String(m.text || '').trim()) ? { sticker: true } : {}) }));
   async function openBs(c, { silent = false, older = false } = {}) {
     if (!silent) {
       App.services?.closeDock?.();
