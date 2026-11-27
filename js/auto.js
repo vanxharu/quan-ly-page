@@ -242,7 +242,7 @@
     catch (e) { return { ok: false, description: e.message }; } };
   const RC = { map: {}, drafts: {}, seen: null, mute: {} }; // map: id tin Telegram → khoá khách
   const kb = rows => ({ inline_keyboard: rows });
-  const custBtns = k => kb([[{ text: '✨ AI soạn', callback_data: 'ai|' + k }, { text: '📋 Tin gần đây', callback_data: 'his|' + k }],
+  const custBtns = k => kb([[{ text: '⚡ Mẫu tin', callback_data: 'tp|' + k }, { text: '✨ AI soạn', callback_data: 'ai|' + k }, { text: '📋 Tin gần đây', callback_data: 'his|' + k }],
     [{ text: '📦 Đơn & tiến độ', callback_data: 'od|' + k }, { text: '📨 Báo tiến độ cho khách', callback_data: 'pg|' + k }],
     [{ text: '🧾 Báo giá', callback_data: 'quo|' + k }, { text: '🛡 Bảo hành', callback_data: 'war|' + k }, { text: '🔕 Tắt báo', callback_data: 'mute|' + k }]]);
   // Mã ngắn cho nút (Telegram giới hạn 64 ký tự): lưu ngay, để nút trên thẻ khách vẫn bấm được sau khi tải lại app.
@@ -282,6 +282,7 @@
       if (!r?.ok && /thread not found|TOPIC_DELETED|TOPIC_CLOSED/i.test(r?.description || '')) { t = await topicOf(c, x, true); r = await say(inTopic(c, t), text || '🖼 [Ảnh]'); }
       RC.top.last[x.key] = sigOf(m); topSave();
     }
+    if (todo.length && todo[todo.length - 1].isCustomer) draftSoon(c, x);
   }
   async function tgNotify(c) {
     if (!c.tg.notify || !c.tg.token || !c.tg.chat) return;
@@ -431,6 +432,26 @@
     if (it === 'summary') return tgHandle({ message: { chat: { id: c.tg.chat }, text: '/tomtat' } }, c);
     return say(c, 'Chưa hiểu lệnh này. Gõ /menu để chọn bằng nút.', { reply_markup: MENU });
   }
+  RC.ready = {}; // khoá khách → nháp AI soạn sẵn
+  async function showDraft(c, x, text, image = '', pt = null) {
+    const id = rid(); RC.drafts[id] = { key: x.key, text, image };
+    const m = await say(c, `✨ Nháp cho ${nm(x)}:\n\n${text}${pt ? '\n\n📎 kèm ' + (pt.t?.title || 'bảng giá') : image ? '\n\n📎 kèm ảnh' : ''}\n\n↩️ Muốn sửa: trả lời (reply) tin này bằng nội dung mới.`,
+      { reply_markup: kb([[B('✅ Gửi', 'send|' + id), B('🗑 Bỏ', 'drop|' + id)]]) });
+    if (m?.ok) RC.map[m.result.message_id] = x.key; trimMap();
+  }
+  // AI đọc tin ngầm (không mở hội thoại trên màn hình app) rồi soạn.
+  async function aiDraft(c, x, quiet = false) {
+    const msgs = await App.inbox.auto.peek(x), r = await App.inbox.auto.aiReply(x, msgs);
+    if (quiet) { RC.ready[x.key] = { text: r.text, image: r.image || '', pt: r.pt, at: Date.now() }; return; }
+    return showDraft(c, x, r.text, r.image || '', r.pt);
+  }
+  // Chủ đề khách: khách nhắn xong (im 10 giây) → AI soạn sẵn ngầm, bấm ✨ AI soạn là có ngay; mỗi lần 1 khách.
+  const draftT = {}; let draftBusy = Promise.resolve();
+  function draftSoon(c, x) {
+    if (c.tg.autoDraft === false || !window.metaDesktop?.gptAsk) return;
+    clearTimeout(draftT[x.key]); delete RC.ready[x.key];
+    draftT[x.key] = setTimeout(() => { draftBusy = draftBusy.then(() => aiDraft(c, convOf(x.key) || x, true)).catch(() => {}); }, 10e3);
+  }
   async function tgHandle(u, c) {
     const chat = String(u.message?.chat?.id ?? u.callback_query?.message?.chat?.id ?? '');
     // /id trong nhóm bất kỳ: bot trả ID nhóm để chép vào ô Chat ID (không làm gì khác ở nhóm lạ).
@@ -494,16 +515,15 @@
         await App.inbox.auto.sendKey(x.key, r.text, r.image || ''); return `🛡 Đã refill ${r.n} link và báo khách.`; });
       if (act === 'his') { const m = (await App.inbox.auto.texts(x)).filter(m => m.text).slice(-5);
         const r = await say(c, `📋 ${nm(x)}\n` + (m.map(m => (m.isCustomer ? '👤 ' : '🏪 ') + String(m.text).slice(0, 300)).join('\n') || '(chưa có tin đã lưu)'), { reply_markup: custBtns(k) }); if (r?.ok) RC.map[r.result.message_id] = key; trimMap(); return; }
-      if (act === 'ai') {
-        say(c, `✨ AI đang soạn cho ${nm(x)}…`);
-        try { const msgs = await App.inbox.auto.messagesOf(x), r = await App.inbox.auto.aiReply(x, msgs), id = rid();
-          RC.drafts[id] = { key, text: r.text, image: r.image || '' };
-          const m = await say(c, `✨ Nháp cho ${nm(x)}:\n\n${r.text}${r.pt ? '\n\n📎 kèm ' + (r.pt.t.title || 'bảng giá') : ''}\n\n↩️ Muốn sửa: trả lời (reply) tin này bằng nội dung mới.`,
-            { reply_markup: kb([[B('✅ Gửi', 'send|' + id), B('🗑 Bỏ', 'drop|' + id)]]) });
-          if (m?.ok) RC.map[m.result.message_id] = key; trimMap(); }
-        catch (e) { say(c, '✗ AI chưa soạn được: ' + e.message); }
-        return;
-      }
+      if (act === 'ai') { const d = RC.ready[key]; delete RC.ready[key];
+        if (d && Date.now() - d.at < 30 * 60e3) return showDraft(c, x, d.text, d.image, d.pt); // AI đã soạn sẵn lúc khách nhắn: hiện ngay
+        say(c, `✨ AI đang soạn cho ${nm(x)}…`); return aiDraft(c, x).catch(e => say(c, '✗ AI chưa soạn được: ' + e.message)); }
+      // ⚡ Mẫu tin: chọn mẫu đã lưu → xem trước → ✅ Gửi (không cần AI, tức thì).
+      if (act === 'tp') { const ts = (await App.templates?.list().catch(() => []) || []).filter(t => t.content || t.imageData).slice(0, 12);
+        if (!ts.length) return say(c, 'Chưa có mẫu tin nào (tạo ở tab Mẫu tin trong app).');
+        return say(c, `⚡ Mẫu tin cho ${nm(x)}:`, { reply_markup: kb(ts.map((t, i) => [B(String(t.title || t.content).replace(/\s+/g, ' ').slice(0, 40), `tq|${k}|${i}`)])) }); }
+      if (act === 'tq') { const t = (await App.templates?.list().catch(() => []) || []).filter(t => t.content || t.imageData)[Number(k2)]; if (!t) return say(c, 'Mẫu không còn.');
+        return showDraft(c, x, App.resolveVars(t.content || '', { name: x.other?.name || '', pageName: x.page?.name || '' }), t.imageData || ''); }
       return;
     }
     const m = u.message, text = String(m?.text || m?.caption || '').trim();
