@@ -11,7 +11,7 @@
   const creating = new Set(); // khoá trong bộ nhớ: mỗi báo giá chỉ một lượt tạo đơn tại một thời điểm
   const quotes = () => DB.get(QUOTES, []);
   let pingT = 0; const ping = () => { clearTimeout(pingT); pingT = setTimeout(() => App.inbox?.orderChanged?.(), 300); }; // báo Hộp thư vẽ lại thanh trạng thái đơn
-  const saveQuote = async q => { const all = await quotes(), i = all.findIndex(x => x.id === q.id); if (i < 0) all.push(q); else all[i] = q; await DB.set(QUOTES, all); ping(); return q; };
+  const saveQuote = async q => { q.updatedAt = Date.now(); const all = await quotes(), i = all.findIndex(x => x.id === q.id); if (i < 0) all.push(q); else all[i] = q; await DB.set(QUOTES, all); ping(); return q; };
   const dropQuote = async id => { await DB.set(QUOTES, (await quotes()).filter(x => x.id !== id)); ping(); };
   const expired = q => q.state === 'quote' && Date.now() > (q.expiresAt || Infinity);
   const newPayCode = () => 'DV' + Array.from(crypto.getRandomValues(new Uint8Array(6)), b => 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'[b % 31]).join('');

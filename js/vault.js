@@ -1,11 +1,28 @@
-/* Lưu theo tài khoản Facebook: tin mẫu (+ nhóm, thẻ, biến mặc định), gói bán / bảng giá / API key dịch vụ, tài khoản ngân hàng hoá đơn,
+/* Lưu theo tài khoản Facebook: đơn hàng + báo giá dịch vụ (gộp giữa các máy), tin mẫu (+ nhóm, thẻ, biến mặc định), gói bán / bảng giá / API key dịch vụ, tài khoản ngân hàng hoá đơn,
  * kế hoạch tự động + Telegram, thông tin shop cho AI, cài đặt hộp thư, cài đặt lịch đăng.
  * Đăng nhập Facebook ở máy nào (hoặc sau khi xoá dữ liệu, cài lại app) cũng tự khôi phục, không phải làm lại từ đầu.
  * Hai nơi lưu: file trên máy (app Windows, mã hoá bằng khoá Windows) + máy chủ (bảng user_vault, hàm fb-admin xác minh token Facebook).
  * Mỗi phần có mốc giờ sửa; khi đăng nhập lấy bản mới nhất trong 3 nơi (trên app, file, máy chủ); sửa trên app → lưu lại sau 3 giây. */
 (() => {
   const META = 'vaultMetaV1'; // { user, at: { tpl, vars, svc } }
+  // Danh sách (đơn hàng, báo giá): GỘP giữa các máy theo id (bản sửa sau thắng), không ghi đè cả danh sách.
+  // Xoá trên một máy → ghi id vào "gone" để máy khác cũng xoá (không hồi sinh báo giá đã chuyển thành đơn → tránh tạo đơn 2 lần).
+  const GONE = 'vaultGoneV1', GONE_DAYS = 90;
+  const stamp = x => Number(x?.updatedAt || x?.at || 0);
+  const listPart = (key, name) => ({ name, keys: [key], list: true,
+    get: async () => ({ items: await DB.get(key, []), gone: (await DB.get(GONE, {}))[key] || {} }),
+    set: async v => { const g = await DB.get(GONE, {}); await DB.set(GONE, { ...g, [key]: v?.gone || {} }); await DB.set(key, v?.items || []); },
+    empty: v => !v?.items?.length && !Object.keys(v?.gone || {}).length });
+  function mergeList(a, b) {
+    const gone = { ...(a?.gone || {}) }; for (const [id, t] of Object.entries(b?.gone || {})) gone[id] = Math.max(gone[id] || 0, t);
+    const old = Date.now() - GONE_DAYS * 864e5; for (const id in gone) if (gone[id] < old) delete gone[id];
+    const by = new Map(); for (const x of [...(a?.items || []), ...(b?.items || [])]) { if (!x?.id || gone[x.id]) continue; const c = by.get(x.id); if (!c || stamp(x) > stamp(c)) by.set(x.id, x); }
+    const order = new Map((a?.items || []).map((x, i) => [x.id, i]));
+    return { items: [...by.values()].sort((x, y) => (order.get(x.id) ?? 1e9) - (order.get(y.id) ?? 1e9) || stamp(x) - stamp(y)), gone };
+  }
   const PARTS = {
+    orders: listPart('shopOrdersV1', 'đơn hàng (Bán hàng, Dịch vụ)'),
+    quotes: listPart('svcQuotesV1', 'báo giá dịch vụ'),
     tpl: { name: 'tin mẫu', keys: ['templates', 'categories', 'tags'],
       get: async () => ({ templates: await DB.get('templates', []), categories: await DB.get('categories', []), tags: await DB.get('tags', []) }),
       set: async v => { for (const k of ['templates', 'categories', 'tags']) if (Array.isArray(v?.[k])) await DB.set(k, v[k]); },
@@ -43,7 +60,14 @@
   async function push() {
     if (!V.user) return;
     const meta = await DB.get(META, {}), parts = {};
-    for (const [k, p] of Object.entries(PARTS)) { const value = await p.get(); if (!p.empty(value) || meta.at?.[k]) parts[k] = { at: meta.at?.[k] || Date.now(), value }; }
+    // Danh sách: kéo bản trên máy chủ về gộp trước khi gửi (máy khác vừa thêm đơn thì không bị mất).
+    let remote = null; try { remote = (await cloud('vault_get')).data || {}; } catch {}
+    const file0 = window.metaDesktop?.vaultGet ? (await window.metaDesktop.vaultGet(V.user).catch(() => null))?.data || {} : {};
+    for (const [k, p] of Object.entries(PARTS)) {
+      let value = await p.get();
+      if (p.list) { const m = [file0[k]?.value, remote?.[k]?.value].reduce((acc, v) => v ? mergeList(acc, v) : acc, value);
+        if (JSON.stringify(m) !== JSON.stringify(value)) { applying = true; try { await p.set(m); } finally { applying = false; } last[k] = JSON.stringify(m); value = m; } }
+      if (!p.empty(value) || meta.at?.[k]) parts[k] = { at: p.list ? Date.now() : meta.at?.[k] || Date.now(), value }; }
     if (!Object.keys(parts).length) return;
     if (window.metaDesktop?.vaultSet) {
       const file = (await window.metaDesktop.vaultGet(V.user).catch(() => null))?.data || {};
@@ -59,7 +83,15 @@
   // Sửa trên app → đánh dấu phần đó vừa đổi (mốc giờ mới) rồi lưu.
   for (const [k, p] of Object.entries(PARTS)) for (const key of p.keys) App.on(key, async () => {
     if (applying || !V.user) return;
-    const now = JSON.stringify(await p.get()); if (now === last[k]) return; // vd đổi cài đặt khác trong "settings", biến mẫu tin không đổi
+    let cur = await p.get(), now = JSON.stringify(cur); if (now === last[k]) return; // vd đổi cài đặt khác trong "settings", biến mẫu tin không đổi
+    if (p.list && last[k]) { // id có trước mà giờ mất = vừa xoá → ghi "gone" để máy khác xoá theo
+      const prev = new Map((JSON.parse(last[k]).items || []).map(x => [x.id, x]));
+      // Đơn sửa mà không đổi mốc (vd ghi bảo hành) → đóng mốc sửa để máy khác nhận bản này khi gộp.
+      const bumped = cur.items.map(x => { const o = prev.get(x.id); return o && stamp(x) <= stamp(o) && JSON.stringify(o) !== JSON.stringify(x) ? { ...x, updatedAt: Date.now() } : x; });
+      if (bumped.some((x, i) => x !== cur.items[i])) { applying = true; try { await DB.set(p.keys[0], bumped); } finally { applying = false; } cur = { ...cur, items: bumped }; now = JSON.stringify(cur); }
+      const ids = new Set(cur.items.map(x => x.id)), lost = [...prev.keys()].filter(id => id && !ids.has(id));
+      if (lost.length) { const g = await DB.get(GONE, {}), key = p.keys[0]; g[key] = { ...(g[key] || {}), ...Object.fromEntries(lost.map(id => [id, Date.now()])) }; await DB.set(GONE, g); cur = await p.get(); now = JSON.stringify(cur); }
+    }
     last[k] = now;
     const meta = await DB.get(META, {}); await DB.set(META, { user: V.user, at: { ...(meta.user === V.user ? meta.at : {}), [k]: Date.now() } });
     schedule();
@@ -78,6 +110,10 @@
     applying = true;
     try {
       for (const [k, p] of Object.entries(PARTS)) {
+        if (p.list) { const local = await p.get(), m = [file[k]?.value, remote[k]?.value].reduce((acc, v) => v ? mergeList(acc, v) : acc, local);
+          const added = m.items.length - local.items.length;
+          if (JSON.stringify(m) !== JSON.stringify(local)) { await p.set(m); if (added > 0) got.push(`${added} ${p.name}`); }
+          at[k] = Date.now(); continue; }
         const best = [file[k], remote[k]].filter(x => x && typeof x.at === 'number' && !p.empty(x.value)).sort((a, b) => b.at - a.at)[0];
         const local = await p.get();
         if (best && (best.at > (mine[k] || 0) || p.empty(local))) {
@@ -100,7 +136,7 @@
   // Thẻ trạng thái (tab Cài đặt).
   V.card = () => h('div', { className: 'card', style: 'margin-top:12px' },
     h('h3', { className: 'card-title', textContent: '☁ Lưu theo tài khoản Facebook' }),
-    h('p', { className: 'hint', textContent: 'Tin mẫu, gói bán, bảng giá, API key dịch vụ, tài khoản ngân hàng, Telegram & kế hoạch tự động, thông tin shop cho AI, cài đặt hộp thư và lịch đăng tự lưu theo tài khoản Facebook đang đăng nhập. Đăng nhập ở máy khác hoặc sau khi cài lại app sẽ tự khôi phục.' }),
+    h('p', { className: 'hint', textContent: 'Đơn hàng, báo giá dịch vụ, tin mẫu, gói bán, bảng giá, API key dịch vụ, tài khoản ngân hàng, Telegram & kế hoạch tự động, thông tin shop cho AI, cài đặt hộp thư và lịch đăng tự lưu theo tài khoản Facebook đang đăng nhập. Đăng nhập ở máy khác hoặc sau khi cài lại app sẽ tự khôi phục.' }),
     h('div', { className: 'row', style: 'gap:8px;align-items:center;flex-wrap:wrap' },
       h('span', { className: 'status ' + (V.state === 'err' ? 'err' : V.cloud === 'ok' ? 'ok' : 'pending'), textContent:
         !V.user ? 'Chưa đăng nhập Facebook' : V.state === 'loading' ? 'Đang đồng bộ…' : V.state === 'err' ? 'Lỗi: ' + V.error
