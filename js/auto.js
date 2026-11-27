@@ -253,7 +253,7 @@
   DB.get(TOP, null).then(v => { if (v) RC.top = { byKey: { ...v.byKey, ...RC.top.byKey }, byThread: { ...v.byThread, ...RC.top.byThread }, last: { ...v.last, ...RC.top.last } }; }).catch(() => {});
   let topT = 0; const topSave = () => { clearTimeout(topT); topT = setTimeout(() => DB.set(TOP, RC.top).catch(() => {}), 1000); };
   let forum = null;
-  const isForum = async c => { if (forum?.chat === c.tg.chat && Date.now() - forum.at < 600e3) return forum.v;
+  const isForum = async c => { if (forum?.chat === c.tg.chat && Date.now() - forum.at < 60e3) return forum.v; // bật Chủ đề xong: tối đa 1 phút là chuyển sang chủ đề
     const r = await tgApi('getChat', { chat_id: c.tg.chat }, c); forum = { chat: c.tg.chat, at: Date.now(), v: !!r?.result?.is_forum }; return forum.v; };
   const inTopic = (c, t) => ({ ...c, thread: t });
   async function topicOf(c, x, fresh = false) {
