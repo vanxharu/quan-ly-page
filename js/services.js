@@ -455,7 +455,7 @@
       setPlat: p => { if (items.some(i => i.platform === p) && p !== pf) { pf = p; if (tf && !items.some(i => i.platform === pf && typeOf(i) === tf)) tf = ''; draw(); } } };
   }
   const serverItem = x => { const [st, cls] = stateOf(x);
-    return { value: x.id, label: x.name, sub: `MC ${x.id} · ${Number(x.min).toLocaleString('vi-VN')}–${Number(x.max).toLocaleString('vi-VN')}`, platform: x.platform || '', group: [x.platform, x.category].filter(Boolean).join(' › '),
+    return { value: x.id, label: x.name, sub: `MC ${x.id} · ${Number(x.min).toLocaleString('vi-VN')}–${Number(x.max).toLocaleString('vi-VN')} · gốc ${m2(x.unitCost)}/đv (${money(Math.round((x.unitCost || 0) * 1000))}/1000)`, platform: x.platform || '', group: [x.platform, x.category].filter(Boolean).join(' › '),
       tags: tagsOf(x.name), price: `${m2(x.unitCost)}/đv`, warn: cls === 'err' ? st : '' }; };
   // Máy chủ cha + cảm xúc / số tháng gộp 1 thẻ (chọn bằng nút nhỏ trong thẻ).
   const serverItems = arr => { const sorted = sortWeb(arr), ids = new Set(sorted.map(x => x.id));
@@ -464,7 +464,7 @@
   const sortWeb = arr => [...arr].sort((a, b) => a.groupIndex - b.groupIndex || a.pos - b.pos || (a.parent ? 1 : 0) - (b.parent ? 1 : 0) || Number(a.id) - Number(b.id));
   function pickServerDialog(list, current) {
     return new Promise(done => {
-      const dlg = h('dialog', { className: 'svc-dialog', onclose: () => { dlg.remove(); done(null); } });
+      const dlg = h('dialog', { className: 'svc-dialog svc-pickserver', onclose: () => { dlg.remove(); done(null); } });
       const p = cardPicker({ items: serverItems(list), value: String(current || ''), height: 460, placeholder: 'Tìm máy chủ (tên, mã MC)…',
         plat: list.find(x => x.id === String(current))?.platform || '', onPick: v => { done(v); dlg.onclose = () => dlg.remove(); dlg.close(); } });
       dlg.append(h('div', { className: 'card-head' }, h('h3', { className: 'card-title', textContent: 'Chọn máy chủ gốc' }),

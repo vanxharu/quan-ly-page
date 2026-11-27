@@ -685,3 +685,5 @@ body.teams .ib-ai-opt{background:transparent;border-color:var(--tm-compose-line)
 .svc-topup{width:min(760px,calc(100vw - 32px))}.svc-topup-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px;margin:8px 0}
 .svc-topup-card{display:grid;gap:8px;justify-items:center;padding:12px;border:1px solid var(--border);border-radius:10px;text-align:center}
 .svc-topup-qr{width:200px;max-width:60vw;border-radius:8px;background:#fff}.svc-topup-info{display:grid;gap:4px;font-size:13px}
+
+.svc-pickserver{width:min(900px,calc(100vw - 32px));overflow-x:hidden}.svc-pickserver .cp-price{white-space:nowrap;font-weight:600}
