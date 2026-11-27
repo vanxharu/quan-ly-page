@@ -17,8 +17,9 @@
     async all() { return DB.get(CRM, {}); },
     async get(key) { return (await DB.get(CRM, {}))[key] || {}; },
     async update(key, patch) {
-      const all = await DB.get(CRM, {});
+      const all = await DB.get(CRM, {}), before = all[key]?.manualLabels || [];
       all[key] = { labels: [], notes: [], ...(all[key] || {}), ...patch, readAt: Date.now() };
+      if (patch.manualLabels) App.inbox?.zaloLabelSync?.(key, before, patch.manualLabels);
       await DB.set(CRM, all);
       return all[key];
     },

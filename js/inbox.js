@@ -198,8 +198,12 @@
             h('div', { className: 'ib-ai', id: 'ibAi', hidden: true }),
             h('div', { className: 'composer-row' },
               h('button', { className: 'tpl-btn', id: 'ibTplBtn', title: 'Mẫu tin (gõ / trong ô nhập)', 'aria-label': 'Mẫu tin', onclick: () => togglePicker() }, icon('i-tpl')),
-              h('label', { className: 'tpl-btn', title: 'Đính kèm ảnh', 'aria-label': 'Đính kèm ảnh' }, icon('i-clip'), h('input', { type: 'file', accept: 'image/*', hidden: true, onchange: async e => {
+              h('label', { className: 'tpl-btn', title: 'Đính kèm ảnh', 'aria-label': 'Đính kèm ảnh' }, icon('i-clip'), h('input', { type: 'file', accept: 'image/*', hidden: true, onclick: e => { e.target.accept = S.conv?.api ? '*/*' : 'image/*'; }, onchange: async e => {
                 const c = S.conv, f = e.target.files[0];
+                // Zalo qua API: gửi thẳng video / tệp (PDF, Excel, Word, ZIP…); ảnh vẫn vào ô soạn như thường.
+                if (f && c?.api && !/^image\//.test(f.type)) { e.target.value = ''; if (f.size > 50e6) return toast('Tệp quá 50 MB, Zalo không nhận.');
+                  toast('Đang gửi ' + f.name + '…'); const r = await window.metaDesktop.sendThread({ pageId: 'zalo', uid: c.uid, file: await fileToDataUrl(f), fileName: f.name }).catch(x => ({ error: x.message }));
+                  if (r?.error) toast(r.error, 6000); else if (S.conv === c) openBs(c, { silent: true }).catch(() => {}); return; }
                 if (f) { const image = await fileToDataUrl(f); if (draftKey(S.conv) === draftKey(c)) { S.image = image; drawAttach(); saveDraft(); } }
                 e.target.value = '';
               } })),
@@ -1949,22 +1953,30 @@
     if ((m = t.match(/(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?/))) { const y = m[3] ? (m[3].length === 2 ? 2000 + Number(m[3]) : Number(m[3])) : new Date().getFullYear(); const d = new Date(y, Number(m[2]) - 1, Number(m[1]), 12); if (d > now) d.setFullYear(y - 1); return d.getTime(); }
     return now; };
   // Chỉ lấy hội thoại 1-1 với khách: bỏ nhóm, tài khoản Zalo chính thức (Zalo, Meta, Nạp Điện Thoại…) và My Documents.
-  const zKeep = r => !r.group && !r.oa && !/^(my documents|zalo|cloud của tôi)$/i.test(r.name);
+  const zKeep = r => (r.api || !r.group) && !r.oa && !/^(my documents|zalo|cloud của tôi)$/i.test(r.name);
   let zFirst = true;
+  // Nhãn CRM bạn gắn / gỡ tay trên hội thoại Zalo (API) → gắn / gỡ nhãn Zalo của nick đó.
+  App.inbox.zaloLabelSync = (key, before, after) => {
+    const c = S.zconvs.find(x => x.key === key && x.api); if (!c || !window.metaDesktop?.zaloNicks) return;
+    for (const [list, other, on] of [[after, before, true], [before, after, false]]) for (const text of list) if (!other.includes(text))
+      window.metaDesktop.zaloNicks({ act: 'label', uid: c.uid, text, on }).then(r => r?.error && r.error !== 'login' && toast('Nhãn Zalo: ' + r.error, 5000)).catch(() => {});
+  };
   App.inbox.zaloList = async rows => {
     if (!Array.isArray(rows)) return;
     const st = await settings().catch(() => ({}));
     const old = new Map(S.zconvs.map(c => [c.id, c])), out = [], now = Date.now();
-    rows.filter(zKeep).slice(0, 10).forEach((r, i) => { // tối đa 10 khách Zalo mới nhất
+    const zMax = rows.some(r => r.api) ? 100 : 10; // Zalo Web: 10 khách mới nhất; API: 100 hội thoại (nhiều nick, có nhóm)
+    rows.filter(zKeep).slice(0, zMax).forEach((r, i) => {
       const id = 'bs:zalo:' + r.id, prev = old.get(id), mine = /^(bạn|you)\s*:/i.test(r.snippet);
       const changed = !prev || prev.snippet !== r.snippet;
       const at = r.ts || (!changed && prev ? prev.lastAt : zTime(r.time, now) - i); // r.ts: Zalo qua API có giờ thật // tin cuối không đổi: giữ mốc cũ (Zalo ghi "4 phút" trôi theo giờ)
       const c = prev || { id, bs: true, zalo: true, platform: 'zalo', uid: r.id, page: ZPAGE, other: { id: 'zl' + r.id } };
-      Object.assign(c, { other: { id: 'zl' + r.id, name: r.name }, snippet: r.snippet, timeText: '', updated_time: new Date(at).toISOString(), lastAt: at,
+      Object.assign(c, { api: !!r.api, group: !!r.group, other: { id: 'zl' + r.id, name: (r.group ? '👥 ' : '') + r.name + (r.nick ? ' · ' + r.nick : '') }, snippet: r.snippet, timeText: '', updated_time: new Date(at).toISOString(), lastAt: at,
         // Số chưa đọc: theo huy hiệu của Zalo; Zalo không hiện (vd hội thoại đang mở sẵn trong cột Zalo) thì tự đếm tin mới.
         unread_count: mine ? 0 : r.unread || (changed && prev && !zFirst ? (prev.unread_count || 0) + 1 : prev?.unread_count || 0),
         fromCustomer: !mine, key: App.crmKey('zalo', r.name), muted: r.muted });
       if (r.pic) S.pics.set(pictureKey(c), r.pic);
+      if (r.labels?.length) App.crm?.addLabels?.(c.key, r.labels, { pageId: 'zalo', pageName: 'Zalo', name: r.name }).catch(() => {}); // nhãn Zalo → nhãn CRM
       const viewing = S.conv?.id === id && App.current() === 'inbox' && !document.hidden;
       if (viewing) c.unread_count = 0;
       if (changed && prev && !zFirst && !mine && !viewing && !r.muted && st.webNotify && InboxRules.notifyAllowed(st, 'zalo'))
@@ -1974,7 +1986,7 @@
       out.push(c);
     });
     // Dòng Zalo không còn trong khung đang thấy (danh sách ảo) vẫn giữ lại.
-    for (const c of S.zconvs) if (!out.some(x => x.id === c.id) && out.length < 10) out.push(c);
+    for (const c of S.zconvs) if (!out.some(x => x.id === c.id) && out.length < zMax && (!c.api || rows.some(r => r.api && 'bs:zalo:' + r.id === c.id))) out.push(c);
     zFirst = false; S.zconvs = out;
     S.convs = [...new Map([...S.convs.filter(c => !c.zalo), ...out].map(c => [c.id, c])).values()].sort((a, b) => new Date(b.updated_time) - new Date(a.updated_time));
     if (App.current() === 'inbox') drawList();

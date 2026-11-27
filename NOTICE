@@ -1,0 +1,29 @@
+Get Helps (quan-ly-page)
+Copyright (C) 2026 Văn (vanxharu)
+
+This program is free software: you can redistribute it and/or modify it under
+the terms of the GNU Affero General Public License v3.0 or later as published
+by the Free Software Foundation. See the LICENSE file for the full text.
+
+Source code: https://github.com/vanxharu/quan-ly-page
+
+------------------------------------------------------------------------------
+Incorporated work: ZaloCRM
+------------------------------------------------------------------------------
+Parts of the Zalo personal-account features (multi-account QR login, message
+type detection, album info, DM history paging, group history, Zalo labels)
+are derived from ZaloCRM, licensed under AGPL-3.0:
+
+  ZaloCRM — https://github.com/locphamnguyen/ZaloCRM
+  Copyright (C) 2026 Nguyễn Tiến Lộc (Loc Nguyen)
+  Maintainer & primary author: Nguyễn Tiến Lộc (Loc Nguyen)
+  Website: https://locnguyendata.com
+  Email:   locnt@locnguyendata.com
+
+Files: desktop/zalo-api.js, js/zalo-nicks.js. The "ZaloCRM" name and logo
+are not used to name or market this program.
+
+------------------------------------------------------------------------------
+Third-party libraries
+------------------------------------------------------------------------------
+zca-js (MIT) — unofficial Zalo API for JavaScript, https://github.com/RFS-ADRENO/zca-js

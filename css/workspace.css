@@ -692,3 +692,8 @@ body.teams .ib-ai-opt{background:transparent;border-color:var(--tm-compose-line)
 .svc-check{display:grid;gap:10px;max-height:60vh;overflow:auto}.svc-check-card{border:1px solid var(--border);border-radius:10px;padding:10px;display:grid;gap:4px}.svc-check-card select{max-width:240px}.svc-check-card input[type=text]{flex:1;min-width:180px}
 
 .svc-code{font-weight:800;font-family:inherit;background:none;border:0;padding:0;color:var(--accent,#7c6cf0);cursor:pointer;white-space:nowrap}
+/* Nick Zalo */
+.zn-dialog{max-width:560px;width:calc(100vw - 32px)}
+.zn-row{display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--border,rgba(127,127,127,.2))}
+.zn-main{flex:1;min-width:0}.zn-main .hint{margin:2px 0 0;overflow-wrap:anywhere}
+.zn-qr{text-align:center;margin:10px 0}.zn-qr img{background:#fff;padding:8px;border-radius:8px}

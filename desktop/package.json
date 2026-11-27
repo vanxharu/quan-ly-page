@@ -1,6 +1,6 @@
 {
   "name": "meta-assistant",
-  "version": "1.0.190",
+  "version": "1.0.191",
   "description": "Meta Assistant cho Windows: quản lý Page Facebook + Studio AI",
   "main": "main.js",
   "scripts": {
@@ -9,7 +9,7 @@
     "dist": "electron-builder --win nsis --publish always"
   },
   "author": "Văn",
-  "license": "UNLICENSED",
+  "license": "AGPL-3.0-or-later",
   "dependencies": {
     "electron-chrome-extensions": "4.10.0",
     "electron-updater": "6.8.11",
