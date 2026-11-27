@@ -39,6 +39,9 @@
         h('span', { className: 'st ' + (z.state === 'ready' ? 'ready' : z.state === 'loading' ? 'loading' : 'none'), title: z.err || '', textContent: ZST[z.state] || z.state }),
         h('button', { type: 'button', className: 'btn btn-sm btn-ghost', textContent: z.api ? `${(z.accounts || []).length} nick` : '＋ Nick', title: 'Quản lý nick Zalo (thêm nick bằng QR, lịch sử, nhãn)', onclick: () => App.zaloNicks?.open() }),
         h('span', { className: 'st ' + (zKept ? 'ready' : 'none'), title: `Đọc được ${z.rows} hội thoại trên Zalo Web · ${zKept} khách hiện trong Hộp thư` + (z.err ? ' · lỗi: ' + z.err : ''), textContent: z.state === 'ready' ? `${zKept} khách` : '' })) : null,
+      z?.api && z.state !== 'ready' ? h('div', { className: 'hint', style: 'margin:4px 0 0;padding:6px 8px;border-radius:6px;background:var(--surface-2,rgba(127,127,127,.12))' },
+        h('div', { textContent: (z.accounts || []).length ? 'Zalo (API): ' + (z.err || 'đang kết nối…') : 'Chưa có nick Zalo: thêm nick bằng mã QR (không cần Zalo Web).' }),
+        h('button', { className: 'btn btn-sm', style: 'margin-top:4px', textContent: '💬 Nick Zalo', onclick: () => App.zaloNicks?.open() })) :
       z && z.state !== 'ready' ? h('div', { className: 'hint', style: 'margin:4px 0 0;padding:6px 8px;border-radius:6px;background:var(--surface-2,rgba(127,127,127,.12))' },
         h('div', { textContent: z.state === 'blocked' ? '⛔ Zalo Web bị phần mềm bảo mật / mạng công ty chặn (chat.zalo.me) — app không vượt được. Nhờ quản trị mạng mở chặn, hoặc dùng mạng khác (vd 4G).' : 'Zalo ngầm đang hiện: ' + ((z.screen?.text || '').slice(0, 140) || '(trang trống)') + (z.reloads ? ` · đã tự tải lại ${z.reloads} lần` : '') }),
         h('div', { style: 'margin-top:4px;display:flex;gap:6px' },

@@ -118,6 +118,7 @@
       tag?.textContent?.trim() ? item('↻', 'Kiểm tra cập nhật', () => tag.click(), 'Phiên bản ' + tag.textContent.trim()) : null,
       fr?.canToggle ? item('▭', fr.frameless ? 'Dùng thanh tiêu đề Windows' : 'Dùng thanh trên kiểu Teams', () => {
         if (confirm(fr.frameless ? 'Dùng lại thanh tiêu đề của Windows (nếu không kéo được cửa sổ)? App sẽ mở lại.' : 'Dùng thanh trên kiểu Teams? App sẽ mở lại.')) window.metaDesktop.uiFrame(fr.frameless); }) : null,
+      window.metaDesktop?.zaloNicks ? item('💬', 'Nick Zalo', () => App.zaloNicks?.open(), 'Thêm nick bằng QR, lịch sử, nhãn') : null,
       item('📜', 'Giới thiệu & giấy phép', () => App.about?.(), 'Mã nguồn mở AGPL-3.0, ghi công'),
       item('🌐', window.I18N?.lang === 'en' ? 'Tiếng Việt' : 'English', () => window.I18N.set(window.I18N.lang === 'en' ? 'vi' : 'en'), 'Language / Ngôn ngữ'),
       h('div', { className: 'tm-menu-sep' }),
