@@ -643,17 +643,19 @@
       const opt = pk => { const svc = svcOfPkg(pk); return h('option', { value: pk.id, selected: pk.id === value,
         textContent: `${pk.name}${pk.kind === 'fixed' ? ` · ${Number(pk.qty).toLocaleString('vi-VN')} = ${money(pk.price)}` : ` · ${m2(pk.unitPrice)}/đv`}${!svc ? ' · thiếu máy chủ' : !ok(svc) ? ' · bảo trì' : ''}` }); };
       return h('select', { onchange },
-        h('option', { value: '', textContent: any ? '— Chọn gói áp dụng —' : '— Chọn gói —', selected: !value }),
+        h('option', { value: '', textContent: any ? '— Chọn gói / server áp dụng —' : '— Chọn gói / server —', selected: !value }),
+        h('option', { value: '__svc', textContent: '⚙ Chọn server Baostar trực tiếp…' }),
         ...(same.length && other.length ? [h('optgroup', { label: plat ? `Gói ${plat}` : 'Gói' }, ...same.map(opt)), h('optgroup', { label: 'Gói nền tảng khác' }, ...other.map(opt))] : pkgs.map(opt)),
-        any ? null : h('option', { value: '__svc', textContent: '⚙ Chọn máy chủ trực tiếp…' }));
+        );
     };
     const draw = () => {
       body.replaceChildren(...rows.map((r, i) => { const c = calc(r), plat = LINK_PLAT[platformOf(r.link)] || '';
         const sel = pkgSelect(plat, r.pkgId, async e => { const v = e.target.value;
+          if (v === '__keep') return;
           if (v === '__svc') { const pickd = await pickServerDialog(list.filter(ok), r.svcId || c.svc?.id); if (pickd) { r.svcId = pickd; r.pkgId = ''; } }
           else { r.pkgId = v; r.svcId = ''; }
           r.sell = null; draw(); });
-        if (!r.pkgId && r.svcId) sel.prepend(h('option', { value: '', selected: true, textContent: `⚙ MC ${r.svcId} · ${c.svc?.name || ''}`.slice(0, 70) }));
+        if (!r.pkgId && r.svcId) { sel.querySelector('option[value=""]').selected = false; sel.prepend(h('option', { value: r.svcId ? '__keep' : '', selected: true, textContent: `⚙ Server ${r.svcId} · ${c.svc?.name || ''}`.slice(0, 70) })); }
         return h('tr', { className: (r.on ? '' : 'off') + (r.on && c.error ? ' bad' : '') },
           h('td', {}, h('input', { type: 'checkbox', checked: r.on, title: 'Tạo đơn cho link này', onchange: e => { r.on = e.target.checked; draw(); } })),
           h('td', { className: 'svc-bulk-link' }, plat ? platBadge(plat, 18) : h('span', { className: 'plat-badge any', textContent: '?' }),
@@ -681,23 +683,29 @@
       allBox.hidden = rows.length < 2; empty0.hidden = rows.length > 0;
     };
     // Áp dụng cho tất cả dòng đang chọn: gói + số lượng.
-    let allPkg = '', allRx = new Set(), allMode = 'deu';
+    let allPkg = '', allSvc = '', allRx = new Set(), allMode = 'deu';
     const allQty = h('input', { type: 'number', min: 1, step: 1, placeholder: 'Số lượng', style: 'width:100px' });
     const allSell = h('input', { type: 'number', min: 0, step: 'any', placeholder: 'Khách trả / link', style: 'width:130px', title: 'Số tiền khách trả cho MỖI link' });
     const allRxBox = h('span', { className: 'svc-bulk-allrx' });
     const drawAllRx = () => allRxBox.replaceChildren(rxChips(RX_ALL.map(k => [k, RX_NAME[k]]), allRx, allMode, (set, mode) => { allRx = set; allMode = mode; drawAllRx(); }, null, true));
     drawAllRx();
     const allBox = h('div', { className: 'svc-bulk-all' }, h('strong', { textContent: 'Áp dụng cho tất cả' }),
-      pkgSelect('', '', e => { allPkg = e.target.value; }, true), allQty, allSell, allRxBox,
+      pkgSelect('', '', async e => { const sel = e.target, v = sel.value; if (v === '__chosen') return;
+        if (v !== '__svc') { allPkg = v; allSvc = ''; sel.querySelector('[value="__chosen"]')?.remove(); return; }
+        const id = await pickServerDialog(list.filter(ok), allSvc); sel.querySelector('[value="__chosen"]')?.remove();
+        if (!id) { sel.value = allPkg; return; }
+        const x = list.find(y => y.id === id); allSvc = id; allPkg = '';
+        sel.prepend(h('option', { value: '__chosen', selected: true, textContent: `⚙ Server ${id} · ${x?.name || ''}`.slice(0, 70) })); sel.value = '__chosen'; }, true), allQty, allSell, allRxBox,
       h('button', { type: 'button', className: 'btn btn-soft btn-sm', textContent: 'Áp dụng cho các dòng đã tích', onclick: () => {
         const n = Number(allQty.value) || 0, money1 = allSell.value === '' ? null : Number(allSell.value);
-        if (!allPkg && !n && money1 == null && !allRx.size) return toast('Chọn gói, số lượng, tiền khách trả hoặc cảm xúc để áp dụng.', 3500);
+        if (!allPkg && !allSvc && !n && money1 == null && !allRx.size) return toast('Chọn gói / server, số lượng, tiền khách trả hoặc cảm xúc để áp dụng.', 3500);
         let rxMiss = 0;
         for (const r of rows) if (r.on) {
           if (allPkg) { r.pkgId = allPkg; r.svcId = ''; r.why = ''; r.reacts = null; }
+          if (allSvc) { r.svcId = allSvc; r.pkgId = ''; r.why = ''; r.reacts = null; }
           if (n) r.qty = n;
           if (allRx.size) { const fam = calc(r).fam; const ids = fam.filter(x => allRx.has(RX_KEY(x.child))).map(x => x.id); if (ids.length) { r.reacts = new Set(ids); r.rmode = allMode; } else if (fam.length) rxMiss++; }
-          r.sell = money1 != null ? money1 : (allPkg || n || allRx.size) ? null : r.sell;
+          r.sell = money1 != null ? money1 : (allPkg || allSvc || n || allRx.size) ? null : r.sell;
         }
         draw(); if (rxMiss && allRx.size) toast(`${rxMiss} dòng có gói không chọn được cảm xúc (máy chủ không có loại đó).`, 5000); } }));
     // Tổng khách trả: nhập tổng → chia cho các link theo tỷ lệ tiền từng link (làm tròn nghìn, dòng cuối nhận phần lẻ).
@@ -734,7 +742,7 @@
         h('button', { type: 'button', className: 'btn btn-ghost', textContent: 'Thêm link', onclick: addPaste })),
       allBox,
       h('div', { className: 'scroll svc-bulk-wrap' }, h('table', { className: 'svc-table svc-bulk-table' },
-        h('thead', {}, h('tr', {}, ...['', 'Link', 'Gói', 'Số lượng', 'Khách trả', 'Gốc ≈', 'Lãi', 'Kiểm tra', ''].map(t => h('th', { textContent: t })))), body), empty0),
+        h('thead', {}, h('tr', {}, ...['', 'Link', 'Gói / server', 'Số lượng', 'Khách trả', 'Gốc ≈', 'Lãi', 'Kiểm tra', ''].map(t => h('th', { textContent: t })))), body), empty0),
       sum, err,
       h('div', { className: 'row svc-actions', style: 'gap:8px;justify-content:flex-end;flex-wrap:wrap' },
         h('button', { type: 'button', className: 'btn btn-ghost', textContent: 'Huỷ', onclick: () => dlg.close() }), go));
