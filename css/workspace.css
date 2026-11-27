@@ -681,3 +681,6 @@ body.teams .ib-ai-opt{background:transparent;border-color:var(--tm-compose-line)
 .ap-pp-i{display:flex;align-items:center;gap:10px;padding:6px 8px;border-radius:6px;cursor:pointer}.ap-pp-i:hover{background:var(--hover,#8881)}.ap-pp-i.on{background:var(--primary-soft)}
 .ap-pp-i img,.ap-pp-av{width:30px;height:30px;border-radius:50%;object-fit:cover;flex:none;display:grid;place-items:center;background:var(--border,#8884);font-weight:600}
 .ap-pp-n{display:flex;flex-direction:column;min-width:0}.ap-pp-n>span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+.svc-topup-body{display:grid;grid-template-columns:auto 1fr;gap:16px;align-items:start}.svc-topup-qr{width:240px;max-width:60vw;border-radius:10px;background:#fff}
+.svc-topup-info{display:grid;gap:4px;font-size:13px}@media(max-width:600px){.svc-topup-body{grid-template-columns:1fr}}
