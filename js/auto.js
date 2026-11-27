@@ -245,7 +245,8 @@
   const custBtns = k => kb([[{ text: '✨ AI soạn', callback_data: 'ai|' + k }, { text: '📋 Tin gần đây', callback_data: 'his|' + k }],
     [{ text: '📦 Đơn & tiến độ', callback_data: 'od|' + k }, { text: '📨 Báo tiến độ cho khách', callback_data: 'pg|' + k }],
     [{ text: '🧾 Báo giá', callback_data: 'quo|' + k }, { text: '🛡 Bảo hành', callback_data: 'war|' + k }, { text: '🔕 Tắt báo', callback_data: 'mute|' + k }]]);
-  const shortKey = key => { const id = Object.keys(RC.ref || {}).find(k => RC.ref[k] === key); if (id) return id; RC.ref ||= {}; const k = Math.random().toString(36).slice(2, 9); RC.ref[k] = key; return k; };
+  // Mã ngắn cho nút (Telegram giới hạn 64 ký tự): lưu ngay, để nút trên thẻ khách vẫn bấm được sau khi tải lại app.
+  const shortKey = key => { const id = Object.keys(RC.ref || {}).find(k => RC.ref[k] === key); if (id) return id; RC.ref ||= {}; const k = Math.random().toString(36).slice(2, 9); RC.ref[k] = key; rcSave(); return k; };
   const convOf = key => App.inbox?.auto?.convs().find(c => c.key === key);
   const nm = c => `${c.other?.name || 'Khách'}${c.page?.name ? ' · ' + c.page.name : ''}`;
   // ── Nhóm Telegram có chủ đề (Topics): mỗi khách 1 chủ đề, tin 2 chiều chép sang, gõ trong chủ đề = nhắn thẳng cho khách ──
@@ -476,7 +477,7 @@
         return confirmAsk(c, `▶ Chạy ngay lịch "${r.name}" (gửi tối đa ${r.limit} tin)?`, async () => { const st = await getState(); delete st.ran['rm:' + r.id]; const res = await runRule(r, cfg, st, App.inbox.auto); return `🗓 ${r.name}: đã gửi ${res.sent} tin${res.stop ? ' (dừng giữa chừng, xem Nhật ký)' : ''}.`; }); }
       if (act === 'pl') { const cfg = await getCfg(); if (k === 'on') cfg.on = !cfg.on; else cfg.reply.on = !cfg.reply.on; await setCfg(cfg); if (C) { C = cfg; draw(); } return tgPlan(c); }
       // Nút trên tin báo khách
-      const key = RC.ref?.[k]; if (!key) return say(c, 'Tin báo này đã cũ, gõ /cho để xem lại khách đang chờ.');
+      const key = RC.ref?.[k] || (c.thread && RC.top.byThread[c.thread]); if (!key) return say(c, 'Tin báo này đã cũ, gõ /cho để xem lại khách đang chờ.'); // nút trong chủ đề khách: khách của chủ đề
       const x = convOf(key); if (!x) return say(c, '✗ Không tìm thấy khách.');
       if (act === 'mute') { RC.mute[key] = Date.now() + 864e5; return say(c, `🔕 Tắt báo ${nm(x)} trong 24 giờ.`); }
       if (act === 'od') { say(c, '⏳ Đang cập nhật trạng thái đơn…'); const os = await S_().customerOrders(key);
