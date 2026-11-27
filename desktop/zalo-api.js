@@ -147,7 +147,9 @@ function createZaloApi({ Zalo, load = () => null, save = () => {}, onList = () =
     Lr.on('reaction', r => { const d = r?.data, key = keyOf(acc, String(r?.threadId || ''), r?.isGroup), list = db.msgs[key]; if (!list || !d) return;
       const t = list.find(x => x.msgId && (d.content?.rMsg || []).some(y => String(y.gMsgID) === x.msgId)); if (!t) return;
       const e = Object.keys(EMO).find(k => EMO[k] === d.content?.rIcon); if (e) { t.re = [...(t.re || []).filter(z => z.mine !== !!r.isSelf), { e, mine: !!r.isSelf }]; persist(); onThread(key); } });
-    Lr.on('connected', () => { s.state = 'ready'; s.err = ''; });
+    // Lịch sử chỉ lấy được khi kết nối đã mở (gọi sớm hơn thì Zalo không trả gì): nick mới kéo cả nhóm, nick cũ chỉ tin lỡ khi app tắt.
+    Lr.on('connected', () => { s.state = 'ready'; s.err = ''; if (s.pumped) return; s.pumped = true;
+      (s.first ? history(acc) : pumpOld(acc, api, USER)).catch(() => {}); });
     Lr.on('closed', code => { s.state = 'paused'; s.err = code === 3000 || code === 3003 ? 'Zalo Web của nick này đang mở ở nơi khác (cột Zalo / máy khác): tạm ngắt, đóng nơi đó là app nghe lại.' : 'Mất kết nối Zalo (' + code + ').'; });
     Lr.on('error', e => { s.err = String(e?.message || e).slice(0, 120); });
     Lr.start({ retryOnClose: true });
@@ -162,11 +164,9 @@ function createZaloApi({ Zalo, load = () => null, save = () => {}, onList = () =
     let name = id, avatar = '';
     try { const r = await api.getUserInfo(id), p = r?.changed_profiles?.[id] || r?.changed_profiles?.[id + '_0']; if (p) { name = p.displayName || p.zaloName || id; avatar = p.avatar || ''; } } catch {}
     const old = live.get(id); if (old?.api && old.api !== api) try { old.api.listener.stop(); } catch {}
-    const first = !db.accounts.some(a => a.id === id);
+    const first = !Object.values(db.convs).some(c => c.acc === id); // chưa có tin nào của nick này: kéo cả lịch sử nhóm
     db.accounts = [...db.accounts.filter(a => a.id !== id), { id, name, avatar, creds, web: web || !!db.accounts.find(a => a.id === id)?.web }];
-    live.set(id, { api, state: 'ready', err: '' }); attach(id, api); persist(); pushList();
-    if (first) history(id).catch(() => {}); // nick mới: kéo lịch sử tin riêng + nhóm
-    else pumpOld(id, api, USER).catch(() => {}); // nick cũ: chỉ lấy tin lỡ khi app tắt
+    live.set(id, { api, state: 'ready', err: '', first }); attach(id, api); persist(); pushList();
     return id;
   };
   // Thêm nick bằng mã QR (ZaloCRM zalo-pool.ts loginQR): QR hiện trong app, không ghi ra đĩa; hết hạn tự tạo lại tối đa 3 lần.
@@ -204,6 +204,11 @@ function createZaloApi({ Zalo, load = () => null, save = () => {}, onList = () =
     convs: Object.values(db.convs).filter(c => c.acc === a.id).length }));
 
   const list = async () => ({ rows: rows() });
+  // Danh sách hội thoại đọc từ Zalo Web ngay trước khi chuyển sang API (Zalo không có API "danh sách hội thoại"): giữ lại để Hộp thư không trống.
+  const seed = (acc, list) => { const now = Date.now();
+    (list || []).forEach((r, i) => { if (r.oa || !/^g?\d+$/.test(r.id || '')) return; const group = r.id[0] === 'g', key = keyOf(acc, r.id.replace(/^g/, ''), group);
+      if (!db.convs[key]) db.convs[key] = { key, acc, thread: r.id.replace(/^g/, ''), group, name: r.name, pic: r.pic, snippet: r.snippet, ts: now - (i + 1) * 60e3, unread: r.unread || 0 }; });
+    persist(); pushList(); };
   const read = async ({ uid } = {}) => {
     const c = db.convs[uid]; if (c?.unread) { c.unread = 0; persist(); }
     return { messages: (db.msgs[uid] || []).map(({ q, msgId, ...m }) => m.from ? { ...m, text: m.from + ': ' + m.text } : m) };
@@ -263,7 +268,7 @@ function createZaloApi({ Zalo, load = () => null, save = () => {}, onList = () =
   const status = () => { const a = accounts(), on = a.filter(x => x.state === 'ready').length;
     return { state: on ? 'ready' : a.some(x => x.state === 'loading') ? 'loading' : a.length ? (a.some(x => x.state === 'paused') ? 'paused' : 'login') : 'closed',
       api: true, rows: Object.keys(db.convs).length, accounts: a, err: a.map(x => x.err).filter(Boolean).join(' · ') }; };
-  return { start, stop, resume, login, addQR, remove, accounts, history, list, read, send, react, labels, setLabel, ready: async () => status().state, status,
+  return { start, stop, resume, login, seed, addQR, remove, accounts, history, list, read, send, react, labels, setLabel, ready: async () => status().state, status,
     hasAccounts: () => db.accounts.length > 0 };
 }
 

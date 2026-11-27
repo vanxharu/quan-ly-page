@@ -4,7 +4,7 @@ const assert = require('assert/strict'), { EventEmitter } = require('events');
 const { createZaloApi, detectContentType, pickNextCursors } = require('../zalo-api');
 const sent = [], reacts = [], L = {}; let labelStore = { labelData: [{ id: 1, text: 'VIP', conversations: ['111'] }], version: 3 };
 function fakeApi(own) {
-  const l = L[own] = Object.assign(new EventEmitter(), { start() { this.started = (this.started || 0) + 1; }, stop() {},
+  const l = L[own] = Object.assign(new EventEmitter(), { start() { this.started = (this.started || 0) + 1; setImmediate(() => this.emit('connected')); }, stop() {},
     requestOldMessages(t, cur) { (this.reqs ||= []).push(cur); setImmediate(() => this.emit('old_messages', cur ? [] : [
       { type: 0, threadId: '222', isSelf: false, data: { msgId: 'o1', ts: '1600000000000', dName: 'Cũ', msgType: 'webchat', content: 'tin cũ' } }], 0)); } });
   return { listener: l, getOwnId: async () => own,
@@ -66,6 +66,8 @@ const msg = o => ({ type: 0, threadId: '111', isSelf: false, data: { msgId: '1',
   await tick(400); rows = (await z.list()).rows;
   assert.ok(rows.find(r => r.id === '2002_g555'), 'nick 2 group history'); assert.equal(rows.find(r => r.id === '1001_111').nick, 'Tên 1001', 'two nicks → nick label');
   assert.deepEqual(z.accounts().map(a => [a.id, a.web]), [['1001', true], ['2002', false]]);
+  z.seed('2002', [{ id: '333', name: 'Khách Web', snippet: 'Bạn: ok', unread: 0 }, { id: 'g444', name: 'Nhóm Web' }, { id: '9', name: 'Zalo', oa: true }]);
+  rows = (await z.list()).rows; assert.equal(rows.find(r => r.id === '2002_333').name, 'Khách Web'); assert.ok(rows.find(r => r.id === '2002_g444').group); assert.ok(!rows.find(r => r.id === '2002_9'), 'OA skipped');
   // Tạm ngắt / nghe lại; gỡ nick.
   L['1001'].emit('closed', 3000); assert.equal(z.accounts()[0].state, 'paused'); assert.match(z.status().err, /nơi khác/);
   z.resume(); assert.equal(z.accounts()[0].state, 'ready');

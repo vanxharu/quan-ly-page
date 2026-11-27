@@ -245,9 +245,9 @@ app.whenReady().then(async () => {
     if (zapi.hasAccounts() && await zapi.start()) { apiOn(); return true; }
     if (Date.now() - zApiFailAt < 6 * 36e5) return false; // lỗi rồi: 6 giờ sau mới thử lại (tránh khung ngầm tải đi tải lại)
     const creds = await zaloCreds().catch(() => null); if (!creds) return false;
-    const hadWorker = ZW().getURL().startsWith('https://chat.zalo.me');
+    const hadWorker = ZW().getURL().startsWith('https://chat.zalo.me'), webRows = hadWorker ? (await zalo.list({ deep: true }).catch(() => null))?.rows : null;
     if (hadWorker) { zaloBoot++; ZW().loadURL('about:blank').catch(() => {}); }
-    try { await zapi.login(creds, { web: true }); apiOn(); return true; }
+    try { const id = await zapi.login(creds, { web: true }); if (webRows) zapi.seed(id, webRows); apiOn(); return true; }
     catch { zApiFailAt = Date.now(); if (hadWorker && !zaloColOpen) ZW().loadURL('https://chat.zalo.me/').catch(() => {}); return false; }
   };
   const Z = () => zMode === 'api' ? zapi : zalo;
