@@ -1131,7 +1131,7 @@
   // Dùng chung cho báo giá (sell, qty) và đơn đã tạo (items).
   const payCode = o => o.payCode || 'DV' + o.providerOrderId;
   // Mã hiện cho khách / tra cứu: đơn đã tạo → mã đơn Baostar (#123456, nhiều đơn: #1, #2…); báo giá / chưa có đơn → mã thanh toán DV….
-  const docCode = (o, kind) => { const ids = kind === 'quote' ? [] : (o.group ? o.lines.map(l => l.order?.providerOrderId) : [o.providerOrderId]).filter(Boolean);
+  const docCode = (o, kind) => { const ids = kind === 'quote' ? [] : [...new Set((o.lines?.length ? o.lines.map(l => l.order?.providerOrderId || l.done?.providerOrderId || l.providerOrderId) : [o.providerOrderId]).filter(Boolean))];
     return ids.length ? ids.slice(0, 4).map(i => '#' + i).join(', ') + (ids.length > 4 ? ` +${ids.length - 4}` : '') : '#' + payCode(o); };
   const qtyOf = o => o.qty ?? o.items?.[0]?.qty ?? 0;
   const orderSell = o => o.sell ?? (o.items?.[0]?.price || 0) * (o.items?.[0]?.qty || 0);
@@ -1154,8 +1154,10 @@
   const RX_SHORT = r => String(r || '').toLowerCase();
   function linkGroups(o) {
     const byLink = new Map();
-    for (const l of linesOf(o)) { const k = l.link || o.link || ''; if (!byLink.has(k)) byLink.set(k, []); byLink.get(k).push(l); }
-    const groups = [...byLink].map(([link, ls]) => {
+    const base = l => String(l.displayName || '').replace(/\s*\((like|love|care|haha|wow|sad|angry|thương thương|tim|thả tim)\)\s*$/i, '');
+    // Mỗi link × mỗi dịch vụ là 1 nhóm (vd 3 link × view + tim = 6 dòng tiến độ); cảm xúc like/love… của cùng dịch vụ gộp chung.
+    for (const l of linesOf(o)) { const k = (l.link || o.link || '') + '\u0000' + base(l); if (!byLink.has(k)) byLink.set(k, []); byLink.get(k).push(l); }
+    const groups = [...byLink].map(([key, ls]) => { const link = key.split('\u0000')[0];
       const pk = [...new Set(ls.map(l => String(l.displayName || '').replace(/\s*\((like|love|care|haha|wow|sad|angry|thương thương|tim|thả tim)\)\s*$/i, '')))].join(', ');
       const what = ls.map(l => `${Number(l.qty).toLocaleString('vi-VN')}${l.reaction ? ' ' + RX_SHORT(l.reaction) : ''}`).join(' + ');
       const sell = sumOf(ls, 'sell'), ords = ls.map(l => l.order).filter(Boolean);
@@ -1163,13 +1165,19 @@
       if (ords.length) { const all = ords.length === ls.length && ords.every(x => x.status === 'done'), tot = sumOf(ls, 'qty'), dn = ords.reduce((t, x) => t + (doneOf(x) ?? 0), 0);
         st = all ? 'Hoàn thành' : ords.some(x => /progress|processing/i.test(x.svcStatus || '')) || dn ? `Đang chạy${dn ? ` · ${dn.toLocaleString('vi-VN')}/${tot.toLocaleString('vi-VN')}` : ''}` : 'Chờ chạy'; }
       else if (ls.some(l => l.error && !l.done)) st = 'Chưa tạo được';
-      return { link, pk, what, sell, st, sig: `${pk}|${what}|${sell}` };
+      const codes = [...new Set(ls.map(l => l.order?.providerOrderId || l.done?.providerOrderId).filter(Boolean))].map(c => '#' + c).join(', ');
+      return { link, pk, what, sell, st, codes, sig: `${pk}|${what}|${sell}` };
     });
     return { groups, same: groups.length > 1 && groups.every(g => g.sig === groups[0].sig) };
   }
   function multiText(o, kind) {
     const { groups, same } = linkGroups(o), out = [], g0 = groups[0];
-    if (groups.length === 1) out.push(`• Dịch vụ: ${g0.pk}`, g0.link ? `• Link: ${shortLink(g0.link)}` : null, `• Số lượng: ${g0.what}`, g0.st ? `• Trạng thái: ${g0.st}` : null);
+    const links = [...new Set(groups.map(g => g.link))];
+    if (links.length < groups.length) { // có link làm nhiều dịch vụ: mỗi link 1 mục, mỗi dịch vụ 1 dòng tiến độ riêng
+      out.push(`• ${links.length} link · ${groups.length} dịch vụ:`);
+      links.forEach((lk, i) => { out.push(`   ${i + 1}. ${shortLink(lk)}`);
+        for (const g of groups.filter(x => x.link === lk)) out.push(`      – ${g.pk} · ${g.what}${kind === 'progress' ? '' : ' · ' + money(g.sell)}${g.codes && kind !== 'quote' ? ' · ' + g.codes : ''}${g.st ? ' · ' + g.st : ''}`); });
+    } else if (groups.length === 1) out.push(`• Dịch vụ: ${g0.pk}`, g0.link ? `• Link: ${shortLink(g0.link)}` : null, `• Số lượng: ${g0.what}`, g0.st ? `• Trạng thái: ${g0.st}` : null);
     else if (same) out.push(`• Dịch vụ: ${g0.pk}`, `• Mỗi link: ${g0.what} · ${money(g0.sell)}`, `• ${groups.length} link:`, ...groups.map((g, i) => `   ${i + 1}. ${shortLink(g.link)}${g.st ? ' · ' + g.st : ''}`));
     else out.push(`• ${groups.length} link:`, ...groups.map((g, i) => `   ${i + 1}. ${shortLink(g.link)} · ${g.pk} · ${g.what} · ${money(g.sell)}${g.st ? ' · ' + g.st : ''}`));
     if (kind !== 'progress') out.push(`• Tổng tiền: ${money(orderSell(o))}`);
