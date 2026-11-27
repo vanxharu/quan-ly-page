@@ -690,3 +690,5 @@ body.teams .ib-ai-opt{background:transparent;border-color:var(--tm-compose-line)
 
 .svc-drops .svc-drop-row{display:flex;gap:8px;align-items:center;padding:8px 0;border-top:1px solid var(--border)}
 .svc-check{display:grid;gap:10px;max-height:60vh;overflow:auto}.svc-check-card{border:1px solid var(--border);border-radius:10px;padding:10px;display:grid;gap:4px}.svc-check-card select{max-width:240px}.svc-check-card input[type=text]{flex:1;min-width:180px}
+
+.svc-code{font-weight:800;font-family:inherit;background:none;border:0;padding:0;color:var(--accent,#7c6cf0);cursor:pointer;white-space:nowrap}

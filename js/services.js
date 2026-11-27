@@ -1130,6 +1130,9 @@
   const bankName = bin => (BANKS.find(b => b[0] === String(bin)) || [, ''])[1];
   // Dùng chung cho báo giá (sell, qty) và đơn đã tạo (items).
   const payCode = o => o.payCode || 'DV' + o.providerOrderId;
+  // Mã hiện cho khách / tra cứu: đơn đã tạo → mã đơn Baostar (#123456, nhiều đơn: #1, #2…); báo giá / chưa có đơn → mã thanh toán DV….
+  const docCode = (o, kind) => { const ids = kind === 'quote' ? [] : (o.group ? o.lines.map(l => l.order?.providerOrderId) : [o.providerOrderId]).filter(Boolean);
+    return ids.length ? ids.slice(0, 4).map(i => '#' + i).join(', ') + (ids.length > 4 ? ` +${ids.length - 4}` : '') : '#' + payCode(o); };
   const qtyOf = o => o.qty ?? o.items?.[0]?.qty ?? 0;
   const orderSell = o => o.sell ?? (o.items?.[0]?.price || 0) * (o.items?.[0]?.qty || 0);
   const amountDue = o => Math.max(0, Math.round(orderSell(o) - (o.paidAmount || 0)));
@@ -1174,7 +1177,7 @@
   }
   function invoiceText(o, inv, kind) {
     const q = qtyOf(o), name = o.displayName || o.items?.[0]?.name || 'Dịch vụ';
-    const L = [`${kind === 'quote' && o.renewOf ? '🔔 GIA HẠN DỊCH VỤ' : KIND_TITLE[kind] || KIND_TITLE.new} #${payCode(o)}`,
+    const L = [`${kind === 'quote' && o.renewOf ? '🔔 GIA HẠN DỊCH VỤ' : KIND_TITLE[kind] || KIND_TITLE.new} ${docCode(o, kind)}`,
       ...(multi(o) ? multiText(o, kind)
         : [`• Dịch vụ: ${name}`, o.link ? `• Link: ${o.link}` : null, `• Số lượng: ${q.toLocaleString('vi-VN')}`, kind === 'progress' ? null : `• Thành tiền: ${money(orderSell(o))}`])];
     if (kind === 'quote') {
@@ -1227,7 +1230,7 @@
     const tx = logo ? P + 66 : P + 4;
     x.fillStyle = '#fff'; x.fillText(fit(shop, W - tx - P - 120, font(800, 20)), tx, P / 2 + 38);
     x.font = font(700, 13); x.fillStyle = '#ecfdf5'; x.fillText(kind === 'done' ? 'ĐƠN HÀNG ĐÃ HOÀN THÀNH ✓' : 'CẬP NHẬT TIẾN ĐỘ ĐƠN HÀNG', tx, P / 2 + 62);
-    x.font = font(800, 14); x.textAlign = 'right'; x.fillStyle = '#fff'; x.fillText('#' + payCode(o), W - P - 6, P / 2 + 38); x.font = font(600, 12); x.fillText(fmtTime(Date.now()), W - P - 6, P / 2 + 60); x.textAlign = 'left';
+    x.font = font(800, 14); x.textAlign = 'right'; x.fillStyle = '#fff'; { const dc = docCode(o, kind); x.fillText(dc.length > 26 ? dc.slice(0, 25) + '…' : dc, W - P - 6, P / 2 + 38); } x.font = font(600, 12); x.fillText(fmtTime(Date.now()), W - P - 6, P / 2 + 60); x.textAlign = 'left';
     let y = P / 2 + 82 + 24;
     for (const it of items) {
       const m = info(it), [stTxt, stCol, stBg] = ST[m.st];
@@ -1310,7 +1313,7 @@
     const C = { violet: '#6c5ce7', blue: '#2563eb', orange: '#ea580c', amber: '#b45309', red: '#dc2626', green: '#059669', teal: '#0d9488', pink: '#db2777', gray: '#6b7280', ink: '#111827' };
     const q = qtyOf(o), hasPay = hasPayBlock(kind) && inv.acc;
     // [nhãn, giá trị, màu]
-    const rows = [[kind === 'quote' ? 'Mã thanh toán' : 'Mã đơn', '#' + payCode(o), C.red], o.customer?.name ? ['Khách hàng', o.customer.name, C.pink] : null,
+    const rows = [[kind === 'quote' ? 'Mã thanh toán' : 'Mã đơn', docCode(o, kind), C.red], o.customer?.name ? ['Khách hàng', o.customer.name, C.pink] : null,
       // Ảnh: chỉ tóm tắt (gói, mỗi link, số link) + 3 link đầu; danh sách đủ nằm trong tin nhắn chữ.
       ...(multi(o) ? (({ groups, same }) => groups.length === 1 ? [['Dịch vụ', groups[0].pk, C.violet], ['Link', shortLink(groups[0].link), C.blue], ['Số lượng', groups[0].what, C.orange]]
         : [same ? ['Dịch vụ', groups[0].pk, C.violet] : null, same ? ['Mỗi link', `${groups[0].what} · ${money(groups[0].sell)}`, C.orange] : null, ['Số link', `${groups.length} link`, C.orange],
@@ -2088,7 +2091,7 @@
       $('svPeriod').replaceChildren(...PERIODS.map(([k, t]) => h('button', { type: 'button', className: 'chip', 'aria-pressed': String(period === k), textContent: t, onclick: () => { period = k; this.refresh(); } })));
       const all = (await DB.get(ORDERS, [])).filter(o => o.source === 'service' && o.at >= from);
       refillOk = new Set(); if (s.apiKey) try { for (const x of await services()) if (x.refill || warrantyName(x.name)) refillOk.add(x.id); } catch {}
-      const list = all.filter(o => !q || norm([o.customer?.name, o.link, o.serviceName, o.providerOrderId, App.pageById(o.pageKey)?.name].join(' ')).includes(q)).sort((a, b) => b.at - a.at);
+      const list = all.filter(o => !q || norm([o.customer?.name, o.link, o.serviceName, o.displayName, '#' + o.providerOrderId, o.payCode, App.pageById(o.pageKey)?.name].join(' ')).includes(q.replace(/^#/, '')) || norm('#' + o.providerOrderId).includes(q)).sort((a, b) => b.at - a.at);
       // Dịch vụ thu tiền TRƯỚC khi tạo đơn → tính doanh thu / giá gốc / lời ngay khi có đơn (trừ đơn bị huỷ), không chờ hoàn thành.
       const live = all.filter(o => o.status !== 'cancelled' && o.status !== 'returned');
       const revenue = live.reduce((t, o) => t + orderSell(o), 0), costSum = live.reduce((t, o) => t + orderOf(o).cost, 0);
@@ -2121,11 +2124,14 @@
         h('div', { className: 'svc-kpi-foot' }, k.d ? h('span', { className: 'svc-delta ' + (k.d.up ? 'up' : 'down'), title: 'So với ' + per, textContent: (k.d.up ? '▲ ' : '▼ ') + k.d.txt }) : null,
           k.d && per ? h('span', { className: 'hint', textContent: ' kỳ trước' }) : null, k.sub ? h('span', { className: 'hint', textContent: (k.d ? ' · ' : '') + k.sub }) : null))));
       $('svOrders').replaceChildren(list.length ? h('table', {},
-        h('thead', {}, h('tr', {}, ...['Tạo lúc', 'Khách / Page', 'Dịch vụ', 'Link', 'SL', 'Giá bán', 'So với giá gói', 'Giá gốc', 'Lời', 'Trạng thái', 'Hoàn thành', 'Gửi khách'].map(t => h('th', { textContent: t })))),
+        h('thead', {}, h('tr', {}, ...['Mã đơn', 'Tạo lúc', 'Khách / Page', 'Dịch vụ', 'Link', 'SL', 'Giá bán', 'So với giá gói', 'Giá gốc', 'Lời', 'Trạng thái', 'Hoàn thành', 'Gửi khách'].map(t => h('th', { textContent: t })))),
         h('tbody', {}, ...list.map(o => { const { sell, cost } = orderOf(o); return h('tr', {},
+          h('td', {}, h('button', { type: 'button', className: 'svc-code', title: 'Mã đơn Baostar · bấm để chép', textContent: o.providerOrderId ? '#' + o.providerOrderId : '—',
+            onclick: () => o.providerOrderId && navigator.clipboard.writeText(String(o.providerOrderId)).then(() => toast('Đã chép mã đơn ' + o.providerOrderId)) }),
+            o.payCode ? h('div', { className: 'hint', textContent: 'báo giá ' + o.payCode }) : null),
           h('td', { textContent: fmtTime(o.at) }),
           h('td', {}, o.customer?.name || '—', h('div', { className: 'hint', textContent: App.pageById(o.pageKey)?.name || '' })),
-          h('td', {}, h('span', { className: 'svc-name-cell' }, platOfOrder(o) ? platBadge(platOfOrder(o), 18) : null, h('span', { textContent: o.displayName || o.serviceName || '' })), h('div', { className: 'hint', textContent: `#${o.providerOrderId}${o.displayName ? ' · MC ' + o.serviceId : ''}` })),
+          h('td', {}, h('span', { className: 'svc-name-cell' }, platOfOrder(o) ? platBadge(platOfOrder(o), 18) : null, h('span', { textContent: o.displayName || o.serviceName || '' })), h('div', { className: 'hint', textContent: o.serviceId ? 'MC ' + o.serviceId : '' })),
           h('td', {}, o.link ? h('button', { type: 'button', className: 'btn btn-ghost btn-sm', title: o.link, textContent: '📋 Copy', onclick: () => navigator.clipboard.writeText(o.link).then(() => toast('Đã copy link.')) }) : ''),
           h('td', { textContent: (o.items?.[0]?.qty || 0).toLocaleString('vi-VN') }),
           h('td', { textContent: money(sell) }), vsCell(o), h('td', { textContent: money(cost) + (o.charge ? '' : ' ≈') }),
