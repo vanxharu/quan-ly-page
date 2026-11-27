@@ -66,15 +66,16 @@ function newWindow(url, opts = {}) {
   if (url) win.loadURL(url);
   return win;
 }
-function wire(wc, win, asTab = true) {
+function wire(wc, win, asTab = true, anyWeb = false) { // anyWeb: cột Dịch vụ là trình duyệt cho web dịch vụ, đi trang nào cũng ở lại trong cột
+  const inApp2 = url => inApp(url) || (anyWeb && /^https:\/\//i.test(url));
   if (asTab) extensions.addTab(wc, win);
   wc.setWindowOpenHandler(({ url }) => {
     if (/^https:\/\/(www\.)?facebook\.com\/[^?]*dialog\/oauth/i.test(url) && !url.includes(encodeURIComponent(LOGIN_PAGE))) { loginInBrowser(url); return { action: 'deny' }; }
-    if (inApp(url)) return { action: 'allow', overrideBrowserWindowOptions: { icon: ICON, autoHideMenuBar: true } };
+    if (inApp2(url)) return { action: 'allow', overrideBrowserWindowOptions: { icon: ICON, autoHideMenuBar: true } };
     if (/^https?:/i.test(url)) shell.openExternal(url);
     return { action: 'deny' };
   });
-  wc.on('did-create-window', child => wire(child.webContents, child, child.webContents.session === session.defaultSession));
+  wc.on('did-create-window', child => wire(child.webContents, child, child.webContents.session === session.defaultSession, anyWeb));
   // Bắt token ngay khi Facebook chuyển về desktop-login.html#access_token=… (chuyển hướng máy chủ hoặc trang tự chuyển).
   const catchLogin = (e, url) => {
     if (url.startsWith(PROTOCOL + '://')) { e?.preventDefault?.(); handleDeepLink(url); return true; }
@@ -89,7 +90,7 @@ function wire(wc, win, asTab = true) {
   wc.on('did-navigate-in-page', (_e, url) => { catchLogin(null, url); });
   wc.on('will-navigate', (e, url) => {
     if (catchLogin(e, url)) return;
-    if (!inApp(url) && /^https?:/i.test(url)) { e.preventDefault(); shell.openExternal(url); }
+    if (!inApp2(url) && /^https?:/i.test(url)) { e.preventDefault(); shell.openExternal(url); }
   });
 }
 
@@ -275,7 +276,7 @@ app.whenReady().then(async () => {
   wire(panelView.webContents, mainWindow, false);
   wire(metaView.webContents, mainWindow, false);
   wire(zaloView.webContents, mainWindow, false);
-  wire(svcView.webContents, mainWindow, false);
+  wire(svcView.webContents, mainWindow, false, true);
   // Luôn lấy index.html mới (GitHub Pages cho trình duyệt giữ bản cũ ~10 phút → trang chạy code cũ sau mỗi lần cập nhật web).
   pageView.webContents.loadURL(WEB, { extraHeaders: 'pragma: no-cache\ncache-control: no-cache\n' });
   if (studio) panelView.webContents.loadURL(`chrome-extension://${studio.id}/sidepanel.html?desktop=1`);

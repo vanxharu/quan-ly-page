@@ -1692,11 +1692,14 @@
       const note = lines.find(l => /^Lưu ý/i.test(l)) || '';
       if (acc.length >= 6) out.push({ bank, acc, holder, content, qr, note });
     }
-    const login = !out.length && /đăng nhập|login|sign in/i.test(doc.title + ' ' + (doc.querySelector('form')?.textContent || '').slice(0, 500)) && !!doc.querySelector('input[type=password]');
+    const txt = (doc.title + ' ' + doc.body?.textContent).slice(0, 20000);
+    const login = !out.length && (!!doc.querySelector('input[type=password]') || (/Đăng nhập|login/i.test(txt) && /Mật khẩu|password/i.test(txt)));
     return { cards: out, login };
   }
   async function topupDialog() {
-    const s = await settings(), origin = webOrigin(s), page = origin + '/nap-tien';
+    // Trang chủ (nơi bạn đăng nhập trong cột Dịch vụ, vd dichvu.baostar.net) trước, rồi tới miền của API (smm.baostar.net).
+    const s = await settings(), origins = [...new Set([(() => { try { return new URL(s.home).origin; } catch { return ''; } })(), webOrigin(s)].filter(Boolean))];
+    let origin = origins[0], page = origin + '/nap-tien';
     const openPage = () => window.metaDesktop?.openService ? window.metaDesktop.openService(page) : window.open(page, '_blank', 'noopener');
     if (!window.metaDesktop?.svcTopup) return openPage();
     let stop = false;
@@ -1721,11 +1724,16 @@
     document.body.append(dlg); dlg.showModal();
     const fail = why => { body.replaceChildren(h('p', { className: 'status err', textContent: why }),
       h('p', { className: 'hint', textContent: 'Để an toàn, app không dùng thông tin cũ. Đang mở trang Nạp tiền của web ở cột bên phải: quét QR ngay trên đó.' })); openPage(); };
-    const r = await window.metaDesktop.svcTopup({ origin }).catch(e => ({ error: e.message }));
-    if (stop) return;
-    if (r?.error) return fail(r.error);
-    const { cards, login } = parseTopup(r.html || '', r.url || page);
-    if (!cards.length) return fail(login || /login|dang-nhap/i.test(r.url || '') ? 'Chưa đăng nhập web dịch vụ trong app.' : 'Không đọc được thông tin tài khoản nhận tiền trên trang (web có thể đã đổi giao diện).');
+    let cards = [], login = false, lastErr = '';
+    for (const o of origins) {
+      const r = await window.metaDesktop.svcTopup({ origin: o }).catch(e => ({ error: e.message }));
+      if (stop) return;
+      if (r?.error) { lastErr = r.error; continue; }
+      const got = parseTopup(r.html || '', r.url || o + '/nap-tien');
+      if (got.cards.length) { cards = got.cards; origin = o; page = o + '/nap-tien'; break; }
+      login ||= got.login || /\/(login|dang-nhap)/i.test(r.url || '');
+    }
+    if (!cards.length) return fail(login ? `Chưa đăng nhập web dịch vụ trong app (${new URL(origin).host}). Đăng nhập ở cột bên phải rồi bấm lại Nạp tiền.` : lastErr || 'Không đọc được thông tin tài khoản nhận tiền trên trang (web có thể đã đổi giao diện).');
     body.replaceChildren(
       h('p', { className: 'hint', textContent: `Lấy trực tiếp từ ${new URL(origin).host}/nap-tien lúc ${new Date().toLocaleTimeString('vi-VN')}. Mỗi mã QR chỉ dùng cho 1 lần chuyển khoản: lần nạp sau bấm lại nút Nạp tiền để lấy mã mới.` }),
       h('div', { className: 'svc-topup-grid' }, ...cards.map(c => { const img = h('img', { className: 'svc-topup-qr', alt: 'QR nạp tiền ' + c.bank });
