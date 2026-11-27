@@ -1804,6 +1804,11 @@
         }
         if (JSON.stringify(next) !== JSON.stringify(o)) { next.updatedAt = Date.now(); Object.assign(o, next); changed++; }
       }
+      // Khách từng hỏi riêng 1 dịch vụ (vd "chưa thấy tăng tim"): các đơn đó xong hết → gợi ý báo khách "tim đã lên đủ".
+      const waits = new Map(); for (const o of fresh) if (o.askWait) { if (!waits.has(o.askWait.ref)) waits.set(o.askWait.ref, []); waits.get(o.askWait.ref).push(o); }
+      for (const [ref, os2] of waits) if (os2.every(x => x.status === 'done' || x.status === 'cancelled')) {
+        if (os2.some(x => x.status === 'done')) nudgeQ.push([os2[0].askWait.key, 'askdone', ref]);
+        for (const x of os2) { delete x.askWait; x.updatedAt = Date.now(); } changed++; }
       await DB.set(ORDERS, fresh); if (changed) ping();
     }
     return changed;
@@ -1839,14 +1844,15 @@
   // ── Gợi ý nhắn khách (bấm 1 lần): đơn bắt đầu chạy · đạt 50% · khách hỏi tiến độ · hoàn thành (+ ảnh phiếu, cảm ơn)
   //    · đã nhận tiền (cảm ơn) · 1 ngày sau hoàn thành (hỏi thăm). Hiện trên ô soạn tin của khách đó trong Hộp thư.
   const NUDGES = 'svcNudgesV1';
-  const NUDGE_TITLE = { wdone: '🛡 Báo khách đã bảo hành xong', start: '🚀 Báo đơn bắt đầu chạy', half: '📊 Báo đơn đã lên 50%', ask: '💬 Khách hỏi tiến độ', done: '✅ Báo hoàn thành + cảm ơn', paid: '🙏 Cảm ơn đã thanh toán', follow: '❤️ Hỏi thăm sau 1 ngày' };
+  const NUDGE_TITLE = { askk: '💬 Trả lời đúng dịch vụ khách hỏi', askdone: '✅ Báo khách dịch vụ đã lên đủ', wdone: '🛡 Báo khách đã bảo hành xong', start: '🚀 Báo đơn bắt đầu chạy', half: '📊 Báo đơn đã lên 50%', ask: '💬 Khách hỏi tiến độ', done: '✅ Báo hoàn thành + cảm ơn', paid: '🙏 Cảm ơn đã thanh toán', follow: '❤️ Hỏi thăm sau 1 ngày' };
   const nudges = () => DB.get(NUDGES, []).catch(() => []);
   async function addNudge(key, kind, ref, uniq = '') {
     if (!key) return;
     const all = (await nudges()).filter(n => Date.now() - n.at < 3 * 864e5);
     const id = `${kind}:${ref}${uniq}`; if (all.some(n => n.id === id && n.key === key)) return;
+    if (kind === 'askdone' && all.some(n => n.key === key && n.kind === 'done' && Date.now() - n.at < 36e5)) return; // đã có tin "hoàn thành" cả đơn: không nhắn thêm
     // Tin mới thay gợi ý cũ cùng đơn (vd đã hoàn thành thì bỏ gợi ý "50%" chưa gửi).
-    const keep = all.filter(n => !(n.key === key && n.ref === ref && ['start', 'half', 'ask'].includes(n.kind) && ['half', 'done', 'ask'].includes(kind)));
+    const keep = all.filter(n => !(n.key === key && ((n.ref === ref && ['start', 'half', 'ask', 'askk'].includes(n.kind) && ['half', 'done', 'ask', 'askk', 'askdone'].includes(kind)) || (n.kind === 'askk' && ['askk', 'done', 'askdone'].includes(kind)))));
     keep.push({ id, key, kind, ref, at: Date.now() }); await DB.set(NUDGES, keep);
     App.inbox?.orderChanged?.();
   }
@@ -1854,7 +1860,39 @@
   const shortSvc = o => String(o.displayName || o.serviceName || 'dịch vụ').replace(/\s*·\s*\d[\d.,]*\s*$/, '');
   const doneOf = o => o.startCount != null && o.remains != null ? Math.max(0, qtyOf(o) - num(o.remains)) : null;
   // Nội dung tin: viết lúc hiện (luôn lấy số mới nhất của đơn).
+  // ── Khách hỏi riêng 1 dịch vụ ("ok đã tăng view, chưa thấy tăng tim") ── trả lời đúng các đơn của dịch vụ đó.
+  const ASK_KIND = [['like', /\b(tim|like|lượt thích|thích|thả tim|cảm xúc|react)/i], ['view', /\b(view|lượt xem|mắt)\b/i], ['follow', /(follow|theo dõi|\bsub\b|đăng ký|\bfl\b)/i],
+    ['share', /(share|chia sẻ)/i], ['comment', /(bình luận|comment|\bcmt\b)/i], ['member', /(thành viên|\bmem\b)/i]];
+  // Câu hỏi có nhiều vế ("ok đã tăng view, chưa thấy tăng tim"): lấy dịch vụ ở vế đang hỏi / phàn nàn.
+  const askKind = text => { const parts = String(text || '').split(/[,.;!?\n]+|\bnhưng\b|\bcòn\b/i).filter(x => /chưa|chậm|lâu|đứng|sao|bao giờ|khi nào|không thấy|ko thấy|k thấy|kh thấy/i.test(x));
+    for (const p of parts.length ? parts : [text]) { const k = ASK_KIND.find(([, re]) => re.test(p)); if (k) return k[0]; } return ''; };
+  const idsRef = os => 'ids:' + os.map(o => o.id).join(',');
+  const ordersOfRef = (ref, all) => String(ref).startsWith('ids:') ? String(ref).slice(4).split(',').map(id => all.find(o => o.id === id)).filter(Boolean) : [];
+  const groupFrom = os => os.length === 1 ? os[0] : { ...os[0], group: true, groupIds: os.map(o => o.id), lines: os.map(o => ({ id: o.id, displayName: o.displayName || o.serviceName, qty: qtyOf(o), sell: orderSell(o), link: o.link, order: o })),
+    qty: os.reduce((t, o) => t + qtyOf(o), 0), sell: os.reduce((t, o) => t + orderSell(o), 0), displayName: `${os.length} đơn`, at: Math.min(...os.map(o => o.at)) };
+  const svcName = os => [...new Set(os.map(o => shortSvc(o).split(' · ').pop().replace(/\s*\((like|love|care|haha|wow|sad|angry|thương thương)\)\s*$/i, '')))].join(', ');
+  // Giờ TB của máy chủ ("2 giờ 30 phút", "45 phút") → giờ; không có thì 6.
+  const avgHours = t => { const h = /(\d+)\s*(giờ|h\b|hour)/i.exec(t || ''), m = /(\d+)\s*(phút|min)/i.exec(t || ''), d = /(\d+)\s*(ngày|day)/i.exec(t || '');
+    const v = (d ? d[1] * 24 : 0) + (h ? +h[1] : 0) + (m ? m[1] / 60 : 0); return v || 6; };
+  // Đơn đứng: chạy quá 2× giờ TB của máy chủ (ít nhất 3 giờ) mà chưa lên 10%.
+  const stuckOf = (o, svc) => !['done', 'cancelled'].includes(o.status) && Date.now() - o.at > Math.max(3, avgHours(svc?.avgTime) * 2) * 36e5 && (doneOf(o) ?? 0) < qtyOf(o) * 0.1;
+  async function askKText(n, withImage) {
+    const all = await DB.get(ORDERS, []), os = ordersOfRef(n.ref, all); if (!os.length) return null;
+    let list = []; try { list = await services(); } catch {}
+    const svcOf = o => list.find(x => x.id === String(o.serviceId)), name = svcName(os), avg = svcOf(os[0])?.avgTime || '';
+    const line = (o, i) => { const d = doneOf(o), q = qtyOf(o);
+      return `   ${i + 1}. ${shortLink(o.link)} · ${o.status === 'done' ? `đã lên đủ ${q.toLocaleString('vi-VN')} ✓` : /pending/i.test(o.svcStatus || '') || d == null ? 'đang chờ hệ thống xử lý' : `đã lên ${d.toLocaleString('vi-VN')}/${q.toLocaleString('vi-VN')}`}`; };
+    let text;
+    if (n.kind === 'askdone') text = [`Dạ ${name} của mình đã lên đủ rồi ạ ✅`, ...os.map(line), '', 'Mình kiểm tra giúp em nha, có gì cần hỗ trợ cứ nhắn em ạ 🙏'].join('\n');
+    else if (os.every(o => o.status === 'done')) text = [`Dạ ${name} của mình đã chạy xong rồi ạ ✅`, ...os.map(line), '', 'Trang có thể cập nhật số chậm vài phút, mình tải lại giúp em nha 🙏'].join('\n');
+    else text = [`Dạ ${name} của mình đang chạy ạ:`, ...os.map(line), '', `${avg ? `Máy chủ ${name} thường chạy xong trong khoảng ${avg}, ` : 'Hệ thống vẫn đang chạy tiếp, '}em theo dõi và báo mình ngay khi xong ạ 🙏`].join('\n');
+    const stuck = n.kind === 'askk' ? os.filter(o => stuckOf(o, svcOf(o))) : [];
+    if (!withImage) return { text, hasImage: true, image: '', stuck };
+    let image = ''; try { image = (await invoiceImage(groupFrom(os), (await settings()).invoice || {}, os.every(o => o.status === 'done') ? 'done' : 'progress')).dataUrl; } catch {}
+    return { text, hasImage: true, image, stuck };
+  }
   async function nudgeText(n, withImage = false) {
+    if (n.kind === 'askk' || n.kind === 'askdone') return askKText(n, withImage);
     if (n.kind === 'wdone') { const b = (await warrBatches()).find(x => 'wb:' + x.id === n.ref); if (!b) return null;
       const text = ['✅ ĐÃ BẢO HÀNH XONG', `Dạ shop đã bảo hành xong ${b.items.length} link cho mình rồi ạ:`, ...b.items.map((it, i) => `   ${i + 1}. ${shortLink(it.link)} · ✓`), '', 'Mình kiểm tra lại giúp em nha, có gì cần hỗ trợ cứ nhắn em ạ 🙏'].join('\n');
       if (!withImage) return { text, hasImage: true, image: '' };
@@ -1886,6 +1924,12 @@
     return null;
   }
   async function nudgeText1(n, o, group, q, name, link, withImage) {
+    if (n.kind === 'done' && group.length > 1) { // cả báo giá nhiều link / dịch vụ: liệt kê từng đơn
+      const text = ['Dạ đơn của mình đã HOÀN THÀNH hết rồi ạ ✅', ...group.filter(x => x.status !== 'cancelled').map((x, i) => `   ${i + 1}. ${shortLink(x.link)} · ${shortSvc(x).split(' · ').pop()} · +${qtyOf(x).toLocaleString('vi-VN')} ✓`),
+        '', 'Mình kiểm tra giúp em nha. Cảm ơn mình đã tin tưởng và ủng hộ shop ạ 🙏❤️'].join('\n');
+      let image = ''; if (withImage) try { const inv = (await settings()).invoice || {}; image = (await invoiceImage(o.payCode ? await groupOf(o.payCode) : groupFrom(group), inv, 'done')).dataUrl; } catch {}
+      return { text, image, hasImage: true };
+    }
     if (n.kind === 'done') {
       const start = o.startCount != null ? num(o.startCount) : null;
       const text = `Dạ đơn ${name} của mình đã HOÀN THÀNH ✅${link}\n• Đã tăng: ${q.toLocaleString('vi-VN')}${start != null ? ` (từ ${start.toLocaleString('vi-VN')} → ${(start + q).toLocaleString('vi-VN')})` : ''}\nMình kiểm tra giúp em nha. Cảm ơn mình đã tin tưởng và ủng hộ shop ạ 🙏❤️`;
@@ -1913,6 +1957,8 @@
       h('div', { className: 'nudge-acts' },
         h('button', { type: 'button', className: 'btn btn-sm btn-primary', textContent: 'Gửi', onclick: e => send(true, e.currentTarget) }),
         h('button', { type: 'button', className: 'btn btn-sm btn-ghost', textContent: 'Sửa trước khi gửi', onclick: e => send(false, e.currentTarget) }),
+        m.stuck?.length ? h('button', { type: 'button', className: 'btn btn-sm btn-soft', textContent: `📨 Nhờ Baostar đẩy nhanh (${m.stuck.length} đơn đứng)`, title: 'Đơn chạy quá lâu so với thời gian TB của máy chủ: soạn sẵn yêu cầu hỗ trợ rồi mở trang Hỗ trợ Baostar',
+          onclick: () => supportBaostar(['Nhờ shop kiểm tra / đẩy nhanh giúp các đơn đang đứng:', ...m.stuck.map(o => `#${o.providerOrderId} · ${o.displayName || o.serviceName} · link ${o.link} · SL ${qtyOf(o)} · trạng thái ${o.svcStatus || '?'}${o.startCount != null ? `, start ${o.startCount}` : ''}${o.remains != null ? `, remains ${o.remains}` : ''} · đặt lúc ${fmtTime(o.at)}`), 'Khách đang hỏi, nhờ shop xử lý sớm giúp. Cảm ơn!'].join('\n')) }) : null,
         h('button', { type: 'button', className: 'btn btn-sm btn-ghost', textContent: 'Bỏ qua', onclick: () => dropNudge(n.id, key) })));
   }
   // Khách hỏi tiến độ ("lên chưa", "sao chưa chạy", "bao giờ xong"…) mà đang có đơn: cập nhật trạng thái rồi gợi ý tin trả lời.
@@ -1920,6 +1966,16 @@
   async function askCheck(key, text) {
     if (!key || !ASK_RE.test(String(text || ''))) return false;
     const os = (await DB.get(ORDERS, [])).filter(o => o.source === 'service' && o.customerKey === key && Date.now() - o.at < 7 * 864e5).sort((a, b) => b.at - a.at);
+    const kind = askKind(text);
+    if (kind) { // hỏi riêng 1 dịch vụ: chỉ các đơn của dịch vụ đó (cùng báo giá gần nhất)
+      const sub = os.filter(x => x.status !== 'cancelled' && !x.warrantyFor && KIND_RE[kind].test(norm(x.displayName || x.serviceName || '')));
+      if (sub.length) { const pc = sub[0].payCode, pick = pc ? sub.filter(x => x.payCode === pc) : [sub[0]], ref = idsRef(pick);
+        await refreshStatus(pick).catch(() => {});
+        const all = await DB.get(ORDERS, []), ids = new Set(pick.map(x => x.id)); let ch = false;
+        for (const x of all) if (ids.has(x.id) && !['done', 'cancelled'].includes(x.status)) { x.askWait = { ref, key, at: Date.now() }; x.updatedAt = Date.now(); ch = true; }
+        if (ch) await DB.set(ORDERS, all);
+        await addNudge(key, 'askk', ref, ':' + Math.floor(Date.now() / 60e3)); return true; }
+    }
     const o = os.find(x => x.status !== 'done' && x.status !== 'cancelled') || os[0]; if (!o) return false;
     await refreshStatus([o]).catch(() => {});
     await addNudge(key, 'ask', o.payCode && o.groupSize > 1 ? 'pc:' + o.payCode : o.id, ':' + Math.floor(Date.now() / 60e3)); return true;
